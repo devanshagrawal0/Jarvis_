@@ -1,0 +1,86 @@
+# ─────────────────────────────────────────────────────────────
+#  SECRETS — never commit (keys, tokens, credentials, DPAPI blobs)
+# ─────────────────────────────────────────────────────────────
+.env
+.env.*
+!.env.example
+JARVIS_CREDENTIALS.local.json
+JARVIS_CREDENTIALS*.json
+*.dpapi
+*.pem
+*.key
+secrets.*
+
+# ─────────────────────────────────────────────────────────────
+#  Dependencies & build output
+# ─────────────────────────────────────────────────────────────
+node_modules/
+dist/
+dist-desktop/
+build/
+.vite/
+.wrangler/
+*.tsbuildinfo
+
+# ─────────────────────────────────────────────────────────────
+#  Runtime data (databases, user memory, screen captures, logs)
+# ─────────────────────────────────────────────────────────────
+runtime/
+output/
+*.sqlite
+*.sqlite-*
+*.db
+
+# ─────────────────────────────────────────────────────────────
+#  Logs & ad-hoc test / scratch scripts
+# ─────────────────────────────────────────────────────────────
+*.log
+logs/
+check-prefs-*.js
+live-test.js
+stress-test-*.js
+globe-preview.html
+
+# ─────────────────────────────────────────────────────────────
+#  Test artifacts & tooling caches
+# ─────────────────────────────────────────────────────────────
+artifacts/
+test-results/
+playwright-report/
+.playwright-cli/
+.codex-analysis/
+.tools/
+.claude/
+
+# ─────────────────────────────────────────────────────────────
+#  Heavy media assets (3D models, videos, high-res textures) —
+#  excluded to keep the repo lean; not needed for the core app.
+#  See README → "Heavy assets" for how to supply them locally.
+# ─────────────────────────────────────────────────────────────
+*.mp4
+*.glb
+*.gltf
+*.blend
+*.blend1
+design/
+public/globe-room/*.png
+public/globe-room/*.geojson
+public/globe_bg_*.png
+public/boston/*.png
+public/boston/*.geojson
+scripts/data/*.geojson
+
+# reference imagery, reports & manual test scratch (not needed by the app)
+/assets/
+reports/
+runtime-test-manual/
+runtime-test-manual-debug/
+
+# ─────────────────────────────────────────────────────────────
+#  OS / editor cruft
+# ─────────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+*.swp
+.idea/
+.vscode/

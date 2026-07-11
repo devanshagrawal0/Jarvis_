@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>JARVIS_SCREEN_TEST_READY</title>
+    <style>
+      html, body {
+        margin: 0;
+        min-height: 100%;
+        background: #070b10;
+        color: #e7f6ff;
+        font-family: Arial, sans-serif;
+      }
+      main {
+        min-height: 100vh;
+        display: grid;
+        place-items: center;
+      }
+      section {
+        display: grid;
+        gap: 20px;
+        text-align: center;
+      }
+      button, input {
+        font: inherit;
+        border: 1px solid #2fb7ff;
+        border-radius: 8px;
+        background: #0b1b28;
+        color: #e7f6ff;
+        padding: 18px 24px;
+        min-width: 320px;
+        box-shadow: 0 0 24px rgba(47, 183, 255, 0.35);
+      }
+      button {
+        cursor: pointer;
+        font-weight: 700;
+        letter-spacing: 0.08em;
+      }
+      #status {
+        min-height: 32px;
+        color: #66ffcc;
+        font-weight: 700;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <section>
+        <h1>JARVIS Screen Control Test</h1>
+        <button id="jarvis-click-target" type="button" onclick="markClicked()">JARVIS CLICK TARGET</button>
+        <input id="jarvis-type-target" aria-label="JARVIS TYPE TARGET" placeholder="JARVIS TYPE TARGET" />
+        <div id="status">WAITING</div>
+      </section>
+    </main>
+    <script>
+      function markClicked() {
+        document.title = "JARVIS_CLICK_TEST_PASSED";
+        document.getElementById("status").textContent = "CLICK PASSED";
+        document.body.dataset.jarvisClicked = "true";
+      }
+      document.getElementById("jarvis-type-target").addEventListener("input", (event) => {
+        if (event.target.value.includes("JARVIS_TYPED_OK")) {
+          document.title = "JARVIS_TYPE_TEST_PASSED";
+          document.getElementById("status").textContent = "TYPE PASSED";
+        }
+      });
+    </script>
+  </body>
+</html>

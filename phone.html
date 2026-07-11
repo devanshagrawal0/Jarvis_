@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="color-scheme" content="dark" />
+    <meta name="theme-color" content="#02080e" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="JARVIS" />
+    <link rel="manifest" href="/phone-manifest.webmanifest" />
+    <link rel="apple-touch-icon" href="/icons/phone-icon-192.png" />
+    <title>JARVIS Phone</title>
+    <style>
+      * { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+      html, body, #phone-root { height: 100%; height: 100dvh; overflow: hidden; background: #02080e; }
+    </style>
+  </head>
+  <body>
+    <div id="phone-root"></div>
+    <script type="module" src="/src/phone/main.tsx"></script>
+  </body>
+</html>

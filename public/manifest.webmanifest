@@ -1,0 +1,31 @@
+{
+  "name": "JARVIS OmniPresence",
+  "short_name": "JARVIS",
+  "description": "Personal Jarvis command layer, device mesh, and object portal.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#02080c",
+  "theme_color": "#02080c",
+  "orientation": "any",
+  "icons": [
+    {
+      "src": "/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "Ask Jarvis",
+      "url": "/?action=ask",
+      "description": "Open the Jarvis command input."
+    },
+    {
+      "name": "Device Mesh",
+      "url": "/?tool=devices",
+      "description": "Open the OmniPresence mesh panel."
+    }
+  ]
+}

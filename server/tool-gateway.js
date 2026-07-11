@@ -1,0 +1,266 @@
+const { McpServer } = require("@modelcontextprotocol/sdk/server/mcp.js");
+const { z } = require("zod");
+
+const STOP_WORDS = new Set(["the", "and", "for", "with", "this", "that", "from", "into", "your", "you", "please", "can", "could", "would"]);
+
+function tokenize(value) {
+  const separated = String(value || "").replace(/([a-z0-9])([A-Z])/g, "$1 $2");
+  return [...new Set((separated.toLowerCase().match(/[a-z0-9][a-z0-9_-]{1,}/g) || []).filter((token) => !STOP_WORDS.has(token)))];
+}
+
+function createToolGateway({ capabilityEngine, moduleRegistry, codeKnowledge }) {
+  const mcp = new McpServer({ name: "jarvis-local-tools", version: "1.0.0" });
+
+  for (const definition of capabilityEngine.definitions) {
+    mcp.registerTool(
+      definition.name,
+      {
+        description: definition.description,
+        inputSchema: z.object({}).catchall(z.unknown()),
+      },
+      async (args) => {
+        const result = await capabilityEngine.execute(definition.name, args, {
+          deviceId: "mcp-client",
+          source: "mcp",
+        });
+        return {
+          isError: !result.ok,
+          content: [{ type: "text", text: JSON.stringify(result) }],
+        };
+      },
+    );
+  }
+
+  mcp.registerResource(
+    "jarvis-capabilities",
+    "jarvis://capabilities",
+    { description: "The executable JARVIS capability catalog.", mimeType: "application/json" },
+    async () => ({
+      contents: [{
+        uri: "jarvis://capabilities",
+        mimeType: "application/json",
+        text: JSON.stringify(capabilityEngine.definitions),
+      }],
+    }),
+  );
+  mcp.registerResource(
+    "jarvis-modules",
+    "jarvis://modules",
+    { description: "The complete JARVIS module registry and readiness state.", mimeType: "application/json" },
+    async () => ({
+      contents: [{
+        uri: "jarvis://modules",
+        mimeType: "application/json",
+        text: JSON.stringify(moduleRegistry()),
+      }],
+    }),
+  );
+
+  function scoreTool(definition, queryTokens) {
+    const haystack = tokenize(`${definition.name} ${definition.description}`);
+    const matches = queryTokens.filter((token) => haystack.some((word) =>
+      word === token
+      || (token.length >= 4 && word.length >= 4 && (word.startsWith(token) || token.startsWith(word))),
+    ));
+    let score = matches.length * 4;
+    const query = queryTokens.join(" ");
+    const name = definition.name.replaceAll("_", " ");
+    if (query.includes(name)) score += 12;
+    return score;
+  }
+
+  function selectTools(prompt, options = {}) {
+    const limit = Math.max(1, Math.min(12, Number(options.limit || 5)));
+    const route = options.route || {};
+    const tokens = tokenize(prompt);
+    const screenPrompt = /\b(screen|desktop|what'?s on my laptop|what is on my laptop|look at my laptop|laptop screen|current screen|visible screen|what'?s on my screen|what is on my screen)\b/i.test(prompt);
+    const screenActionPrompt = screenPrompt
+      || /\b(current laptop screen|visible laptop screen|screen_act|screen_inspect)\b/i.test(prompt)
+      || (/\b(click|tap|open|play|watch|select|choose|type|write|press|hit|search|perform the search|submit the search|full ?screen|scroll)\b/i.test(prompt)
+        && /\b(it|this|that|there|screen|laptop|youtube|you tube|video|search bar|results?)\b/i.test(prompt));
+    const scored = capabilityEngine.definitions
+      .map((definition) => ({ definition, score: scoreTool(definition, tokens) }))
+      .sort((a, b) => b.score - a.score);
+    const selected = scored.filter((item) => item.score > 0).slice(0, limit).map((item) => item.definition.name);
+    const alwaysUseful = [];
+    if (/\b(remember|memory|preference|about me|earlier|previous|life graph|know about me|my classes|my projects|my routines|my goals)\b/i.test(prompt)) {
+      alwaysUseful.push("neural_vault_context", "neural_vault_resolve", "memory_search", "life_graph");
+    }
+    if (/\b(neural vault|memory mesh|continuity|context pack|what does (?:it|this|that) refer|what did i mean|last thing|previous conversation)\b/i.test(prompt)) {
+      alwaysUseful.push("neural_vault_context", "neural_vault_resolve", "neural_vault_status", "memory_os_v4_status", "memory_os_v4_query");
+    }
+    if (/\b(memoryos|memory os|filedb|file db|memory agents?|file inspector|source code mapper|retrieval evaluator|memory manager)\b/i.test(prompt)) {
+      alwaysUseful.push("memory_os_v4_status", "memory_os_v4_query", "memory_os_v4_scan_files", "memory_os_v4_run_agent");
+    }
+    if (/\b(what can you do|capabilities|tools|modules|features|api keys?|integrations?|provider health|connected services?|why can'?t you|what is broken|what works)\b/i.test(prompt)) {
+      alwaysUseful.push("neural_vault_status", "neural_vault_integrations", "jarvis_self_inspect");
+    }
+    if (/\b(action macros?|macros?|workflow memory|saved actions?|repeatable actions?|learned procedures?|common actions?)\b/i.test(prompt)) {
+      alwaysUseful.push("neural_vault_actions", "skill_list", "skill_inspect");
+    }
+    if (/\b(co-?op|symbiote|shared workspace|pair build|patch court|ghost sandbox|ask both jarvis|friend'?s jarvis|jarvis bridge|shared file tree|skill transfer dock|co-op replay|coop replay)\b/i.test(prompt)) {
+      alwaysUseful.push(
+        "coop_symbiote_status",
+        "coop_symbiote_create_session",
+        "coop_symbiote_manifest",
+        "coop_symbiote_chat",
+        "coop_symbiote_patch",
+        "coop_symbiote_ghost_test",
+        "coop_symbiote_debate",
+        "coop_symbiote_memory",
+      );
+    }
+    if (/\b(maintenance|clean memory|dedupe|deduplicate|memory report|vault report)\b/i.test(prompt)) {
+      alwaysUseful.push("neural_vault_maintenance", "neural_vault_status");
+    }
+    if (screenPrompt) {
+      alwaysUseful.push("screen_capture", "screen_inspect");
+    }
+    if (!screenPrompt && /\b(pc graph|knowledge graph|reality graph|my laptop|my computer|downloads?|documents?|desktop|screenshots?|recent files?|file from yesterday|last night|what was i working|find .* file|find .* project|where is .* pdf|where is .* doc|class files?|project dna|time machine)\b/i.test(prompt)) {
+      alwaysUseful.push("pc_graph_search", "pc_graph_timeline", "pc_graph_explain", "pc_graph_inspect", "pc_graph_rebuild");
+    }
+    if (/\b(deploy|start|run|send)\b.*\b(agent|agents|browser agent|kalshi agent|canvas agent|pc agent|research agent|verifier)\b/i.test(prompt)
+      || /\b(agent swarm|war room)\b/i.test(prompt)) {
+      alwaysUseful.push("agent_deploy", "skill_inspect");
+    }
+    if (/\b(compile|save|learn|record|turn .* into|make .* reusable|autopilot|procedure|routine|skill)\b/i.test(prompt)
+      && /\b(skill|routine|procedure|workflow|autopilot|when i say|repeatable|again)\b/i.test(prompt)) {
+      alwaysUseful.push("skill_compile", "skill_list", "skill_inspect");
+    }
+    if (/\b(run|start|execute|use)\b.*\b(skill|routine|autopilot|workflow)\b/i.test(prompt)) {
+      alwaysUseful.push("skill_run", "skill_list", "agent_deploy");
+    }
+    if (/\b(system|cpu|memory usage|uptime|network status|computer status)\b/i.test(prompt)) alwaysUseful.push("system_status");
+    if (/\b(latest|recent|most recent|today|tomorrow|current|right now|live|online|news|score|schedule|price|weather|research|look up|google|web|internet|who is|when is|where is|who won|finals|championship|world cup|fifa|things to do|events?)\b/i.test(prompt)) {
+      alwaysUseful.push("research_v2", "web_research");
+    }
+    if (/\b(deep research|research report|investigate|source-backed|source backed|citations?|evidence|read sources?|compare sources?|summarize (?:this )?(?:url|link|page|article)|read (?:this )?(?:url|link|page|article))\b/i.test(prompt)
+      || /https?:\/\/[^\s)]+/i.test(prompt)) {
+      alwaysUseful.push("research_v2", "web_research_deep", "url_read", "web_research");
+    }
+    if (/\b(make|create|generate|write|build|compose|draft|turn .* into)\b/i.test(prompt)
+      && /\b(report|brief|briefing|document|doc|pdf|deck|slides?|presentation|study sheet|one[- ]pager|artifact|write[- ]up|summary sheet|trading brief|research brief)\b/i.test(prompt)) {
+      alwaysUseful.push("compose_artifact", "artifact_status", "web_research_deep", "url_read");
+    }
+    if (/\b(code|source code|implementation|file|route|function|architecture|bug|server)\b/i.test(prompt)) {
+      alwaysUseful.push("codebase_search", "jarvis_self_inspect");
+    }
+    const canvasPrompt = /\b(canvas|assignment|assignments|homework|course|courses|due|submit)\b/i.test(prompt);
+    if (canvasPrompt) {
+      alwaysUseful.push("canvas_assignments", "canvas_courses", "canvas_browser_assignments");
+    }
+    const kalshiAccountPrompt = /\b(portfolio|positions?|orders?|fills?|balance|latest bet|best position|exposure|p&l|profit|loss)\b/i.test(prompt)
+      || /\bmy\s+(kalshi|bets?|orders?|fills?|portfolio|positions?|balance)\b/i.test(prompt);
+    const kalshiDiscoveryPrompt = /\bkalshi\b/i.test(prompt)
+      || /\b(get|check|find|show)\s+(odds|markets?|contracts?|prices?)\s+(from|on)\s+kalshi\b/i.test(prompt);
+    const publicSportsSchedulePrompt = !kalshiDiscoveryPrompt
+      && /\b(fifa|world cup|club world cup|soccer|football|game|games|match|matches|schedule|fixtures?)\b/i.test(prompt)
+      && /\b(today|tomorrow|next|upcoming|current|live|right now|what .* games?|are there|when|schedule|fixtures?)\b/i.test(prompt);
+    if (kalshiAccountPrompt) {
+      alwaysUseful.push("kalshi_portfolio", "kalshi_positions", "kalshi_fills", "kalshi_balance");
+    }
+    if (!kalshiAccountPrompt && kalshiDiscoveryPrompt && /\b(game|match|world cup|fifa|soccer|football|mexico|mex|club world cup)\b/i.test(prompt)) {
+      alwaysUseful.push("kalshi_market_discovery", "kalshi_markets", "screen_inspect", "screen_capture");
+    }
+    if (/\b(uploaded photo|photo i uploaded|phone photo|uploaded image|latest image|latest photo|picture i uploaded|device inbox|files? from my phone)\b/i.test(prompt)) {
+      alwaysUseful.push("device_latest_image", "device_files", "mesh_objects", "mesh_status");
+    }
+    if (/\b(phone|ipad|tablet|device mesh|omnipresence|mesh|object portal|send .* (?:phone|ipad|device)|push card|command card|pair(?:ing)? link|laptop screen from phone|file from phone|photo from phone)\b/i.test(prompt)) {
+      alwaysUseful.push("mesh_status", "mesh_objects", "mesh_send_command", "device_files", "device_latest_image");
+    }
+    if (/\b(pair(?:ing)?|connect|link|login|sign in|set up|setup)\b.*\b(phone|ipad|tablet|device)\b/i.test(prompt)
+      || /\b(phone|ipad|tablet|device)\b.*\b(pair(?:ing)?|connect|link|login|sign in|set up|setup)\b/i.test(prompt)) {
+      alwaysUseful.push("mesh_pair_link", "mesh_status", "mesh_self_test");
+    }
+    if (/\b(mesh diagnostics?|mesh self[- ]?test|qr|phone link|connection guide|why.*phone.*connect|why.*qr)\b/i.test(prompt)) {
+      alwaysUseful.push("mesh_self_test", "mesh_pair_link", "mesh_status");
+    }
+    if (/\b(run|execute|powershell|command|cmd|terminal|shell|script)\b/i.test(prompt)) {
+      alwaysUseful.push("run_command");
+    }
+    if (/\b(write|save|create|make)\b.*\b(file|txt|text file|document|note)\b/i.test(prompt)
+      || /\b(file|txt|text file|note)\b.*\b(write|save|create|make)\b/i.test(prompt)) {
+      alwaysUseful.push("write_file");
+    }
+    if (/\b(delete|remove|trash)\b.*\b(file|folder|directory)\b/i.test(prompt)) {
+      alwaysUseful.push("delete_file");
+    }
+    if (/\b(clipboard|copy|paste|what(?:'s| is) in (?:my )?clipboard|read clipboard)\b/i.test(prompt)) {
+      alwaysUseful.push("read_clipboard", "write_clipboard");
+    }
+    if (/\b(notification|notify|toast|alert|remind me|send me a? (?:reminder|notification|alert))\b/i.test(prompt)) {
+      alwaysUseful.push("toast_notification");
+    }
+    if (/\b(analyze|analyse|what(?:'s| is) on (?:my )?screen|describe (?:my )?screen|look at (?:my )?screen|screen analysis)\b/i.test(prompt)) {
+      alwaysUseful.push("screen_analyze");
+    }
+    if (/\b(youtube|you tube)\b/i.test(prompt) && /\b(video|watch|play|title|titled|called|open|full ?screen)\b/i.test(prompt)) {
+      alwaysUseful.push("screen_act", "screen_inspect", "screen_capture", "desktop_control");
+    }
+    if (/\b(youtube|you tube)\b/i.test(prompt) && /\b(search|search bar|perform the search|submit the search)\b/i.test(prompt)) {
+      alwaysUseful.push("screen_act", "screen_inspect", "screen_capture", "desktop_control", "open_url");
+    }
+    if (screenActionPrompt || /\b(do this on my screen|on (?:my )?(?:laptop|computer|screen)|visible screen|current screen|click on|click the|click .+ screen|type on screen|press|hotkey|full ?screen)\b/i.test(prompt)) {
+      alwaysUseful.push("screen_act", "screen_inspect", "screen_capture", "desktop_control");
+    } else if (/\b(switch tabs?|change tabs?|next tab|previous tab)\b/i.test(prompt)) {
+      alwaysUseful.push("desktop_control", "screen_capture");
+    }
+    if (/\b(browser|website|web page|chrome|canvas|instagram|gmail|youtube|you tube|github|reddit|google|kalshi|amazon|form|upload|download|submit|click|open .*site|open .*on (?:my )?(?:laptop|computer)|go to|log in)\b/i.test(prompt)) {
+      alwaysUseful.push(
+        "desktop_control",
+        "open_url",
+        "browser_status",
+        "browser_login_handoff",
+        "browser_page_brief",
+        "browser_navigate",
+        "browser_snapshot",
+        "browser_act",
+        "browser_commit",
+        "browser_tabs",
+        "browser_file_search",
+        "browser_screenshot",
+        ...(canvasPrompt ? [] : ["browser_verify"]),
+      );
+    }
+    if (screenPrompt) {
+      alwaysUseful.push("screen_capture");
+    }
+    const pureBrowserOperationPrompt = /\b(browser|website|web page|chrome|open .*site|open .*on (?:my )?(?:laptop|computer)|go to|click|type|inspect it|snapshot|form|upload|download|submit)\b/i.test(prompt)
+      && !/\b(latest|recent|most recent|today|current|right now|live|online|news|score|schedule|price|research|look up|who is|when is|where is|who won|finals|championship|world cup|fifa)\b/i.test(prompt);
+    const filteredAlwaysUseful = pureBrowserOperationPrompt
+      ? alwaysUseful.filter((name) => !["research_v2", "web_research", "web_research_deep", "url_read"].includes(name))
+      : alwaysUseful;
+    const filteredSelected = kalshiAccountPrompt || publicSportsSchedulePrompt
+      ? selected.filter((name) => !["kalshi_market_discovery", "kalshi_markets"].includes(name))
+      : pureBrowserOperationPrompt
+        ? selected.filter((name) => !["research_v2", "web_research", "web_research_deep", "url_read"].includes(name))
+      : selected;
+    // T4c: skip tools entirely for pure conversation turns with no enrichment signals
+    const isPureConversation = (route.intent === "conversation" || route.intent === "conversation-follow-up")
+      && !route.action && !route.fresh && !route.personal && !route.code
+      && filteredAlwaysUseful.length === 0;
+    if (isPureConversation) return [];
+
+    return [...new Set([...filteredAlwaysUseful, ...filteredSelected])]
+      .map((name) => capabilityEngine.declarations.find((item) => item.name === name))
+      .filter(Boolean)
+      .slice(0, limit);
+  }
+
+  function catalog() {
+    return {
+      protocol: "MCP",
+      server: { name: "jarvis-local-tools", version: "1.0.0" },
+      tools: capabilityEngine.definitions,
+      resources: [
+        { uri: "jarvis://capabilities", name: "JARVIS capabilities" },
+        { uri: "jarvis://modules", name: "JARVIS modules" },
+        { uri: "jarvis://codebase", name: "JARVIS codebase knowledge", stats: codeKnowledge?.stats() },
+      ],
+    };
+  }
+
+  return { mcp, selectTools, catalog };
+}
+
+module.exports = { createToolGateway };

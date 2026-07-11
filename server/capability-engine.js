@@ -1,0 +1,2216 @@
+const crypto = require("crypto");
+const fs = require("fs");
+const os = require("os");
+const path = require("path");
+const { execFile, spawn } = require("child_process");
+const { promisify } = require("util");
+const { evaluateAutonomy, requiredAutonomyLevel } = require("./autonomy-policy");
+const { createBrowserAutomationService } = require("./browser-service");
+const { createResearchOrchestrator } = require("./cortex/research-orchestrator");
+const { createResearchV2 } = require("./research-v2");
+const { createWorkComposer } = require("./work-composer/work-composer");
+const { createPcKnowledgeGraph } = require("./pc-knowledge-graph");
+const { createSkillAutopilot } = require("./skill-autopilot");
+const { createComputerUse } = require("./computer-use");
+
+const execFileAsync = promisify(execFile);
+const CONFIRMATIONS_FILE = "confirmations.json";
+const MEMORY_FILE = "agent-memory.json";
+const MAX_OUTPUT = 1024 * 1024;
+
+function stableJson(value) {
+  if (Array.isArray(value)) return `[${value.map(stableJson).join(",")}]`;
+  if (value && typeof value === "object") {
+    return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${stableJson(value[key])}`).join(",")}}`;
+  }
+  return JSON.stringify(value);
+}
+
+function hash(value) {
+  return crypto.createHash("sha256").update(stableJson(value)).digest("hex");
+}
+
+function errorWithStatus(message, statusCode = 400) {
+  const error = new Error(message);
+  error.statusCode = statusCode;
+  return error;
+}
+
+function cleanString(value, max = 500) {
+  return String(value || "").trim().slice(0, max);
+}
+
+function asNumber(value, fallback, min, max) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.max(min, Math.min(max, parsed));
+}
+
+function ensureInside(root, candidate) {
+  const resolvedRoot = fs.realpathSync.native(root);
+  const resolved = fs.realpathSync.native(candidate);
+  const relative = path.relative(resolvedRoot, resolved);
+  if (relative.startsWith("..") || path.isAbsolute(relative)) throw errorWithStatus("Path is outside the approved workspace", 403);
+  return resolved;
+}
+
+async function fetchJson(url, options = {}, timeoutMs = 12000) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetch(url, { ...options, signal: controller.signal });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw errorWithStatus(data?.error?.message || data?.message || `Provider request failed (${response.status})`, 502);
+    }
+    return data;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function fetchPagedJson(initialUrl, options = {}, maxItems = 200) {
+  const items = [];
+  let nextUrl = String(initialUrl);
+  const allowedOrigin = new URL(nextUrl).origin;
+  for (let page = 0; page < 10 && nextUrl && items.length < maxItems; page += 1) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 12000);
+    try {
+      const response = await fetch(nextUrl, { ...options, redirect: "error", signal: controller.signal });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw errorWithStatus(data?.errors?.[0]?.message || `Provider request failed (${response.status})`, 502);
+      if (!Array.isArray(data)) throw errorWithStatus("Expected a paginated array response", 502);
+      items.push(...data);
+      const link = String(response.headers.get("link") || "");
+      const next = link.split(",").map((part) => part.trim()).find((part) => /rel="?next"?/.test(part));
+      const match = next?.match(/<([^>]+)>/);
+      nextUrl = match?.[1] || "";
+      if (nextUrl && new URL(nextUrl).origin !== allowedOrigin) throw errorWithStatus("Cross-origin pagination URL rejected", 502);
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+  return items.slice(0, maxItems);
+}
+
+function createCapabilityEngine({
+  runtimeDir,
+  workspaceRoot,
+  getSettings,
+  createReceipt,
+  providers,
+  scanProjects,
+  openProjectFolder,
+  memoryStore,
+  codeKnowledge,
+  windowsBroker,
+  getAutonomyProfile,
+  browserService,
+  screenCapture,
+  deviceFiles,
+  latestDeviceImage,
+  meshStatus,
+  meshObjects,
+  meshCreateCommand,
+  meshCreatePair,
+  meshSelfTest,
+  coopSymbioteMesh,
+  neuralVault,
+  missionEngine,
+  apexIngest,
+}) {
+  const getApex = () => (typeof apexIngest === "function" ? apexIngest() : apexIngest);
+  const confirmationsPath = path.join(runtimeDir, CONFIRMATIONS_FILE);
+  const memoryPath = path.join(runtimeDir, MEMORY_FILE);
+  const actionHistory = [];
+  const browser = browserService || createBrowserAutomationService({ runtimeDir });
+  const cortex = createResearchOrchestrator({ getSettings });
+  let researchV2;
+  const composer = createWorkComposer({ runtimeDir });
+  const pcGraph = createPcKnowledgeGraph({ runtimeDir, workspaceRoot });
+  const skillAutopilot = createSkillAutopilot({ runtimeDir, missionEngine });
+  const computerUse = screenCapture ? createComputerUse({ screenCapture, getSettings, browserService: browser }) : null;
+  const siteAliases = {
+    youtube: "https://www.youtube.com/",
+    "you tube": "https://www.youtube.com/",
+    gmail: "https://mail.google.com/",
+    google: "https://www.google.com/",
+    canvas: "https://northeastern.instructure.com/",
+    instagram: "https://www.instagram.com/",
+    github: "https://github.com/",
+    reddit: "https://www.reddit.com/",
+    kalshi: "https://kalshi.com/portfolio",
+  };
+
+  function readJson(filePath, fallback) {
+    try {
+      return JSON.parse(fs.readFileSync(filePath, "utf8"));
+    } catch {
+      return fallback;
+    }
+  }
+
+  function writeJsonAtomic(filePath, value) {
+    fs.mkdirSync(path.dirname(filePath), { recursive: true });
+    const temporary = `${filePath}.${process.pid}.${crypto.randomBytes(5).toString("hex")}.tmp`;
+    fs.writeFileSync(temporary, `${JSON.stringify(value, null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
+    fs.renameSync(temporary, filePath);
+  }
+
+  const appCatalog = {
+    browser: { command: "cmd.exe", args: ["/c", "start", "", "https://www.google.com"], process: null },
+    chrome: { command: "cmd.exe", args: ["/c", "start", "", "chrome"], process: "chrome" },
+    edge: { command: "cmd.exe", args: ["/c", "start", "", "msedge"], process: "msedge" },
+    calculator: { command: "calc.exe", args: [], process: "CalculatorApp" },
+    notepad: { command: "notepad.exe", args: [], process: "notepad" },
+    explorer: { command: "explorer.exe", args: [], process: "explorer" },
+    terminal: { command: "cmd.exe", args: ["/c", "start", "", "wt.exe"], process: "WindowsTerminal" },
+    vscode: { command: "cmd.exe", args: ["/c", "start", "", "code"], process: "Code" },
+    spotify: { command: "cmd.exe", args: ["/c", "start", "", "spotify"], process: "Spotify" },
+  };
+
+  const definitions = [
+    ["system_status", "Read real local CPU, memory, uptime, network interfaces, and load information.", "observe", false],
+    ["list_processes", "List running Windows processes, sorted by memory use.", "observe", false],
+    ["open_app", "Open an allowlisted Windows application.", "execute", false],
+    ["open_url", "Open a validated HTTP/HTTPS URL or common site name such as YouTube, Gmail, Canvas, Instagram, GitHub, Reddit, Google, or Kalshi in the laptop default browser.", "execute", false],
+    ["screen_inspect", "Inspect the current visible laptop screen through Windows UI Automation and return visible controls, labels, roles, and screen-coordinate bounds.", "observe", false],
+    ["screen_act", "Operate on the current visible laptop screen by first capturing and inspecting it, locating a visible target, performing a bounded click/type/hotkey/fullscreen action, then capturing again to verify.", "execute", false],
+    ["youtube_open_video", "Fallback YouTube video opener. Prefer screen_act when the user is referring to the current visible screen.", "execute", false],
+    ["desktop_control", "Control the visible laptop desktop with bounded actions: open a site full-screen, toggle full-screen, switch browser tabs, send safe hotkeys, click visible text or screen coordinates, or type text into the active window.", "execute", false],
+    ["close_app", "Close an allowlisted Windows application.", "commit", true],
+    ["network_inventory", "Read passive local adapter, route, and neighbor information. It does not scan arbitrary hosts.", "observe", false],
+    ["search_projects", "Search project names and package metadata in the approved workspace.", "observe", false],
+    ["open_project", "Open an indexed workspace project in Windows Explorer.", "execute", false],
+    ["search_files", "Search filenames inside an approved workspace project.", "observe", false],
+    ["kalshi_markets", "Search live open Kalshi markets using the public official API with query expansion and fuzzy ranking.", "observe", false],
+    ["kalshi_market_discovery", "Find a Kalshi market or sports/game/event bet by expanding team names, abbreviations, dates, leagues, and market wording, then ranking candidate markets with proof of searched terms.", "observe", false],
+    ["kalshi_balance", "Read the authenticated Kalshi cash balance and portfolio value.", "observe", false],
+    ["kalshi_positions", "Read authenticated Kalshi market and event positions.", "observe", false],
+    ["kalshi_fills", "Read authenticated Kalshi fills to identify recent matched bets and trade history.", "observe", false],
+    ["kalshi_portfolio", "Summarize the authenticated Kalshi portfolio, latest bet, active exposure, and best position.", "observe", false],
+    ["canvas_courses", "Read active Canvas LMS courses.", "observe", false],
+    ["canvas_assignments", "Read upcoming Canvas assignments for one course or all active courses.", "observe", false],
+    ["canvas_browser_assignments", "Open Canvas in the persistent JARVIS browser and observe the assignments/calendar page when API credentials are missing.", "observe", false],
+    ["web_research", "Answer a current/live web question with Gemini Google Search grounding and return citations. Use when live web facts are needed, not for private account data.", "observe", false],
+    ["research_v2", "JARVIS Research Engine v2: classify a public-info request, expand multiple search angles, run Gemini grounded search plus optional Tavily/Brave/Exa providers, read top URLs, verify evidence, and return progress, citations, confidence, and a grounded answer.", "observe", false],
+    ["web_research_deep", "Cortex v2 deep public research: plan a live search, use grounded search, read top public source URLs, and return evidence objects with citations.", "observe", false],
+    ["url_read", "Read and extract clean text from a public HTTP/HTTPS URL with SSRF protections and metadata.", "observe", false],
+    ["compose_artifact", "Create a verified Work Composer artifact as Markdown and HTML with sources, brief metadata, and verification receipts.", "prepare", false],
+    ["artifact_status", "List recent Work Composer artifacts or inspect one artifact verification record.", "observe", false],
+    ["pc_graph_rebuild", "Build or refresh the Personal Reality Graph from local files, projects, downloads, screenshots, and documents.", "prepare", false],
+    ["pc_graph_search", "Search the Personal Reality Graph for local files, projects, documents, screenshots, classes, recent work, and evidence paths.", "observe", false],
+    ["pc_graph_timeline", "Reconstruct recent laptop activity from indexed file/project timestamps for Time Machine style questions.", "observe", false],
+    ["pc_graph_explain", "Explain why a file/project appears relevant by returning graph neighbors, project containment, timestamps, and evidence.", "observe", false],
+    ["pc_graph_inspect", "Inspect Personal Reality Graph health, counts, last index run, and recent indexed nodes.", "observe", false],
+    ["agent_deploy", "Deploy a typed autonomous JARVIS agent mission such as browser, kalshi, canvas, pc, research, verifier, or coordinator.", "prepare", false],
+    ["skill_compile", "Compile a repeated natural-language procedure into a reusable skill with agent steps, tools, approval gates, and tests.", "prepare", false],
+    ["skill_run", "Run a compiled skill by deploying its agent mission swarm and coordinator.", "prepare", false],
+    ["skill_list", "List compiled reusable JARVIS skills and their reliability metadata.", "observe", false],
+    ["skill_inspect", "Inspect the Skill Autopilot engine, agent profiles, compiled skills, and run counts.", "observe", false],
+    ["news_headlines", "Read current news headlines using the configured News API key.", "observe", false],
+    ["weather_forecast", "Read a US National Weather Service forecast for coordinates.", "observe", false],
+    ["memory_search", "Search JARVIS personal memory.", "observe", false],
+    ["memory_add", "Add a user-approved fact or preference to JARVIS memory.", "prepare", false],
+    ["life_graph", "Read JARVIS personal life graph buckets: people, classes, projects, preferences, routines, goals, accounts, and entities.", "observe", false],
+    ["neural_vault_status", "Read Neural Vault memory OS health, schema counts, runtime paths, agents, macros, integrations, and continuity status.", "observe", false],
+    ["neural_vault_context", "Retrieve the Neural Vault context pack for a user request, including continuity, relevant memories, macros, integrations, capabilities, and answer frames.", "observe", false],
+    ["neural_vault_resolve", "Resolve ambiguous references like it, this, that, the prompt, or last thing using the hot continuity cache.", "observe", false],
+    ["neural_vault_actions", "List or match learned Neural Vault action macros and reusable workflow memory.", "observe", false],
+    ["neural_vault_integrations", "Read Neural Vault integration metadata, API-key metadata without secrets, provider health history, and capability memory.", "observe", false],
+    ["neural_vault_api_key_metadata", "Store safe API-key metadata in Neural Vault using env var names or file labels only. Never store raw secret values.", "prepare", false],
+    ["neural_vault_maintenance", "Run the local Neural Vault maintenance pass to merge duplicates, refresh summaries, and write a maintenance report.", "prepare", false],
+    ["memory_os_v4_status", "Read Neural Vault v4 MemoryOS/FileDB/agent status, object counts, report paths, and storage roots.", "observe", false],
+    ["memory_os_v4_query", "Query MemoryOS v4 across object paths, keyword/FTS, FileDB, source code, commands, skills, agents, device mesh, and co-op memory without hallucinating.", "observe", false],
+    ["memory_os_v4_scan_files", "Run the MemoryOS v4 File Inspector to index project files, checksums, source summaries, and source-code memory objects.", "prepare", false],
+    ["memory_os_v4_run_agent", "Run a named MemoryOS v4 memory agent such as file-inspector-agent, memory-manager-agent, source-code-mapper-agent, or retrieval-evaluator-agent.", "prepare", false],
+    ["device_files", "List files and photos uploaded from paired phones or other devices into the JARVIS device inbox.", "observe", false],
+    ["device_latest_image", "Find the latest uploaded phone/device image and attach it for Gemini visual analysis.", "observe", false],
+    ["mesh_status", "Read OmniPresence Mesh v2 status: paired phone/iPad/laptop nodes, trust levels, object portal, command cards, Cloudflare/stable phone links, public URLs, and local access URLs.", "observe", false],
+    ["mesh_objects", "List or inspect objects sent through the device mesh, including phone photos, links, notes, screen captures, and uploaded files.", "observe", false],
+    ["mesh_pair_link", "Create a one-time phone/iPad pairing code and return public Cloudflare/stable pair links first, followed by local/LAN fallback links.", "prepare", false],
+    ["mesh_self_test", "Run Device Mesh emergency repair diagnostics for LAN IP, QR URL, pairing page, text/link/file routes, memory writes, and event logging.", "prepare", false],
+    ["mesh_send_command", "Create a device-mesh command card for a phone, iPad, laptop, or any paired device.", "prepare", false],
+    ["coop_symbiote_status", "Read Jarvis Co-Op Symbiote Mesh workspace status, active session, repo fingerprint, connection quality, manifest summary, and memory counts.", "observe", false],
+    ["coop_symbiote_create_session", "Create a trusted two-person Co-Op Symbiote Mesh session with a short expiring join code and invite links.", "prepare", false],
+    ["coop_symbiote_manifest", "Generate a secret-scanned safe source-code file manifest for the current Jarvis project.", "observe", false],
+    ["coop_symbiote_chat", "Send a human co-op chat message into the active Symbiote session and store it in Neural Vault.", "prepare", false],
+    ["coop_symbiote_patch", "Create a Patch Court proposal for an allowed source file using original/replacement text. Does not apply the patch.", "prepare", false],
+    ["coop_symbiote_ghost_test", "Run a proposed patch through the Ghost Sandbox isolated-copy verifier before any real file write.", "prepare", false],
+    ["coop_symbiote_debate", "Ask both Jarvis systems to debate a co-op engineering decision and save the structured recommendation.", "observe", false],
+    ["coop_symbiote_memory", "Read Neural Vault co-op session memory: events, patches, tasks, replays, bridge messages, memory packets, and skill transfers.", "observe", false],
+    ["codebase_search", "Search JARVIS source code, routes, symbols, configuration, and architecture with hybrid retrieval.", "observe", false],
+    ["jarvis_self_inspect", "Read JARVIS runtime architecture, code-index health, capabilities, and application inventory.", "observe", false],
+    ["draft_email", "Prepare an email draft without sending it.", "prepare", false],
+    ["send_email", "Send an email through Gmail using a configured OAuth access token.", "commit", true],
+    ["browser_search", "Open a web search in the default browser.", "execute", false],
+    ["browser_status", "Report the persistent JARVIS browser session, tabs, active page, saved profile, and snapshot readiness.", "observe", false],
+    ["browser_login_handoff", "Open a login-required website in the persistent JARVIS browser and pause for the user to authenticate manually.", "prepare", false],
+    ["browser_page_brief", "Summarize the active browser page into forms, buttons, links, upload controls, login signals, security signals, and likely next actions.", "observe", false],
+    ["browser_navigate", "Navigate the isolated persistent JARVIS browser to a validated HTTP or HTTPS URL.", "prepare", false],
+    ["browser_snapshot", "Observe the active browser page as compact semantic elements with stable short-lived references.", "observe", false],
+    ["browser_tabs", "List, open, switch, or close tabs in the persistent JARVIS browser.", "prepare", false],
+    ["browser_act", "Perform a reversible browser action using a semantic element reference or CSS selector. Consequential controls are blocked.", "prepare", false],
+    ["browser_commit", "Perform one user-approved consequential browser operation or bounded operation batch, such as submitting, sending, publishing, purchasing, or uploading.", "commit", true],
+    ["browser_file_search", "Find recent files in approved workspace, Desktop, Documents, and Downloads locations for browser workflows.", "observe", false],
+    ["browser_inspect", "Inspect visible interactive elements in the isolated JARVIS browser.", "observe", false],
+    ["browser_click", "Click one visible CSS-selected element in the isolated JARVIS browser.", "commit", true],
+    ["browser_type", "Type into one visible non-password field in the isolated JARVIS browser.", "execute", false],
+    ["browser_extract", "Extract bounded text or HTML from the isolated JARVIS browser.", "observe", false],
+    ["browser_screenshot", "Capture a screenshot inside the JARVIS runtime artifact directory.", "observe", false],
+    ["browser_wait", "Wait briefly or for a CSS-selected browser element state.", "observe", false],
+    ["browser_verify", "Verify browser URL, title, text, or element visibility without changing the page.", "observe", false],
+    ["screen_capture", "Capture the laptop primary display for visual analysis. Use only when the user asks what is on the laptop screen or desktop.", "observe", false],
+    ["instagram_reply", "Reply through the official Instagram professional messaging API.", "commit", true],
+    ["list_windows", "List visible top-level Windows application windows using semantic UI Automation.", "observe", false],
+    ["inspect_window", "Inspect named controls in a Windows application using semantic UI Automation.", "observe", false],
+    ["focus_window", "Focus a visible Windows application window.", "execute", true],
+    ["invoke_control", "Invoke a named button or control in a Windows application.", "execute", true],
+    ["set_control_value", "Set text on a named editable Windows control.", "execute", true],
+    ["run_command", "Execute a PowerShell command on the local Windows machine and return the output. Use for system queries, file operations, process control, and automation tasks.", "execute", false],
+    ["write_file", "Write text content to a file on the local machine at any absolute path. Creates parent directories if needed.", "commit", true],
+    ["delete_file", "Delete a file or empty directory from the local machine.", "commit", true],
+    ["read_clipboard", "Read the current Windows clipboard text content.", "observe", false],
+    ["write_clipboard", "Write text to the Windows clipboard.", "execute", false],
+    ["toast_notification", "Show a Windows toast notification with a title and message.", "execute", false],
+    ["screen_analyze", "Capture the current screen once and analyze it with Gemini Vision. Returns what is visible and answers a specific question about the screen.", "observe", false],
+    ["computer_use", "Run a vision-grounded automation task on the current screen: Jarvis takes a screenshot, draws numbered bounding boxes on every interactive element (Set-of-Marks), sends it to Gemini Vision, and executes multi-step tasks like searching YouTube, sending Instagram DMs, scrolling to find a contact, clicking buttons, typing — on ANY website or app regardless of accessibility support. Use for tasks that require navigating modern apps visually.", "execute", false],
+    ["screen_locate", "Find any visible UI element on the current screen using Gemini Vision and return its pixel coordinates. Works on web apps with no accessibility labels.", "observe", false],
+    ["mouse_scroll", "Scroll the mouse wheel at a screen coordinate in a specified direction and amount. Use for scrolling feeds, lists, pages, or DM threads.", "execute", false],
+    ["apex_catalog_search", "Search the APEX trading-room data catalog by keyword and get matching datasets, database tables, and local files with their columns, row counts, date coverage, source, and a plain-language summary. Use this first to discover what market/news/history data APEX holds before answering data questions.", "observe", false],
+    ["apex_data_summary", "Get a detailed summary of one APEX data entry (a database table, dataset, or local file) by exact name or id: its columns, row count, date range, source, and description. Use after apex_catalog_search to inspect a specific source.", "observe", false],
+    ["apex_strategies", "List or inspect the user's trading strategies/bots built in THE FORGE. Call with no id to list all saved strategies (name, tags, folder, summary, Sharpe). Call with an id to get the full spec of one strategy: its signals/indicators, entry/exit rules, position sizing, risk rules, and backtest metrics. Use this whenever the user asks about their strategies, bots, or what they've built.", "observe", false],
+    ["apex_forge", "Inspect the user's FORGE building blocks: strategy folders, reusable signals, and named variables (DSL expressions like 'RSI(SPX,14)<30'). Call with kind='overview' for counts+recent names, or kind='variables'|'signals'|'folders' to list each. Use when the user asks what signals/variables/folders they have, or what's in THE FORGE.", "observe", false],
+    ["apex_report", "Look up the saved DEEP-ANALYSIS report for a strategy — the full metric sheet (Sharpe, Sortino, Calmar, MaxDD, CVaR, win rate, profit factor, beta/alpha, etc.) plus the narrative. Call with the strategy name (or id). Use this to answer specific performance questions like 'what's my Sortino on the momentum bot' or 'how bad is the drawdown'.", "observe", false],
+    ["apex_news", "Read APEX's ranked market-news feed produced by the news intelligence engine: top clustered + credibility-verified stories with their lane (macro/finance/commodities/crypto/geopolitics/weather), corroboration count, and mapped ticker/sector impact with direction. Pass a ticker to see only news-driven impact on that symbol. Use to answer what's moving markets or news on a specific stock.", "observe", false],
+    ["apex_market_snapshot", "Get a full live APEX market snapshot in one call: regime (risk-on/off score + fear&greed), major indices, crypto global stats, top 3 stock + crypto gainers AND losers, macro series (Fed funds, 10Y, CPI, unemployment), and the top ranked news. Use this to brief the user on the market or answer 'what's happening today' with real live data.", "observe", false],
+    ["apex_ticker_report", "Deep on-demand report for one ticker: latest quote, fundamentals (P/E, market cap, beta — equities), news-driven impact, and recent insider transactions. Use for 'tell me about NVDA' or 'deep dive TSLA'.", "observe", false],
+    ["apex_health_check", "Run the APEX Data Health Bot: audit every enabled data source (keyless + keyed) for reachability, return a per-source report, an analysis, and PROPOSED config fixes for any that are down. Read-only — proposes fixes but does not apply them. Follow with apex_health_apply once the user approves.", "observe", false],
+    ["apex_health_apply", "Apply the data-source fixes proposed by the last apex_health_check (after the user approves), hot-reload the ingestion governor WITHOUT restarting the server, then re-verify and report the new health. Optionally pass specific source ids to apply only those.", "execute", false],
+    ["apex_brief", "Get a data-grounded market brief assembled from live APEX data: a headline, a narrative paragraph, index session (yesterday close→today open→gap→range), top movers, sector leaders/laggards, macro, top news, and 'things to watch'. type can be now, morning, or eod. Use to brief the user on the market.", "observe", false],
+  ].map(([name, description, risk, confirmationRequired]) => ({
+    name,
+    description,
+    risk,
+    confirmationRequired,
+    requiredAutonomyLevel: requiredAutonomyLevel({ risk }),
+  }));
+
+  const description = (name) => definitions.find((item) => item.name === name).description;
+  const declarations = [
+    { name: "system_status", description: description("system_status"), parameters: { type: "OBJECT", properties: {} } },
+    { name: "list_processes", description: description("list_processes"), parameters: { type: "OBJECT", properties: { limit: { type: "INTEGER", description: "Maximum processes, 1 to 50." } } } },
+    { name: "open_app", description: description("open_app"), parameters: { type: "OBJECT", properties: { app: { type: "STRING", description: `One of: ${Object.keys(appCatalog).join(", ")}.` } }, required: ["app"] } },
+    { name: "open_url", description: description("open_url"), parameters: { type: "OBJECT", properties: { url: { type: "STRING", description: "An HTTP or HTTPS URL. Bare domains are opened with HTTPS." } }, required: ["url"] } },
+    { name: "screen_inspect", description: description("screen_inspect"), parameters: { type: "OBJECT", properties: {
+      limit: { type: "INTEGER", description: "Maximum visible controls to return, 1 to 120." },
+    } } },
+    { name: "screen_act", description: description("screen_act"), parameters: { type: "OBJECT", properties: {
+      instruction: { type: "STRING", description: "The user's visible-screen request, such as click the first video, type hello in search, or make the player full screen." },
+      action: { type: "STRING", description: "One of: click, double_click, type, press, fullscreen." },
+      targetText: { type: "STRING", description: "Visible text/control label to locate before acting." },
+      text: { type: "STRING", description: "Text to type when action is type." },
+      hotkey: { type: "STRING", description: "Allowed key for press: enter, escape, tab, shift_tab, ctrl_l, ctrl_r, ctrl_tab, ctrl_shift_tab, f, space, page_down, page_up." },
+      fullscreenMode: { type: "STRING", description: "player for in-page video fullscreen using the page/player shortcut; browser for Chrome/Edge full-screen." },
+    }, required: ["instruction"] } },
+    { name: "youtube_open_video", description: description("youtube_open_video"), parameters: { type: "OBJECT", properties: {
+      query: { type: "STRING", description: "Video title or search query." },
+      fullscreen: { type: "BOOLEAN", description: "Whether to toggle browser full screen after opening." },
+    }, required: ["query"] } },
+    { name: "desktop_control", description: description("desktop_control"), parameters: { type: "OBJECT", properties: {
+      action: { type: "STRING", description: "One of: open_site_fullscreen, open_site, fullscreen, next_tab, previous_tab, tab_number, hotkey, click_text, click, type_text, youtube_search_visible." },
+      target: { type: "STRING", description: "Site name or URL for open_site/open_site_fullscreen." },
+      targetText: { type: "STRING", description: "Visible text, button label, link label, or control name for click_text." },
+      tabNumber: { type: "INTEGER", description: "Browser tab number, 1 through 9." },
+      hotkey: { type: "STRING", description: "Allowed hotkey: enter, escape, tab, shift_tab, ctrl_l, ctrl_r, ctrl_tab, ctrl_shift_tab, f11, alt_left, alt_right, page_down, page_up." },
+      x: { type: "INTEGER", description: "Screen X coordinate for click." },
+      y: { type: "INTEGER", description: "Screen Y coordinate for click." },
+      text: { type: "STRING", description: "Text to paste/type into the active field." },
+    }, required: ["action"] } },
+    { name: "close_app", description: description("close_app"), parameters: { type: "OBJECT", properties: { app: { type: "STRING", description: `One of: ${Object.keys(appCatalog).filter((key) => appCatalog[key].process).join(", ")}.` } }, required: ["app"] } },
+    { name: "network_inventory", description: description("network_inventory"), parameters: { type: "OBJECT", properties: {} } },
+    { name: "search_projects", description: description("search_projects"), parameters: { type: "OBJECT", properties: { query: { type: "STRING" } } } },
+    { name: "open_project", description: description("open_project"), parameters: { type: "OBJECT", properties: { path: { type: "STRING", description: "Exact path returned by search_projects." } }, required: ["path"] } },
+    { name: "search_files", description: description("search_files"), parameters: { type: "OBJECT", properties: { projectPath: { type: "STRING" }, query: { type: "STRING" }, limit: { type: "INTEGER" } }, required: ["projectPath", "query"] } },
+    { name: "apex_catalog_search", description: description("apex_catalog_search"), parameters: { type: "OBJECT", properties: { query: { type: "STRING", description: "Keyword to match against catalog name, summary, or source. Empty string returns everything." } } } },
+    { name: "apex_data_summary", description: description("apex_data_summary"), parameters: { type: "OBJECT", properties: { name: { type: "STRING", description: "Exact catalog name or id, e.g. apex_bars or bt_cleaned_all_stocks.csv." } }, required: ["name"] } },
+    { name: "apex_strategies", description: description("apex_strategies"), parameters: { type: "OBJECT", properties: { id: { type: "STRING", description: "Optional strategy id to inspect one strategy's full spec. Omit to list all saved strategies." } } } },
+    { name: "apex_forge", description: description("apex_forge"), parameters: { type: "OBJECT", properties: { kind: { type: "STRING", description: "One of: overview | variables | signals | folders. Default overview." } } } },
+    { name: "apex_report", description: description("apex_report"), parameters: { type: "OBJECT", properties: { name: { type: "STRING", description: "Strategy/folder name to fetch its deep-analysis report." }, id: { type: "STRING", description: "Optional strategy/folder id instead of name." } } } },
+    { name: "apex_news", description: description("apex_news"), parameters: { type: "OBJECT", properties: { ticker: { type: "STRING", description: "Optional ticker to filter news impact, e.g. NVDA. Omit for the full ranked feed." }, limit: { type: "INTEGER", description: "Max stories/rows, 1 to 30." } } } },
+    { name: "apex_market_snapshot", description: description("apex_market_snapshot"), parameters: { type: "OBJECT", properties: {} } },
+    { name: "apex_ticker_report", description: description("apex_ticker_report"), parameters: { type: "OBJECT", properties: { ticker: { type: "STRING", description: "The ticker, e.g. NVDA, AAPL, BTC." } }, required: ["ticker"] } },
+    { name: "apex_health_check", description: description("apex_health_check"), parameters: { type: "OBJECT", properties: {} } },
+    { name: "apex_health_apply", description: description("apex_health_apply"), parameters: { type: "OBJECT", properties: { ids: { type: "ARRAY", items: { type: "STRING" }, description: "Optional source ids to apply (from the proposed fixes). Omit to apply all proposed fixes." } } } },
+    { name: "apex_brief", description: description("apex_brief"), parameters: { type: "OBJECT", properties: { type: { type: "STRING", description: "now, morning, or eod." } } } },
+    { name: "kalshi_markets", description: description("kalshi_markets"), parameters: { type: "OBJECT", properties: { query: { type: "STRING" } } } },
+    { name: "kalshi_market_discovery", description: description("kalshi_market_discovery"), parameters: { type: "OBJECT", properties: {
+      query: { type: "STRING", description: "Natural language market, team, game, event, or bet description from the user." },
+      limit: { type: "INTEGER", description: "Maximum ranked markets to return, 1 to 50." },
+      maxPages: { type: "INTEGER", description: "Kalshi open-market pages to scan, 1 to 10." },
+    }, required: ["query"] } },
+    { name: "kalshi_balance", description: description("kalshi_balance"), parameters: { type: "OBJECT", properties: {} } },
+    { name: "kalshi_positions", description: description("kalshi_positions"), parameters: { type: "OBJECT", properties: { limit: { type: "INTEGER" }, cursor: { type: "STRING" }, settlementStatus: { type: "STRING" } } } },
+    { name: "kalshi_fills", description: description("kalshi_fills"), parameters: { type: "OBJECT", properties: { limit: { type: "INTEGER" }, cursor: { type: "STRING" }, ticker: { type: "STRING" }, orderId: { type: "STRING" } } } },
+    { name: "kalshi_portfolio", description: description("kalshi_portfolio"), parameters: { type: "OBJECT", properties: {} } },
+    { name: "canvas_courses", description: description("canvas_courses"), parameters: { type: "OBJECT", properties: {} } },
+    { name: "canvas_assignments", description: description("canvas_assignments"), parameters: { type: "OBJECT", properties: { courseId: { type: "STRING" }, limit: { type: "INTEGER" } } } },
+    { name: "canvas_browser_assignments", description: description("canvas_browser_assignments"), parameters: { type: "OBJECT", properties: { url: { type: "STRING", description: "Optional Canvas base/dashboard URL. Defaults to Northeastern Canvas or configured Canvas base URL." } } } },
+    { name: "web_research", description: description("web_research"), parameters: { type: "OBJECT", properties: {
+      query: { type: "STRING", description: "The live web question to research." },
+      context: { type: "STRING", description: "Optional local context from other tools." },
+    }, required: ["query"] } },
+    { name: "research_v2", description: description("research_v2"), parameters: { type: "OBJECT", properties: {
+      query: { type: "STRING", description: "The public-info question, research task, schedule lookup, local briefing, news query, or current factual request." },
+      intent: { type: "STRING", description: "Optional explicit intent such as weather, sports, news, local_briefing, finance, comparison, how_to, deep_research, or general." },
+      mode: { type: "STRING", description: "Optional research depth: fast, balanced, or deep. Jarvis chooses automatically when omitted." },
+      maxSearches: { type: "INTEGER", description: "Maximum expanded search angles to run, 1 to 10." },
+      readTopSources: { type: "INTEGER", description: "How many top source URLs to read directly, 0 to 6." },
+    }, required: ["query"] } },
+    { name: "web_research_deep", description: description("web_research_deep"), parameters: { type: "OBJECT", properties: {
+      query: { type: "STRING", description: "The question or topic to research deeply." },
+      context: { type: "STRING", description: "Optional context or constraints." },
+      readTopSources: { type: "INTEGER", description: "How many grounded source URLs to read, 0 to 5." },
+    }, required: ["query"] } },
+    { name: "url_read", description: description("url_read"), parameters: { type: "OBJECT", properties: {
+      url: { type: "STRING", description: "Public HTTP/HTTPS URL to read." },
+      maxChars: { type: "INTEGER", description: "Maximum extracted characters to return." },
+    }, required: ["url"] } },
+    { name: "compose_artifact", description: description("compose_artifact"), parameters: { type: "OBJECT", properties: {
+      title: { type: "STRING" },
+      prompt: { type: "STRING" },
+      objective: { type: "STRING" },
+      audience: { type: "STRING" },
+      format: { type: "STRING", description: "briefing, markdown, html, report, study_sheet, or trading_brief." },
+      content: { type: "STRING" },
+      sections: { type: "ARRAY", items: { type: "OBJECT" } },
+      sources: { type: "ARRAY", items: { type: "OBJECT" } },
+    } } },
+    { name: "artifact_status", description: description("artifact_status"), parameters: { type: "OBJECT", properties: {
+      id: { type: "STRING", description: "Optional artifact id. Omit to list recent artifacts." },
+    } } },
+    { name: "pc_graph_rebuild", description: description("pc_graph_rebuild"), parameters: { type: "OBJECT", properties: {
+      roots: { type: "ARRAY", items: { type: "STRING" }, description: "Optional root folders to index. Defaults to workspace, Downloads, Documents, and Desktop." },
+      limit: { type: "INTEGER", description: "Maximum files to scan, 1 to 50000. Defaults to 1200." },
+    } } },
+    { name: "pc_graph_search", description: description("pc_graph_search"), parameters: { type: "OBJECT", properties: {
+      query: { type: "STRING", description: "File, project, class, screenshot, document, or recent-work query." },
+      limit: { type: "INTEGER", description: "Maximum matches, 1 to 50." },
+    }, required: ["query"] } },
+    { name: "pc_graph_timeline", description: description("pc_graph_timeline"), parameters: { type: "OBJECT", properties: {
+      hours: { type: "INTEGER", description: "Lookback window in hours." },
+      limit: { type: "INTEGER", description: "Maximum timeline items." },
+    } } },
+    { name: "pc_graph_explain", description: description("pc_graph_explain"), parameters: { type: "OBJECT", properties: {
+      target: { type: "STRING", description: "File, project, class, or concept to explain." },
+      query: { type: "STRING", description: "Alias for target." },
+    } } },
+    { name: "pc_graph_inspect", description: description("pc_graph_inspect"), parameters: { type: "OBJECT", properties: {} } },
+    { name: "agent_deploy", description: description("agent_deploy"), parameters: { type: "OBJECT", properties: {
+      agent: { type: "STRING", description: "One of: coordinator, browser, kalshi, canvas, pc, research, verifier." },
+      title: { type: "STRING" },
+      objective: { type: "STRING" },
+      prompt: { type: "STRING" },
+      autonomyLevel: { type: "STRING" },
+    }, required: ["objective"] } },
+    { name: "skill_compile", description: description("skill_compile"), parameters: { type: "OBJECT", properties: {
+      name: { type: "STRING" },
+      trigger: { type: "STRING" },
+      objective: { type: "STRING" },
+      prompt: { type: "STRING" },
+      steps: { type: "ARRAY", items: { type: "OBJECT" } },
+    } } },
+    { name: "skill_run", description: description("skill_run"), parameters: { type: "OBJECT", properties: {
+      id: { type: "STRING" },
+      name: { type: "STRING" },
+      trigger: { type: "STRING" },
+      input: { type: "STRING" },
+      objective: { type: "STRING" },
+      autonomyLevel: { type: "STRING" },
+    } } },
+    { name: "skill_list", description: description("skill_list"), parameters: { type: "OBJECT", properties: {
+      limit: { type: "INTEGER" },
+    } } },
+    { name: "skill_inspect", description: description("skill_inspect"), parameters: { type: "OBJECT", properties: {} } },
+    { name: "news_headlines", description: description("news_headlines"), parameters: { type: "OBJECT", properties: { query: { type: "STRING" }, category: { type: "STRING" }, limit: { type: "INTEGER" } } } },
+    { name: "weather_forecast", description: description("weather_forecast"), parameters: { type: "OBJECT", properties: { latitude: { type: "NUMBER" }, longitude: { type: "NUMBER" } }, required: ["latitude", "longitude"] } },
+    { name: "memory_search", description: description("memory_search"), parameters: { type: "OBJECT", properties: { query: { type: "STRING" }, limit: { type: "INTEGER" } }, required: ["query"] } },
+    { name: "memory_add", description: description("memory_add"), parameters: { type: "OBJECT", properties: { text: { type: "STRING" }, category: { type: "STRING" } }, required: ["text"] } },
+    { name: "life_graph", description: description("life_graph"), parameters: { type: "OBJECT", properties: { limit: { type: "INTEGER" } } } },
+    { name: "neural_vault_status", description: description("neural_vault_status"), parameters: { type: "OBJECT", properties: {} } },
+    { name: "neural_vault_context", description: description("neural_vault_context"), parameters: { type: "OBJECT", properties: {
+      query: { type: "STRING", description: "User request or memory question to contextualize." },
+      limit: { type: "INTEGER", description: "Maximum memories/candidates to return, 1 to 20." },
+    }, required: ["query"] } },
+    { name: "neural_vault_resolve", description: description("neural_vault_resolve"), parameters: { type: "OBJECT", properties: {
+      message: { type: "STRING", description: "Message containing ambiguous references." },
+    }, required: ["message"] } },
+    { name: "neural_vault_actions", description: description("neural_vault_actions"), parameters: { type: "OBJECT", properties: {
+      query: { type: "STRING", description: "Optional natural language action/macro query to match." },
+    } } },
+    { name: "neural_vault_integrations", description: description("neural_vault_integrations"), parameters: { type: "OBJECT", properties: {
+      limit: { type: "INTEGER", description: "Maximum recent integration health events." },
+    } } },
+    { name: "neural_vault_api_key_metadata", description: description("neural_vault_api_key_metadata"), parameters: { type: "OBJECT", properties: {
+      provider: { type: "STRING", description: "Provider name such as gemini, kalshi, canvas, google, instagram, cloudflare, twilio, github, or news." },
+      keyLabel: { type: "STRING", description: "Human-safe key label, never the key value." },
+      envVarName: { type: "STRING", description: "Environment variable or settings field name that stores the secret." },
+      status: { type: "STRING", description: "configured, missing, expired, unknown, or needs_auth." },
+      requiredForTools: { type: "ARRAY", items: { type: "STRING" } },
+      notes: { type: "STRING" },
+    }, required: ["provider", "keyLabel"] } },
+    { name: "neural_vault_maintenance", description: description("neural_vault_maintenance"), parameters: { type: "OBJECT", properties: {} } },
+    { name: "memory_os_v4_status", description: description("memory_os_v4_status"), parameters: { type: "OBJECT", properties: {} } },
+    { name: "memory_os_v4_query", description: description("memory_os_v4_query"), parameters: { type: "OBJECT", properties: {
+      query: { type: "STRING", description: "The MemoryOS query, path, file, command, agent, or project question." },
+      limit: { type: "INTEGER", description: "Maximum objects to return." },
+    }, required: ["query"] } },
+    { name: "memory_os_v4_scan_files", description: description("memory_os_v4_scan_files"), parameters: { type: "OBJECT", properties: {
+      limit: { type: "INTEGER", description: "Maximum files to inspect." },
+    } } },
+    { name: "memory_os_v4_run_agent", description: description("memory_os_v4_run_agent"), parameters: { type: "OBJECT", properties: {
+      agentId: { type: "STRING", description: "MemoryOS agent id, e.g. file-inspector-agent or memory-manager-agent." },
+      task: { type: "STRING" },
+      limit: { type: "INTEGER" },
+    } } },
+    { name: "device_files", description: description("device_files"), parameters: { type: "OBJECT", properties: { limit: { type: "INTEGER" } } } },
+    { name: "device_latest_image", description: description("device_latest_image"), parameters: { type: "OBJECT", properties: {} } },
+    { name: "mesh_status", description: description("mesh_status"), parameters: { type: "OBJECT", properties: {} } },
+    { name: "mesh_objects", description: description("mesh_objects"), parameters: { type: "OBJECT", properties: {
+      id: { type: "STRING", description: "Optional mesh object id to inspect." },
+      type: { type: "STRING", description: "Optional object type filter: image, document, text, link, voice, screen, file." },
+      limit: { type: "INTEGER", description: "Maximum objects to return." },
+    } } },
+    { name: "mesh_pair_link", description: description("mesh_pair_link"), parameters: { type: "OBJECT", properties: {
+      target: { type: "STRING", description: "Optional target device type: phone, ipad, tablet, laptop, or browser." },
+    } } },
+    { name: "mesh_self_test", description: description("mesh_self_test"), parameters: { type: "OBJECT", properties: {} } },
+    { name: "mesh_send_command", description: description("mesh_send_command"), parameters: { type: "OBJECT", properties: {
+      targetDeviceId: { type: "STRING", description: "Device id or any." },
+      type: { type: "STRING", description: "open_url, ask_jarvis, approval_card, mission_handoff, object_card, screen_pointer." },
+      title: { type: "STRING" },
+      body: { type: "STRING" },
+      payload: { type: "OBJECT" },
+      priority: { type: "STRING" },
+    }, required: ["title"] } },
+    { name: "coop_symbiote_status", description: description("coop_symbiote_status"), parameters: { type: "OBJECT", properties: {} } },
+    { name: "coop_symbiote_create_session", description: description("coop_symbiote_create_session"), parameters: { type: "OBJECT", properties: {
+      title: { type: "STRING" },
+      mode: { type: "STRING" },
+      peerName: { type: "STRING" },
+    } } },
+    { name: "coop_symbiote_manifest", description: description("coop_symbiote_manifest"), parameters: { type: "OBJECT", properties: {
+      limit: { type: "INTEGER" },
+    } } },
+    { name: "coop_symbiote_chat", description: description("coop_symbiote_chat"), parameters: { type: "OBJECT", properties: {
+      sessionId: { type: "STRING" },
+      text: { type: "STRING" },
+      senderName: { type: "STRING" },
+    }, required: ["sessionId", "text"] } },
+    { name: "coop_symbiote_patch", description: description("coop_symbiote_patch"), parameters: { type: "OBJECT", properties: {
+      sessionId: { type: "STRING" },
+      filePath: { type: "STRING" },
+      originalText: { type: "STRING" },
+      replacementText: { type: "STRING" },
+      summary: { type: "STRING" },
+    }, required: ["sessionId", "filePath"] } },
+    { name: "coop_symbiote_ghost_test", description: description("coop_symbiote_ghost_test"), parameters: { type: "OBJECT", properties: {
+      sessionId: { type: "STRING" },
+      patchId: { type: "STRING" },
+    }, required: ["sessionId", "patchId"] } },
+    { name: "coop_symbiote_debate", description: description("coop_symbiote_debate"), parameters: { type: "OBJECT", properties: {
+      sessionId: { type: "STRING" },
+      topic: { type: "STRING" },
+    }, required: ["sessionId", "topic"] } },
+    { name: "coop_symbiote_memory", description: description("coop_symbiote_memory"), parameters: { type: "OBJECT", properties: {
+      sessionId: { type: "STRING" },
+    } } },
+    { name: "codebase_search", description: description("codebase_search"), parameters: { type: "OBJECT", properties: { query: { type: "STRING" }, limit: { type: "INTEGER" } }, required: ["query"] } },
+    { name: "jarvis_self_inspect", description: description("jarvis_self_inspect"), parameters: { type: "OBJECT", properties: {} } },
+    { name: "draft_email", description: description("draft_email"), parameters: { type: "OBJECT", properties: { recipient: { type: "STRING" }, subject: { type: "STRING" }, body: { type: "STRING" } }, required: ["recipient", "subject", "body"] } },
+    { name: "send_email", description: description("send_email"), parameters: { type: "OBJECT", properties: { recipient: { type: "STRING" }, subject: { type: "STRING" }, body: { type: "STRING" } }, required: ["recipient", "subject", "body"] } },
+    { name: "browser_search", description: description("browser_search"), parameters: { type: "OBJECT", properties: { query: { type: "STRING" } }, required: ["query"] } },
+    { name: "browser_status", description: description("browser_status"), parameters: { type: "OBJECT", properties: {} } },
+    { name: "browser_login_handoff", description: description("browser_login_handoff"), parameters: { type: "OBJECT", properties: { url: { type: "STRING", description: "Optional HTTP or HTTPS URL to open before checking for login." }, selector: { type: "STRING" }, limit: { type: "INTEGER" }, timeoutMs: { type: "INTEGER" } } } },
+    { name: "browser_page_brief", description: description("browser_page_brief"), parameters: { type: "OBJECT", properties: { selector: { type: "STRING" }, limit: { type: "INTEGER" }, timeoutMs: { type: "INTEGER" } } } },
+    { name: "browser_navigate", description: description("browser_navigate"), parameters: { type: "OBJECT", properties: { url: { type: "STRING" }, waitUntil: { type: "STRING", description: "One of commit, domcontentloaded, or load." }, timeoutMs: { type: "INTEGER" } }, required: ["url"] } },
+    { name: "browser_snapshot", description: description("browser_snapshot"), parameters: { type: "OBJECT", properties: { selector: { type: "STRING" }, limit: { type: "INTEGER" }, timeoutMs: { type: "INTEGER" } } } },
+    { name: "browser_tabs", description: description("browser_tabs"), parameters: { type: "OBJECT", properties: { action: { type: "STRING", description: "One of list, new, switch, or close." }, pageId: { type: "STRING" }, url: { type: "STRING" } } } },
+    { name: "browser_act", description: description("browser_act"), parameters: { type: "OBJECT", properties: {
+      action: { type: "STRING", description: "One of click, fill, press, select, check, uncheck, hover, scroll, or download." },
+      ref: { type: "STRING", description: "Element reference returned by browser_snapshot." },
+      selector: { type: "STRING", description: "CSS selector fallback when no semantic reference is available." },
+      value: { type: "STRING" },
+      values: { type: "ARRAY", items: { type: "STRING" } },
+      key: { type: "STRING" },
+      append: { type: "BOOLEAN" },
+      deltaY: { type: "INTEGER" },
+      timeoutMs: { type: "INTEGER" },
+    }, required: ["action"] } },
+    { name: "browser_commit", description: description("browser_commit"), parameters: { type: "OBJECT", properties: {
+      reason: { type: "STRING", description: "Short user-visible description of the consequential outcome." },
+      operations: { type: "ARRAY", items: { type: "OBJECT", properties: {
+        action: { type: "STRING", description: "One of click, fill, press, select, check, uncheck, upload, or download." },
+        ref: { type: "STRING" },
+        selector: { type: "STRING" },
+        value: { type: "STRING" },
+        values: { type: "ARRAY", items: { type: "STRING" } },
+        key: { type: "STRING" },
+        path: { type: "STRING" },
+        paths: { type: "ARRAY", items: { type: "STRING" } },
+      }, required: ["action"] } },
+    }, required: ["reason", "operations"] } },
+    { name: "browser_file_search", description: description("browser_file_search"), parameters: { type: "OBJECT", properties: {
+      query: { type: "STRING" },
+      extension: { type: "STRING" },
+      location: { type: "STRING", description: "Optional: runtime, workspace, desktop, documents, or downloads." },
+      limit: { type: "INTEGER" },
+      timeoutMs: { type: "INTEGER" },
+    } } },
+    { name: "browser_inspect", description: description("browser_inspect"), parameters: { type: "OBJECT", properties: { selector: { type: "STRING", description: "Optional CSS selector; defaults to body." }, limit: { type: "INTEGER" }, timeoutMs: { type: "INTEGER" } } } },
+    { name: "browser_click", description: description("browser_click"), parameters: { type: "OBJECT", properties: { selector: { type: "STRING", description: "CSS selector for one visible element." }, timeoutMs: { type: "INTEGER" } }, required: ["selector"] } },
+    { name: "browser_type", description: description("browser_type"), parameters: { type: "OBJECT", properties: { selector: { type: "STRING", description: "CSS selector for one visible non-password field." }, value: { type: "STRING" }, append: { type: "BOOLEAN" }, delayMs: { type: "INTEGER" }, timeoutMs: { type: "INTEGER" } }, required: ["selector", "value"] } },
+    { name: "browser_extract", description: description("browser_extract"), parameters: { type: "OBJECT", properties: { selector: { type: "STRING" }, format: { type: "STRING", description: "text or html." }, maxLength: { type: "INTEGER" }, timeoutMs: { type: "INTEGER" } } } },
+    { name: "browser_screenshot", description: description("browser_screenshot"), parameters: { type: "OBJECT", properties: { name: { type: "STRING", description: "Optional safe PNG filename." }, fullPage: { type: "BOOLEAN" }, timeoutMs: { type: "INTEGER" } } } },
+    { name: "browser_wait", description: description("browser_wait"), parameters: { type: "OBJECT", properties: { selector: { type: "STRING" }, state: { type: "STRING", description: "attached, detached, visible, or hidden." }, milliseconds: { type: "INTEGER" }, timeoutMs: { type: "INTEGER" } } } },
+    { name: "browser_verify", description: description("browser_verify"), parameters: { type: "OBJECT", properties: { selector: { type: "STRING" }, expectedText: { type: "STRING" }, urlIncludes: { type: "STRING" }, titleIncludes: { type: "STRING" } } } },
+    { name: "screen_capture", description: description("screen_capture"), parameters: { type: "OBJECT", properties: { reason: { type: "STRING" } } } },
+    { name: "instagram_reply", description: description("instagram_reply"), parameters: { type: "OBJECT", properties: { recipientId: { type: "STRING" }, message: { type: "STRING" } }, required: ["recipientId", "message"] } },
+    { name: "list_windows", description: description("list_windows"), parameters: { type: "OBJECT", properties: { limit: { type: "INTEGER" } } } },
+    { name: "inspect_window", description: description("inspect_window"), parameters: { type: "OBJECT", properties: { title: { type: "STRING" }, limit: { type: "INTEGER" } }, required: ["title"] } },
+    { name: "focus_window", description: description("focus_window"), parameters: { type: "OBJECT", properties: { title: { type: "STRING" } }, required: ["title"] } },
+    { name: "invoke_control", description: description("invoke_control"), parameters: { type: "OBJECT", properties: { windowTitle: { type: "STRING" }, controlName: { type: "STRING" }, automationId: { type: "STRING" } }, required: ["windowTitle", "controlName"] } },
+    { name: "set_control_value", description: description("set_control_value"), parameters: { type: "OBJECT", properties: { windowTitle: { type: "STRING" }, controlName: { type: "STRING" }, automationId: { type: "STRING" }, value: { type: "STRING" } }, required: ["windowTitle", "controlName", "value"] } },
+    { name: "run_command", description: description("run_command"), parameters: { type: "OBJECT", properties: {
+      command: { type: "STRING", description: "PowerShell command to execute on the local Windows machine." },
+      timeout_ms: { type: "INTEGER", description: "Execution timeout in milliseconds. Maximum 30000. Defaults to 15000." },
+    }, required: ["command"] } },
+    { name: "write_file", description: description("write_file"), parameters: { type: "OBJECT", properties: {
+      path: { type: "STRING", description: "Absolute file path to write (e.g. C:\\Users\\devan\\Desktop\\note.txt). Existing file is overwritten." },
+      content: { type: "STRING", description: "Text content to write to the file." },
+    }, required: ["path", "content"] } },
+    { name: "delete_file", description: description("delete_file"), parameters: { type: "OBJECT", properties: {
+      path: { type: "STRING", description: "Absolute path to the file or empty directory to delete." },
+    }, required: ["path"] } },
+    { name: "read_clipboard", description: description("read_clipboard"), parameters: { type: "OBJECT", properties: {} } },
+    { name: "write_clipboard", description: description("write_clipboard"), parameters: { type: "OBJECT", properties: {
+      text: { type: "STRING", description: "Text content to write to the Windows clipboard." },
+    }, required: ["text"] } },
+    { name: "toast_notification", description: description("toast_notification"), parameters: { type: "OBJECT", properties: {
+      title: { type: "STRING", description: "Toast notification title." },
+      message: { type: "STRING", description: "Toast notification body message." },
+    }, required: ["title", "message"] } },
+    { name: "screen_analyze", description: description("screen_analyze"), parameters: { type: "OBJECT", properties: {
+      question: { type: "STRING", description: "What to look for or analyze on screen. Omit for a general description of everything visible." },
+    } } },
+    { name: "computer_use", description: description("computer_use"), parameters: { type: "OBJECT", properties: {
+      task: { type: "STRING", description: "Natural language task to execute visually on screen, e.g. 'search YouTube for lo-fi music and play the first result' or 'open Instagram DMs and send Avery a message saying hey'." },
+      maxSteps: { type: "INTEGER", description: "Maximum automation steps, 1 to 25. Defaults to 15." },
+    }, required: ["task"] } },
+    { name: "screen_locate", description: description("screen_locate"), parameters: { type: "OBJECT", properties: {
+      description: { type: "STRING", description: "Visual description of the element to find, e.g. 'YouTube search bar', 'Instagram messages icon', 'play button'." },
+    }, required: ["description"] } },
+    { name: "mouse_scroll", description: description("mouse_scroll"), parameters: { type: "OBJECT", properties: {
+      direction: { type: "STRING", description: "Scroll direction: up or down." },
+      amount: { type: "INTEGER", description: "Number of scroll notches, 1 to 10." },
+      x: { type: "INTEGER", description: "Screen X coordinate to scroll at. Defaults to screen center." },
+      y: { type: "INTEGER", description: "Screen Y coordinate to scroll at. Defaults to screen center." },
+    }, required: ["direction"] } },
+  ];
+
+  function definitionFor(name) {
+    return definitions.find((item) => item.name === name);
+  }
+
+  function loadConfirmations() {
+    const now = Date.now();
+    const values = readJson(confirmationsPath, []);
+    const active = values.filter((item) => item.status === "pending" && new Date(item.expiresAt).getTime() > now);
+    if (active.length !== values.length) writeJsonAtomic(confirmationsPath, active);
+    return active;
+  }
+
+  function requestConfirmation(tool, args, actor = {}) {
+    const definition = definitionFor(tool);
+    if (!actor.sessionId) throw errorWithStatus("A trusted local session is required for confirmation", 401);
+    const item = {
+      id: crypto.randomUUID(),
+      tool,
+      args,
+      argumentHash: hash(args),
+      risk: definition?.risk || "commit",
+      actor: {
+        deviceId: cleanString(actor.deviceId || "local-browser", 100),
+        sessionId: cleanString(actor.sessionId, 200),
+      },
+      status: "pending",
+      createdAt: new Date().toISOString(),
+      expiresAt: new Date(Date.now() + 90_000).toISOString(),
+    };
+    writeJsonAtomic(confirmationsPath, [item, ...loadConfirmations()].slice(0, 50));
+    return {
+      id: item.id,
+      tool,
+      summary: Object.fromEntries(Object.entries(args).map(([key, value]) => [
+        key,
+        /body|message/i.test(key) ? `${cleanString(value, 80)}${String(value || "").length > 80 ? "..." : ""}` : cleanString(value, 200),
+      ])),
+      risk: item.risk,
+      expiresAt: item.expiresAt,
+      message: `Confirmation required to run ${tool}.`,
+    };
+  }
+
+  async function powershell(script, timeout = 10000) {
+    const { stdout } = await execFileAsync(
+      "powershell.exe",
+      ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", script],
+      { timeout, windowsHide: true, maxBuffer: MAX_OUTPUT },
+    );
+    return stdout.trim();
+  }
+
+  async function systemStatus() {
+    const interfaces = Object.values(os.networkInterfaces()).flat().filter(Boolean)
+      .filter((item) => item.family === "IPv4")
+      .map((item) => ({ address: item.address, internal: item.internal, cidr: item.cidr }));
+    return {
+      hostname: os.hostname(),
+      platform: os.platform(),
+      release: os.release(),
+      uptimeSeconds: Math.round(os.uptime()),
+      cpu: { model: os.cpus()[0]?.model || "unknown", logicalCores: os.cpus().length, loadAverage: os.loadavg() },
+      memory: { totalBytes: os.totalmem(), freeBytes: os.freemem(), usedPercent: Math.round((1 - os.freemem() / os.totalmem()) * 100) },
+      network: interfaces,
+      observedAt: new Date().toISOString(),
+    };
+  }
+
+  async function listProcesses(args) {
+    const limit = asNumber(args.limit, 20, 1, 50);
+    const script = `Get-Process | Sort-Object WorkingSet64 -Descending | Select-Object -First ${limit} Id,ProcessName,WorkingSet64,CPU | ConvertTo-Json -Compress`;
+    const output = await powershell(script);
+    const parsed = output ? JSON.parse(output) : [];
+    return { processes: Array.isArray(parsed) ? parsed : [parsed] };
+  }
+
+  function requireNeuralVault() {
+    if (!neuralVault) throw errorWithStatus("Neural Vault is not available in this runtime.", 412);
+    return neuralVault;
+  }
+
+  async function openApp(args) {
+    const key = cleanString(args.app, 40).toLowerCase();
+    const app = appCatalog[key];
+    if (!app) throw errorWithStatus(`Unsupported app. Allowed: ${Object.keys(appCatalog).join(", ")}`);
+    const child = spawn(app.command, app.args, { detached: true, stdio: "ignore", windowsHide: true });
+    child.unref();
+    return { opened: key, processStarted: true };
+  }
+
+  function normalizeOpenUrl(value) {
+    const suppliedRaw = cleanString(value, 2000);
+    const supplied = siteAliases[suppliedRaw.toLowerCase()] || suppliedRaw;
+    if (!supplied) throw errorWithStatus("A URL is required");
+    let target;
+    try {
+      target = new URL(/^[a-z][a-z0-9+.-]*:/i.test(supplied) ? supplied : `https://${supplied}`);
+    } catch {
+      throw errorWithStatus("The URL is invalid");
+    }
+    if (!["http:", "https:"].includes(target.protocol)) throw errorWithStatus("Only HTTP and HTTPS URLs are allowed");
+    if (target.username || target.password) throw errorWithStatus("URLs containing credentials are not allowed");
+    if (!target.hostname) throw errorWithStatus("The URL must include a hostname");
+    return target.toString();
+  }
+
+  async function openUrl(args) {
+    const normalized = normalizeOpenUrl(args.url);
+    const child = spawn("cmd.exe", ["/c", "start", "", normalized], { detached: true, stdio: "ignore", windowsHide: true });
+    child.unref();
+    return { opened: true, url: normalized };
+  }
+
+  async function youtubeOpenVideo(args = {}) {
+    const query = cleanString(args.query || args.title || args.video || args.target, 300);
+    if (!query) throw errorWithStatus("A YouTube video title or search query is required.");
+    const searchUrl = `https://www.youtube.com/results?search_query=${encodeURIComponent(query)}`;
+    let videoId = "";
+    try {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 5000);
+      let html = "";
+      try {
+        const response = await fetch(searchUrl, {
+          signal: controller.signal,
+          headers: {
+            "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/125 Safari/537.36",
+            "accept-language": "en-US,en;q=0.9",
+          },
+        });
+        html = await response.text();
+      } finally {
+        clearTimeout(timer);
+      }
+      const ids = [
+        ...[...html.matchAll(/"videoId":"([a-zA-Z0-9_-]{11})"/g)].map((match) => match[1]),
+        ...[...html.matchAll(/\/watch\?v=([a-zA-Z0-9_-]{11})/g)].map((match) => match[1]),
+      ];
+      videoId = ids.find(Boolean) || "";
+    } catch {
+      videoId = "";
+    }
+    const url = videoId ? `https://www.youtube.com/watch?v=${videoId}` : searchUrl;
+    const desktop = await desktopControl({
+      action: args.fullscreen === false ? "open_site" : "open_site_fullscreen",
+      target: url,
+      fullscreen: args.fullscreen !== false,
+    });
+    return {
+      query,
+      openedVideo: Boolean(videoId),
+      url,
+      fallbackSearchOpened: !videoId,
+      desktop,
+    };
+  }
+
+  function psSingleQuoted(value) {
+    return `'${String(value ?? "").replace(/'/g, "''")}'`;
+  }
+
+  function desktopHotkeySequence(name) {
+    return {
+      f: "f",
+      space: " ",
+      enter: "{ENTER}",
+      escape: "{ESC}",
+      tab: "{TAB}",
+      shift_tab: "+{TAB}",
+      ctrl_l: "^l",
+      ctrl_r: "^r",
+      ctrl_tab: "^{TAB}",
+      ctrl_shift_tab: "^+{TAB}",
+      f11: "{F11}",
+      alt_left: "%{LEFT}",
+      alt_right: "%{RIGHT}",
+      page_down: "{PGDN}",
+      page_up: "{PGUP}",
+    }[cleanString(name, 40).toLowerCase()];
+  }
+
+  async function inspectScreen(args = {}) {
+    const limit = asNumber(args.limit, 80, 1, 120);
+    const script = [
+      "Add-Type -AssemblyName UIAutomationClient",
+      "Add-Type -AssemblyName UIAutomationTypes",
+      "Add-Type -AssemblyName System.Windows.Forms",
+      "Add-Type @'\nusing System;\nusing System.Runtime.InteropServices;\npublic class ForegroundOps {\n[DllImport(\"user32.dll\")] public static extern IntPtr GetForegroundWindow();\n}\n'@",
+      "$foreground=[ForegroundOps]::GetForegroundWindow()",
+      "$root=[System.Windows.Automation.AutomationElement]::FromHandle($foreground)",
+      "if($null -eq $root){ $root=[System.Windows.Automation.AutomationElement]::RootElement }",
+      "$rootName=[string]$root.Current.Name",
+      "$rootType=[string]$root.Current.ControlType.ProgrammaticName",
+      "$rootRect=$root.Current.BoundingRectangle",
+      "$primary=[System.Windows.Forms.Screen]::PrimaryScreen.Bounds",
+      "$nodes=$root.FindAll([System.Windows.Automation.TreeScope]::Descendants,[System.Windows.Automation.Condition]::TrueCondition)",
+      "$items=@()",
+      "foreach($node in $nodes){",
+      "  try {",
+      "    $rect=$node.Current.BoundingRectangle",
+      "    if($node.Current.IsOffscreen -or $rect.Width -le 4 -or $rect.Height -le 4){ continue }",
+      "    $name=([string]$node.Current.Name).Trim()",
+      "    $help=([string]$node.Current.HelpText).Trim()",
+      "    $automationId=([string]$node.Current.AutomationId).Trim()",
+      "    $type=[string]$node.Current.ControlType.ProgrammaticName",
+      "    $label=(($name+' '+$help+' '+$automationId).Trim())",
+      "    if([string]::IsNullOrWhiteSpace($label)){ continue }",
+      "    if($label.Length -gt 220){ continue }",
+      "    if($rect.Width -gt 1000 -and $rect.Height -lt 80 -and $label.Length -gt 120){ continue }",
+      "    $valueText=''",
+      "    try {",
+      "      if($node.GetCurrentPropertyValue([System.Windows.Automation.AutomationElement]::IsValuePatternAvailableProperty) -eq $true){",
+      "        $valuePattern=$node.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern)",
+      "        $valueText=([string]$valuePattern.Current.Value)",
+      "      }",
+      "    } catch {}",
+      "    if($valueText.Length -gt 240){ $valueText=$valueText.Substring(0,240) }",
+      "    $items += [ordered]@{",
+      "      name=$name; helpText=$help; automationId=$automationId; controlType=$type;",
+      "      x=[int]$rect.X; y=[int]$rect.Y; width=[int]$rect.Width; height=[int]$rect.Height;",
+      "      centerX=[int]($rect.X+($rect.Width/2)); centerY=[int]($rect.Y+($rect.Height/2));",
+      "      invoke=([bool]($node.GetCurrentPropertyValue([System.Windows.Automation.AutomationElement]::IsInvokePatternAvailableProperty) -eq $true));",
+      "      value=([bool]($node.GetCurrentPropertyValue([System.Windows.Automation.AutomationElement]::IsValuePatternAvailableProperty) -eq $true));",
+      "      text=([bool]($node.GetCurrentPropertyValue([System.Windows.Automation.AutomationElement]::IsTextPatternAvailableProperty) -eq $true));",
+      "      valueText=$valueText",
+      "    }",
+      "  } catch {}",
+      "}",
+      `$controls=@($items | Sort-Object y,x | Select-Object -First ${limit})`,
+      "$payload=[ordered]@{foregroundWindow=[ordered]@{name=$rootName;controlType=$rootType};uiBounds=[ordered]@{x=[int]$rootRect.X;y=[int]$rootRect.Y;width=[int]$rootRect.Width;height=[int]$rootRect.Height};screenBounds=[ordered]@{x=[int]$primary.X;y=[int]$primary.Y;width=[int]$primary.Width;height=[int]$primary.Height};count=[int]$items.Count;controls=$controls}",
+      "$payload | ConvertTo-Json -Depth 5 -Compress",
+    ].join("\n");
+    return JSON.parse(await powershell(script, 12000));
+  }
+
+  function words(value) {
+    return [...new Set(String(value || "").toLowerCase().match(/[a-z0-9][a-z0-9_-]{1,}/g) || [])]
+      .filter((word) => !new Set(["the", "and", "for", "with", "this", "that", "click", "press", "open", "make", "screen", "please", "sir", "full", "fullscreen"]).has(word));
+  }
+
+  function inferScreenAction(instruction, supplied) {
+    const action = cleanString(supplied, 40).toLowerCase();
+    if (["click", "double_click", "type", "press", "fullscreen"].includes(action)) return action;
+    const lower = String(instruction || "").toLowerCase();
+    if (/\b(full ?screen|maximi[sz]e)\b/.test(lower)) return "fullscreen";
+    if (/\b(type|write|enter|fill)\b/.test(lower)) return "type";
+    if (/\b(press|hit)\b/.test(lower)) return "press";
+    return "click";
+  }
+
+  function inferTargetText(instruction) {
+    const text = cleanString(instruction, 240)
+      .replace(/\b(on|in|from)\s+my\s+(screen|laptop|computer|desktop)\b/ig, "")
+      .replace(/\b(can you|please|jarvis|sir|click|press|open|select|choose|tap|move my cursor to|move the cursor to|then|and)\b/ig, " ")
+      .replace(/\b(make|put|go|it|this|that)\b/ig, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+    return text;
+  }
+
+  function scoreVisibleControl(control, { instruction, targetText, action }) {
+    const label = `${control.name || ""} ${control.helpText || ""} ${control.automationId || ""}`.toLowerCase();
+    if (!label.trim()) return 0;
+    const target = String(targetText || "").toLowerCase().trim();
+    const targetWords = words(target || instruction);
+    const instructionWords = words(instruction);
+    let score = 0;
+    if (target && label === target) score += 140;
+    if (target && label.includes(target)) score += 110;
+    const hits = targetWords.filter((word) => label.includes(word));
+    score += hits.length * 18;
+    if (targetWords.length && hits.length === targetWords.length) score += 45;
+    const type = String(control.controlType || "").toLowerCase();
+    const lowerInstruction = String(instruction || "").toLowerCase();
+    const youtubeSearchInstruction = /\b(youtube|you tube)\b/.test(lowerInstruction)
+      && /\b(search|search bar)\b/.test(lowerInstruction)
+      && action === "type";
+    const chromeAddressBar = /\b(address and search bar|search google or type a url|view_1012|omnibox)\b/.test(label);
+    if (/button|hyperlink|listitem|menuitem|tabitem|edit/.test(type)) score += 16;
+    if (/document|pane|window/.test(type)) score -= 55;
+    if (action === "type" && /edit|combo/.test(type)) score += 45;
+    if (youtubeSearchInstruction && chromeAddressBar) score -= 260;
+    if (youtubeSearchInstruction && !chromeAddressBar && /edit|combo/.test(type) && /\bsearch\b/.test(label)) score += 95;
+    if (action === "click" && /hyperlink|button|listitem/.test(type)) score += 25;
+    if (/\b(first|top)\b/.test(lowerInstruction)) score += Math.max(0, 30 - Math.floor(Number(control.y || 0) / 80));
+    if (/\b(video|result|watch)\b/.test(lowerInstruction) && /hyperlink|listitem|document/.test(type) && String(control.name || "").length > 12) score += 30;
+    if (instructionWords.some((word) => label.includes(word))) score += 8;
+    if (Number(control.width || 0) > 1200 && Number(control.height || 0) < 90) score -= 40;
+    if (Number(control.width || 0) > 1800 && Number(control.height || 0) > 1000) score -= 90;
+    return score;
+  }
+
+  function chooseVisibleControl(controls, options) {
+    const ranked = (Array.isArray(controls) ? controls : [])
+      .map((control) => ({ control, score: scoreVisibleControl(control, options) }))
+      .filter((item) => item.score > 0)
+      .sort((a, b) => b.score - a.score || Number(a.control.y || 0) - Number(b.control.y || 0));
+    return { best: ranked[0] || null, ranked: ranked.slice(0, 8) };
+  }
+
+  function normalizeScreenPoint(point, inspection) {
+    const ui = inspection?.uiBounds || {};
+    const screen = inspection?.screenBounds || {};
+    const x = Number(point?.x);
+    const y = Number(point?.y);
+    const uiWidth = Number(ui.width);
+    const uiHeight = Number(ui.height);
+    const screenWidth = Number(screen.width);
+    const screenHeight = Number(screen.height);
+    if (![x, y, uiWidth, uiHeight, screenWidth, screenHeight].every(Number.isFinite) || uiWidth <= 0 || uiHeight <= 0 || screenWidth <= 0 || screenHeight <= 0) {
+      return { x, y, scaled: false };
+    }
+    const needsScale = x > screen.x + screenWidth || y > screen.y + screenHeight || uiWidth > screenWidth * 1.25 || uiHeight > screenHeight * 1.25;
+    if (!needsScale) return { x, y, scaled: false };
+    return {
+      x: Math.round(Number(screen.x || 0) + ((x - Number(ui.x || 0)) * screenWidth / uiWidth)),
+      y: Math.round(Number(screen.y || 0) + ((y - Number(ui.y || 0)) * screenHeight / uiHeight)),
+      scaled: true,
+      uiBounds: ui,
+      screenBounds: screen,
+    };
+  }
+
+  async function screenAct(args = {}) {
+    const instruction = cleanString(args.instruction || args.goal || args.command, 600);
+    if (!instruction) throw errorWithStatus("screen_act requires an instruction.");
+    if (/\b(password|captcha|purchase|buy|sell|trade|submit|send|pay|checkout|wire|bank|delete account)\b/i.test(instruction)) {
+      throw errorWithStatus("screen_act blocked a sensitive or consequential visible-screen action. Use an explicit approved workflow instead.", 403);
+    }
+    const action = inferScreenAction(instruction, args.action);
+    const targetText = cleanString(args.targetText || args.target || inferTargetText(instruction), 240);
+    const before = screenCapture ? await screenCapture({ reason: `screen_act before: ${instruction}` }) : null;
+    const inspection = await inspectScreen({ limit: 100 });
+    const choice = chooseVisibleControl(inspection.controls, { instruction, targetText, action });
+    const result = {
+      instruction,
+      action,
+      targetText,
+      foregroundWindow: inspection.foregroundWindow,
+      beforeCapture: before ? { path: before.path, dimensions: before.dimensions, capturedAt: before.capturedAt } : null,
+      matchedControl: choice.best ? { ...choice.best.control, score: choice.best.score } : null,
+      alternatives: choice.ranked.slice(1, 5).map((item) => ({ name: item.control.name, controlType: item.control.controlType, score: item.score, x: item.control.x, y: item.control.y })),
+    };
+
+    if (action === "press") {
+      const hotkey = cleanString(args.hotkey || (/enter/i.test(instruction) ? "enter" : /escape|esc/i.test(instruction) ? "escape" : /space/i.test(instruction) ? "space" : "enter"), 40);
+      result.performed = await desktopControl({ action: "hotkey", hotkey });
+    } else if (action === "fullscreen") {
+      const mode = cleanString(args.fullscreenMode || (/\b(browser|chrome|window)\b/i.test(instruction) ? "browser" : "player"), 40).toLowerCase();
+      result.fullscreenMode = mode;
+      result.performed = mode === "browser"
+        ? await desktopControl({ action: "fullscreen" })
+        : await desktopControl({ action: "hotkey", hotkey: "f" });
+    } else {
+      let clickX, clickY;
+      if (choice.best?.control) {
+        const { centerX, centerY } = choice.best.control;
+        const point = normalizeScreenPoint({ x: centerX, y: centerY }, inspection);
+        result.normalizedPoint = point;
+        clickX = point.x;
+        clickY = point.y;
+      } else if (computerUse) {
+        // UI Automation tree didn't find the element — fall back to Gemini Vision grounding
+        const located = await computerUse.locateElement(targetText || instruction);
+        if (!located.found || (located.confidence || 0) < 0.35) {
+          throw errorWithStatus(
+            `Could not locate "${targetText || instruction}" via UI Automation or visual grounding (confidence: ${(located.confidence || 0).toFixed(2)}).`,
+            404,
+          );
+        }
+        result.matchedControl = { name: located.description, x: located.x, y: located.y, confidence: located.confidence, source: "visual_grounding" };
+        clickX = located.x;
+        clickY = located.y;
+      } else {
+        throw errorWithStatus(`Could not locate a visible screen target for "${targetText || instruction}".`, 404);
+      }
+      result.performed = await desktopControl({ action: "click", x: clickX, y: clickY });
+      if (action === "double_click") result.performedSecondClick = await desktopControl({ action: "click", x: clickX, y: clickY });
+      if (action === "type") {
+        const text = cleanString(args.text || args.value, 5000);
+        if (!text) throw errorWithStatus("screen_act type requires text.");
+        result.typed = await desktopControl({ action: "type_text", text });
+      }
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, 650));
+    const after = screenCapture ? await screenCapture({ reason: `screen_act after: ${instruction}` }) : null;
+    result.afterCapture = after ? { path: after.path, dimensions: after.dimensions, capturedAt: after.capturedAt } : null;
+    return result;
+  }
+
+  async function desktopControl(args = {}) {
+    const action = cleanString(args.action, 60).toLowerCase();
+    const allowed = new Set(["open_site_fullscreen", "open_site", "fullscreen", "next_tab", "previous_tab", "tab_number", "hotkey", "click_text", "click", "type_text", "youtube_search_visible"]);
+    if (!allowed.has(action)) throw errorWithStatus(`Unsupported desktop action: ${action}`);
+
+    if (["open_site_fullscreen", "open_site"].includes(action)) {
+      const target = normalizeOpenUrl(args.target || args.url || "google");
+      const fullscreen = action === "open_site_fullscreen" || args.fullscreen === true;
+      const script = [
+        `$url=${psSingleQuoted(target)}`,
+        "$shell=New-Object -ComObject WScript.Shell",
+        "Start-Process $url",
+        "Start-Sleep -Milliseconds 1600",
+        "$titles=@('YouTube','Google Chrome','Chrome','Microsoft Edge','Edge')",
+        "$activated=$false",
+        "foreach($title in $titles){ if($shell.AppActivate($title)){ $activated=$true; break } }",
+        fullscreen ? "$shell.SendKeys('{F11}'); Start-Sleep -Milliseconds 250" : "",
+        "[pscustomobject]@{action='open_site';url=$url;fullscreen=$" + (fullscreen ? "true" : "false") + ";activated=$activated} | ConvertTo-Json -Compress",
+      ].filter(Boolean).join(";");
+      return JSON.parse(await powershell(script, 8000));
+    }
+
+    if (action === "youtube_search_visible") {
+      const text = cleanString(args.text || args.query || args.value, 500);
+      if (!text) throw errorWithStatus("youtube_search_visible requires text.");
+      const script = [
+        "Add-Type -AssemblyName System.Windows.Forms",
+        "Add-Type -AssemblyName UIAutomationClient",
+        "Add-Type -AssemblyName UIAutomationTypes",
+        "Add-Type @'\nusing System;\nusing System.Runtime.InteropServices;\npublic class DesktopOps {\n[StructLayout(LayoutKind.Sequential)] public struct RECT { public int Left; public int Top; public int Right; public int Bottom; }\n[DllImport(\"user32.dll\")] public static extern IntPtr GetForegroundWindow();\n[DllImport(\"user32.dll\")] public static extern bool GetWindowRect(IntPtr hWnd, out RECT rect);\n[DllImport(\"user32.dll\")] public static extern bool SetCursorPos(int X, int Y);\n[DllImport(\"user32.dll\")] public static extern void mouse_event(uint flags, uint dx, uint dy, uint data, UIntPtr extra);\n}\n'@",
+        "$shell=New-Object -ComObject WScript.Shell",
+        "$titles=@('YouTube','Google Chrome','Chrome','Microsoft Edge','Edge')",
+        "$activated=$false",
+        "foreach($title in $titles){ if($shell.AppActivate($title)){ $activated=$true; break } }",
+        "Start-Sleep -Milliseconds 450",
+        "$selectedTab=''",
+        "$selectedVia=''",
+        "$handle=[DesktopOps]::GetForegroundWindow()",
+        "$root=[System.Windows.Automation.AutomationElement]::RootElement",
+        "if($null -ne $root){",
+        "  $nodes=$root.FindAll([System.Windows.Automation.TreeScope]::Descendants,[System.Windows.Automation.Condition]::TrueCondition)",
+        "  $ytTab=$null",
+        "  foreach($node in $nodes){",
+        "    try {",
+        "      $name=([string]$node.Current.Name).Trim()",
+        "      $type=[string]$node.Current.ControlType.ProgrammaticName",
+        "      $rectCheck=$node.Current.BoundingRectangle",
+        "      if($type -eq 'ControlType.TabItem' -and $name -match 'YouTube' -and -not $node.Current.IsOffscreen -and $rectCheck.Width -gt 20 -and $rectCheck.Height -gt 10){ $ytTab=$node; break }",
+        "    } catch {}",
+        "  }",
+        "  if($null -ne $ytTab){",
+        "    if($ytTab.GetCurrentPropertyValue([System.Windows.Automation.AutomationElement]::IsSelectionItemPatternAvailableProperty) -eq $true){",
+        "      $ytTab.GetCurrentPattern([System.Windows.Automation.SelectionItemPattern]::Pattern).Select()",
+        "      $selectedVia='selection_pattern'",
+        "    } elseif($ytTab.GetCurrentPropertyValue([System.Windows.Automation.AutomationElement]::IsInvokePatternAvailableProperty) -eq $true){",
+        "      $ytTab.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()",
+        "      $selectedVia='invoke_pattern'",
+        "    } else {",
+        "      throw 'YouTube tab was visible but had no selectable automation pattern.'",
+        "    }",
+        "    $selectedTab=([string]$ytTab.Current.Name).Trim()",
+        "    Start-Sleep -Milliseconds 650",
+        "  }",
+        "}",
+        "if([string]::IsNullOrWhiteSpace($selectedTab)){",
+        "  throw 'No visible YouTube tab was found to search in.'",
+        "}",
+        "$handle=[DesktopOps]::GetForegroundWindow()",
+        "$rect=New-Object DesktopOps+RECT",
+        "[DesktopOps]::GetWindowRect($handle,[ref]$rect) | Out-Null",
+        "$width=[Math]::Max(1,$rect.Right-$rect.Left)",
+        "$height=[Math]::Max(1,$rect.Bottom-$rect.Top)",
+        "$x=[int]($rect.Left+($width*0.50))",
+        "$y=[int]($rect.Top+[Math]::Min(310,[Math]::Max(245,$height*0.30)))",
+        "$searchBox=$null",
+        "$root=[System.Windows.Automation.AutomationElement]::FromHandle($handle)",
+        "if($null -ne $root){",
+        "  $nodes=$root.FindAll([System.Windows.Automation.TreeScope]::Descendants,[System.Windows.Automation.Condition]::TrueCondition)",
+        "  foreach($node in $nodes){",
+        "    try {",
+        "      $name=([string]$node.Current.Name).Trim()",
+        "      $help=([string]$node.Current.HelpText).Trim()",
+        "      $auto=([string]$node.Current.AutomationId).Trim()",
+        "      $type=[string]$node.Current.ControlType.ProgrammaticName",
+        "      $candidateRect=$node.Current.BoundingRectangle",
+        "      $label=(($name+' '+$help+' '+$auto).Trim())",
+        "      if($node.Current.IsOffscreen -or $candidateRect.Width -lt 80 -or $candidateRect.Height -lt 12){ continue }",
+        "      if(($type -match 'Edit|Combo') -and $label -match 'Search' -and $label -notmatch 'Google|URL|Address' -and $candidateRect.Y -gt ($rect.Top+170) -and $candidateRect.Y -lt ($rect.Top+380)){ $searchBox=$node; break }",
+        "    } catch {}",
+        "  }",
+        "}",
+        "if($null -ne $searchBox){ $boxRect=$searchBox.Current.BoundingRectangle; $x=[int]($boxRect.X+($boxRect.Width/2)); $y=[int]($boxRect.Y+($boxRect.Height/2)) }",
+        "[DesktopOps]::SetCursorPos($x,$y) | Out-Null",
+        "[DesktopOps]::mouse_event(0x0002,0,0,0,[UIntPtr]::Zero)",
+        "Start-Sleep -Milliseconds 70",
+        "[DesktopOps]::mouse_event(0x0004,0,0,0,[UIntPtr]::Zero)",
+        "Start-Sleep -Milliseconds 150",
+        `$text=${psSingleQuoted(text)}`,
+        "Set-Clipboard -Value $text",
+        "Start-Sleep -Milliseconds 120",
+        "[System.Windows.Forms.SendKeys]::SendWait('^a')",
+        "Start-Sleep -Milliseconds 70",
+        "[System.Windows.Forms.SendKeys]::SendWait('^v')",
+        "Start-Sleep -Milliseconds 100",
+        "[System.Windows.Forms.SendKeys]::SendWait('{ENTER}')",
+        "[pscustomobject]@{action='youtube_search_visible';activated=$activated;selectedTab=$selectedTab;selectedVia=$selectedVia;text=$text;x=$x;y=$y;usedUiSearchBox=($null -ne $searchBox);window=($width.ToString()+'x'+$height.ToString())} | ConvertTo-Json -Compress",
+      ].join("\n");
+      return JSON.parse(await powershell(script, 8000));
+    }
+
+    if (["fullscreen", "next_tab", "previous_tab", "tab_number", "hotkey", "type_text"].includes(action)) {
+      let sequence = "";
+      if (action === "fullscreen") sequence = "{F11}";
+      if (action === "next_tab") sequence = "^{TAB}";
+      if (action === "previous_tab") sequence = "^+{TAB}";
+      if (action === "tab_number") {
+        const tabNumber = asNumber(args.tabNumber, 1, 1, 9);
+        sequence = `^${tabNumber}`;
+      }
+      if (action === "hotkey") {
+        sequence = desktopHotkeySequence(args.hotkey);
+        if (!sequence) throw errorWithStatus("Unsupported desktop hotkey.");
+      }
+      const text = cleanString(args.text, 5000);
+      const script = [
+        action === "type_text" ? "Add-Type -AssemblyName System.Windows.Forms" : "",
+        "$shell=New-Object -ComObject WScript.Shell",
+        "$titles=@('Google Chrome','Chrome','Microsoft Edge','Edge')",
+        "$activated=$false",
+        "foreach($title in $titles){ if($shell.AppActivate($title)){ $activated=$true; break } }",
+        action === "type_text"
+          ? `$text=${psSingleQuoted(text)}; Set-Clipboard -Value $text; Start-Sleep -Milliseconds 140; [System.Windows.Forms.SendKeys]::SendWait('^v'); Start-Sleep -Milliseconds 120`
+          : `$shell.SendKeys(${psSingleQuoted(sequence)})`,
+        "[pscustomobject]@{action=" + psSingleQuoted(action) + ";activated=$activated;sequence=" + psSingleQuoted(action === "type_text" ? "paste" : sequence) + "} | ConvertTo-Json -Compress",
+      ].filter(Boolean).join(";");
+      return JSON.parse(await powershell(script, 5000));
+    }
+
+    if (action === "click_text") {
+      const targetText = cleanString(args.targetText || args.target || args.text, 200);
+      if (!targetText) throw errorWithStatus("click_text requires targetText.");
+      const script = [
+        "Add-Type -AssemblyName UIAutomationClient",
+        "Add-Type -AssemblyName UIAutomationTypes",
+        "Add-Type @'\nusing System;\nusing System.Runtime.InteropServices;\npublic class MouseOps {\n[DllImport(\"user32.dll\")] public static extern IntPtr GetForegroundWindow();\n[DllImport(\"user32.dll\")] public static extern bool SetCursorPos(int X, int Y);\n[DllImport(\"user32.dll\")] public static extern void mouse_event(uint flags, uint dx, uint dy, uint data, UIntPtr extra);\n}\n'@",
+        `$needle=${psSingleQuoted(targetText)}.ToLowerInvariant()`,
+        "$foreground=[MouseOps]::GetForegroundWindow()",
+        "$roots=@()",
+        "$fgRoot=[System.Windows.Automation.AutomationElement]::FromHandle($foreground)",
+        "if($null -ne $fgRoot){ $roots += $fgRoot }",
+        "$roots += [System.Windows.Automation.AutomationElement]::RootElement",
+        "$match=$null;$matchText='';$matchType='';$matchScore=0",
+        "foreach($root in $roots){",
+        "  if($null -eq $root -or $null -ne $match){ continue }",
+        "  $nodes=$root.FindAll([System.Windows.Automation.TreeScope]::Descendants,[System.Windows.Automation.Condition]::TrueCondition)",
+        "  foreach($node in $nodes){",
+        "    try {",
+        "      $rect=$node.Current.BoundingRectangle",
+        "      if($node.Current.IsOffscreen -or $rect.Width -le 3 -or $rect.Height -le 3){ continue }",
+        "      $name=[string]$node.Current.Name",
+        "      $help=[string]$node.Current.HelpText",
+        "      $automationId=[string]$node.Current.AutomationId",
+        "      $text=(($name+' '+$help+' '+$automationId).Trim()).ToLowerInvariant()",
+        "      if([string]::IsNullOrWhiteSpace($text)){ continue }",
+        "      $maxTextLength=[Math]::Max(180, $needle.Length * 4)",
+        "      if($text.Length -gt $maxTextLength){ continue }",
+        "      if($rect.Width -gt 900 -and $rect.Height -lt 70 -and $text.Length -gt 120){ continue }",
+        "      $score=0",
+        "      if($text -eq $needle){ $score=100 }",
+        "      elseif($text.Contains($needle)){ $score=80 }",
+        "      else {",
+        "        $parts=$needle -split '\\s+' | Where-Object { $_.Length -ge 2 }",
+        "        $hits=0",
+        "        foreach($part in $parts){ if($text.Contains($part)){ $hits++ } }",
+        "        if($parts.Count -gt 0 -and $hits -eq $parts.Count){ $score=60+$hits }",
+        "      }",
+        "      if($score -gt $matchScore){ $match=$node;$matchText=$name;if([string]::IsNullOrWhiteSpace($matchText)){ $matchText=$help };if([string]::IsNullOrWhiteSpace($matchText)){ $matchText=$automationId };$matchType=[string]$node.Current.ControlType.ProgrammaticName;$matchScore=$score }",
+        "      if($matchScore -ge 100){ break }",
+        "    } catch {}",
+        "  }",
+        "}",
+        "if($null -eq $match){ throw ('No visible control text matched '+$needle) }",
+        "$rect=$match.Current.BoundingRectangle",
+        "$x=[int]($rect.X+($rect.Width/2));$y=[int]($rect.Y+($rect.Height/2))",
+        "[MouseOps]::SetCursorPos($x,$y) | Out-Null",
+        "[MouseOps]::mouse_event(0x0002,0,0,0,[UIntPtr]::Zero)",
+        "Start-Sleep -Milliseconds 60",
+        "[MouseOps]::mouse_event(0x0004,0,0,0,[UIntPtr]::Zero)",
+        "[pscustomobject]@{action='click_text';targetText=$needle;matchedName=$matchText;controlType=$matchType;score=$matchScore;x=$x;y=$y;bounds=(@{x=$rect.X;y=$rect.Y;width=$rect.Width;height=$rect.Height})} | ConvertTo-Json -Compress",
+      ].join("\n");
+      try {
+        return JSON.parse(await powershell(script, 12000));
+      } catch (error) {
+        if (String(error.message || "").includes("No visible control text matched")) {
+          throw errorWithStatus(`No visible control text matched "${targetText}".`, 404);
+        }
+        throw error;
+      }
+    }
+
+    const x = asNumber(args.x, NaN, 0, 20000);
+    const y = asNumber(args.y, NaN, 0, 20000);
+    if (!Number.isFinite(x) || !Number.isFinite(y)) throw errorWithStatus("Click requires numeric x and y screen coordinates.");
+    const script = [
+      `$x=${Math.round(x)};$y=${Math.round(y)}`,
+      "Add-Type @'\nusing System;\nusing System.Runtime.InteropServices;\npublic class MouseOps {\n[DllImport(\"user32.dll\")] public static extern bool SetCursorPos(int X, int Y);\n[DllImport(\"user32.dll\")] public static extern void mouse_event(uint flags, uint dx, uint dy, uint data, UIntPtr extra);\n}\n'@",
+      "Add-Type @'\nusing System;\nusing System.Runtime.InteropServices;\npublic class ScreenMetrics {\n[DllImport(\"user32.dll\")] public static extern int GetSystemMetrics(int nIndex);\n}\n'@",
+      "$screenWidth=[ScreenMetrics]::GetSystemMetrics(0);$screenHeight=[ScreenMetrics]::GetSystemMetrics(1)",
+      "$scaled=$false",
+      "if(($x -ge $screenWidth -or $y -ge $screenHeight) -and $x -lt ($screenWidth*3) -and $y -lt ($screenHeight*3)){ $x=[int][Math]::Round($x/2); $y=[int][Math]::Round($y/2); $scaled=$true }",
+      "if($x -lt 0 -or $x -ge $screenWidth -or $y -lt 0 -or $y -ge $screenHeight){ throw ('Click coordinate outside screen bounds '+$screenWidth+'x'+$screenHeight) }",
+      "[MouseOps]::SetCursorPos($x,$y) | Out-Null",
+      "[MouseOps]::mouse_event(0x0002,0,0,0,[UIntPtr]::Zero)",
+      "Start-Sleep -Milliseconds 60",
+      "[MouseOps]::mouse_event(0x0004,0,0,0,[UIntPtr]::Zero)",
+      "[pscustomobject]@{action='click';x=$x;y=$y;screen=($screenWidth.ToString()+'x'+$screenHeight.ToString());scaled=$scaled} | ConvertTo-Json -Compress",
+    ].join(";");
+    return JSON.parse(await powershell(script, 5000));
+  }
+
+  async function closeApp(args) {
+    const key = cleanString(args.app, 40).toLowerCase();
+    const processName = appCatalog[key]?.process;
+    if (!processName) throw errorWithStatus("That application cannot be closed by JARVIS.");
+    const escaped = processName.replace(/'/g, "''");
+    const output = await powershell(`$p=Get-Process -Name '${escaped}' -ErrorAction SilentlyContinue; if($p){$p|Stop-Process -ErrorAction Stop; @{closed=$true;count=@($p).Count}|ConvertTo-Json -Compress}else{@{closed=$false;count=0}|ConvertTo-Json -Compress}`);
+    return JSON.parse(output);
+  }
+
+  async function networkInventory() {
+    const script = [
+      "$adapters=Get-NetAdapter -ErrorAction SilentlyContinue | Select-Object Name,InterfaceDescription,Status,LinkSpeed,MacAddress",
+      "$neighbors=Get-NetNeighbor -AddressFamily IPv4 -ErrorAction SilentlyContinue | Where-Object {$_.State -ne 'Unreachable'} | Select-Object -First 80 InterfaceAlias,IPAddress,LinkLayerAddress,State",
+      "$routes=Get-NetRoute -AddressFamily IPv4 -ErrorAction SilentlyContinue | Where-Object {$_.DestinationPrefix -eq '0.0.0.0/0'} | Select-Object InterfaceAlias,NextHop,RouteMetric",
+      "@{adapters=$adapters;neighbors=$neighbors;defaultRoutes=$routes}|ConvertTo-Json -Depth 5 -Compress",
+    ].join(";");
+    return JSON.parse(await powershell(script));
+  }
+
+  async function searchFiles(args) {
+    const projectPath = ensureInside(workspaceRoot, cleanString(args.projectPath, 1000));
+    const query = cleanString(args.query, 120).toLowerCase();
+    if (!query) throw errorWithStatus("A filename query is required");
+    const limit = asNumber(args.limit, 40, 1, 100);
+    const ignored = new Set(["node_modules", ".git", "dist", "build", ".next", "coverage"]);
+    const results = [];
+    const queue = [projectPath];
+    while (queue.length && results.length < limit) {
+      const current = queue.shift();
+      for (const entry of fs.readdirSync(current, { withFileTypes: true })) {
+        if (ignored.has(entry.name)) continue;
+        const candidate = path.join(current, entry.name);
+        if (entry.isDirectory()) queue.push(candidate);
+        else if (entry.name.toLowerCase().includes(query)) results.push(path.relative(projectPath, candidate));
+        if (results.length >= limit) break;
+      }
+    }
+    return { projectPath, query, files: results };
+  }
+
+  async function webResearch(args) {
+    const settings = getSettings();
+    const apiKey = settings.geminiKey || process.env.GEMINI_API_KEY;
+    if (!apiKey) throw errorWithStatus("Gemini is not configured, so grounded web research is unavailable.", 412);
+    const query = cleanString(args.query, 700);
+    if (!query) throw errorWithStatus("Web research query is required");
+    const context = cleanString(args.context, 4000);
+    const model = settings.geminiFastModel || settings.geminiModel || "gemini-2.5-flash";
+    const apiBase = String(settings.geminiApiBaseUrl || process.env.JARVIS_GEMINI_API_BASE_URL || "https://generativelanguage.googleapis.com").replace(/\/+$/, "");
+    const now = new Date();
+    const response = await fetch(`${apiBase}/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(apiKey)}`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        contents: [{
+          role: "user",
+          parts: [{
+            text: [
+              "Research this live/current question. Use Google Search grounding. Return a concise answer with dates/times when relevant.",
+              `Current timestamp: ${now.toISOString()}. User timezone: America/New_York.`,
+              context ? `Local context:\n${context}` : "",
+              `Question: ${query}`,
+            ].filter(Boolean).join("\n\n"),
+          }],
+        }],
+        tools: [{ google_search: {} }],
+        generationConfig: { maxOutputTokens: 800 },
+      }),
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw errorWithStatus(data?.error?.message || `Grounded web research failed (${response.status})`, 502);
+    }
+    const candidate = data.candidates?.[0] || {};
+    const answer = (candidate.content?.parts || []).map((part) => part.text).filter(Boolean).join("\n").trim();
+    const sources = (candidate.groundingMetadata?.groundingChunks || [])
+      .map((chunk) => chunk.web)
+      .filter((item) => item?.uri)
+      .map((item) => ({ title: item.title || item.uri, url: item.uri }))
+      .slice(0, 8);
+    return {
+      query,
+      answer,
+      sources,
+      fetchedAt: now.toISOString(),
+      source: "gemini_google_search",
+      plainEnglish: answer || "Grounded web research returned no answer text.",
+    };
+  }
+
+  async function newsHeadlines(args) {
+    const settings = getSettings();
+    const apiKey = settings.newsApiKey || process.env.NEWS_API_KEY;
+    if (!apiKey) throw errorWithStatus("News API is not configured. Set NEWS_API_KEY or newsApiKey.", 412);
+    const limit = asNumber(args.limit, 10, 1, 25);
+    const query = cleanString(args.query, 120);
+    const category = cleanString(args.category, 30);
+    const url = new URL(query ? "https://newsapi.org/v2/everything" : "https://newsapi.org/v2/top-headlines");
+    if (query) {
+      url.searchParams.set("q", query);
+      url.searchParams.set("sortBy", "publishedAt");
+    } else {
+      url.searchParams.set("country", "us");
+      if (category) url.searchParams.set("category", category);
+    }
+    url.searchParams.set("pageSize", String(limit));
+    const data = await fetchJson(url, { headers: { "X-Api-Key": apiKey } });
+    return {
+      articles: (data.articles || []).map((item) => ({
+        title: item.title,
+        source: item.source?.name,
+        description: item.description,
+        url: item.url,
+        publishedAt: item.publishedAt,
+      })),
+    };
+  }
+
+  async function weatherForecast(args) {
+    const latitude = asNumber(args.latitude, NaN, -90, 90);
+    const longitude = asNumber(args.longitude, NaN, -180, 180);
+    if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) throw errorWithStatus("Valid latitude and longitude are required");
+    const headers = { "User-Agent": "JARVIS-OS/1.0 devan-local-assistant" };
+    const point = await fetchJson(`https://api.weather.gov/points/${latitude},${longitude}`, { headers });
+    const forecast = await fetchJson(point.properties.forecast, { headers });
+    return {
+      location: point.properties.relativeLocation?.properties,
+      periods: (forecast.properties?.periods || []).slice(0, 8).map((period) => ({
+        name: period.name,
+        temperature: period.temperature,
+        temperatureUnit: period.temperatureUnit,
+        wind: `${period.windSpeed} ${period.windDirection}`,
+        shortForecast: period.shortForecast,
+        detailedForecast: period.detailedForecast,
+      })),
+    };
+  }
+
+  function memoryItems() {
+    const raw = readJson(memoryPath, []);
+    if (Array.isArray(raw)) return raw;
+    const collected = [];
+    for (const [category, values] of Object.entries(raw || {})) {
+      for (const value of Array.isArray(values) ? values : []) {
+        collected.push(typeof value === "string" ? { id: crypto.randomUUID(), category, text: value } : { category, ...value });
+      }
+    }
+    return collected;
+  }
+
+  async function memorySearch(args) {
+    const query = cleanString(args.query, 200);
+    const limit = asNumber(args.limit, 10, 1, 30);
+    const matches = memoryStore
+      ? memoryStore.search(query, { limit })
+      : memoryItems().filter((item) => stableJson(item).toLowerCase().includes(query.toLowerCase())).slice(0, limit);
+    return { query, matches };
+  }
+
+  async function memoryAdd(args) {
+    const text = cleanString(args.text, 1000);
+    if (!text) throw errorWithStatus("Memory text is required");
+    const item = memoryStore
+      ? memoryStore.add({
+          text,
+          kind: cleanString(args.kind || "semantic", 40),
+          category: cleanString(args.category || "personal", 50),
+          source: cleanString(args.source || "conversation", 100),
+          confidence: asNumber(args.confidence, 1, 0, 1),
+          importance: asNumber(args.importance, 0.5, 0, 1),
+          expiresAt: args.expiresAt || null,
+        })
+      : { id: crypto.randomUUID(), category: cleanString(args.category || "personal", 50), text, createdAt: new Date().toISOString() };
+    if (!memoryStore) {
+      const items = memoryItems();
+      writeJsonAtomic(memoryPath, [item, ...items].slice(0, 500));
+    }
+    return { saved: true, memory: item };
+  }
+
+  async function draftEmail(args) {
+    const recipient = cleanString(args.recipient, 320).replace(/[\r\n]/g, "");
+    const subject = cleanString(args.subject, 200).replace(/[\r\n]/g, " ");
+    return {
+      draft: {
+        recipient,
+        subject,
+        body: cleanString(args.body, 10000),
+      },
+      sent: false,
+    };
+  }
+
+  async function browserSearch(args) {
+    const query = cleanString(args.query, 500);
+    if (!query) throw errorWithStatus("Search query is required");
+    const target = `https://www.google.com/search?q=${encodeURIComponent(query)}`;
+    await execFileAsync("cmd.exe", ["/c", "start", "", target], { timeout: 5000, windowsHide: true }).catch((error) => {
+      if (error.code !== "ETIMEDOUT") throw error;
+    });
+    return { opened: true, query, url: target };
+  }
+
+  async function instagramReply(args) {
+    const settings = getSettings();
+    const token = settings.instagramAccessToken || process.env.INSTAGRAM_ACCESS_TOKEN;
+    const accountId = settings.instagramAccountId || process.env.INSTAGRAM_ACCOUNT_ID;
+    if (!token || !accountId) throw errorWithStatus("Instagram professional messaging is not configured.", 412);
+    const result = await fetchJson(`https://graph.instagram.com/v23.0/${encodeURIComponent(accountId)}/messages`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+      body: JSON.stringify({ recipient: { id: cleanString(args.recipientId, 200) }, message: { text: cleanString(args.message, 1000) } }),
+    });
+    return { sent: true, messageId: result.message_id || result.id };
+  }
+
+  const handlers = {
+    system_status: systemStatus,
+    list_processes: listProcesses,
+    open_app: openApp,
+    open_url: openUrl,
+    screen_inspect: inspectScreen,
+    screen_act: screenAct,
+    youtube_open_video: youtubeOpenVideo,
+    desktop_control: desktopControl,
+    close_app: closeApp,
+    network_inventory: networkInventory,
+    search_projects: async (args) => {
+      const query = cleanString(args.query, 120).toLowerCase();
+      const projects = scanProjects();
+      return { projects: query ? projects.filter((item) => stableJson(item).toLowerCase().includes(query)) : projects };
+    },
+    open_project: async (args) => openProjectFolder(ensureInside(workspaceRoot, cleanString(args.path, 1000))),
+    search_files: searchFiles,
+    apex_catalog_search: async (args) => {
+      const apex = getApex();
+      if (!apex) throw errorWithStatus("APEX data engine is not available in this runtime.", 412);
+      const query = cleanString(args.query || "", 200);
+      const rows = apex.searchCatalog(query) || [];
+      return {
+        query,
+        count: rows.length,
+        results: rows.map((r) => ({ name: r.name, kind: r.kind, source: r.source, path: r.path, rows: r.row_count, dateFrom: r.date_from, dateTo: r.date_to, columns: r.columns, summary: r.summary })),
+      };
+    },
+    apex_strategies: async (args) => {
+      const apex = getApex();
+      if (!apex) throw errorWithStatus("APEX data engine is not available in this runtime.", 412);
+      const id = cleanString(args.id || "", 80);
+      if (id) {
+        const s = apex.getStrategyById(id);
+        if (!s) return { found: false, id, message: "No strategy by that id. Call apex_strategies with no id to list them." };
+        const sp = s.spec || {};
+        return { found: true, id: s.id, name: s.name, description: s.description, tags: s.tags, folder: s.folder, source: s.source, summary: s.summary, metrics: s.metrics, universe: sp.universe, signals: (sp.signals || []).map((b) => ({ id: b.id, type: b.type, params: b.params })), exit: sp.exit, sizing: sp.sizing, risk: sp.risk, updatedAt: s.updatedAt };
+      }
+      const list = apex.listStrategies() || [];
+      return { count: list.length, strategies: list.map((s) => ({ id: s.id, name: s.name, folder: s.folder, tags: s.tags, source: s.source, summary: s.summary, sharpe: s.metrics && s.metrics.sharpe, updatedAt: s.updatedAt })) };
+    },
+    apex_forge: async (args) => {
+      const apex = getApex();
+      if (!apex) throw errorWithStatus("APEX data engine is not available in this runtime.", 412);
+      const kind = cleanString(args.kind || "overview", 20).toLowerCase();
+      if (kind === "variables") { const v = apex.listVariables() || []; return { count: v.length, variables: v.map((x) => ({ id: x.id, name: x.name, expr: x.expr, kind: x.kind, description: x.description, createdBy: x.createdBy })) }; }
+      if (kind === "signals") { const s = apex.listSignals() || []; return { count: s.length, signals: s.map((x) => ({ id: x.id, name: x.name, expr: x.expr, description: x.description, fromCode: !!x.codePath, createdBy: x.createdBy })) }; }
+      if (kind === "folders" || kind === "strategies") { const f = apex.listFolders() || []; return { count: f.length, folders: f.map((x) => ({ id: x.id, name: x.name, kind: x.kind, description: x.description, fromCode: !!x.codePath, updatedAt: x.updatedAt })) }; }
+      // overview: everything the user has forged
+      const folders = apex.listFolders() || [], bots = apex.listStrategies() || [], vars = apex.listVariables() || [], sigs = apex.listSignals() || [];
+      return { overview: true, folders: folders.length, bots: bots.length, variables: vars.length, signals: sigs.length,
+        recentFolders: folders.slice(0, 6).map((f) => f.name), recentBots: bots.slice(0, 6).map((b) => b.name),
+        recentSignals: sigs.slice(0, 6).map((s) => s.name), recentVariables: vars.slice(0, 6).map((v) => v.name) };
+    },
+    apex_report: async (args) => {
+      const apex = getApex();
+      if (!apex) throw errorWithStatus("APEX data engine is not available in this runtime.", 412);
+      const id = cleanString(args.id || "", 80);
+      const name = cleanString(args.name || "", 120);
+      let targetId = id;
+      if (!targetId && name) { // resolve a strategy/folder name → id
+        const hit = (apex.listStrategies() || []).find((s) => s.name.toLowerCase() === name.toLowerCase())
+          || (apex.listFolders() || []).find((f) => f.name.toLowerCase() === name.toLowerCase());
+        if (hit) targetId = hit.id;
+      }
+      if (!targetId) { const reps = apex.listReports(20) || []; return { needTarget: true, message: "Name or id required. Reports exist for:", reports: reps.map((r) => ({ targetId: r.targetId, name: r.name, createdAt: r.createdAt })) }; }
+      const rep = apex.latestReport(targetId);
+      if (!rep) return { found: false, targetId, message: "No deep-analysis report yet for that strategy. Run Actions → Deep Analysis in THE FORGE first." };
+      return { found: true, name: rep.name, targetId: rep.targetId, metrics: rep.metrics, narrative: rep.report && rep.report.narrative, engineVersion: rep.engineVersion, createdAt: rep.createdAt };
+    },
+    apex_data_summary: async (args) => {
+      const apex = getApex();
+      if (!apex) throw errorWithStatus("APEX data engine is not available in this runtime.", 412);
+      const name = cleanString(args.name, 200);
+      const r = apex.dataSummary(name);
+      if (!r) return { found: false, name, message: "No catalog entry by that name. Use apex_catalog_search to list what exists." };
+      return { found: true, name: r.name, kind: r.kind, source: r.source, path: r.path, rows: r.row_count, dateFrom: r.date_from, dateTo: r.date_to, columns: r.columns, summary: r.summary, updatedAt: r.updated_at };
+    },
+    apex_news: async (args) => {
+      const apex = getApex();
+      if (!apex) throw errorWithStatus("APEX data engine is not available in this runtime.", 412);
+      const ticker = cleanString(args.ticker || "", 12).toUpperCase();
+      const limit = asNumber(args.limit, 10, 1, 30);
+      if (ticker) {
+        const impact = apex.getNewsImpact(ticker, limit) || [];
+        return { ticker, count: impact.length, impact: impact.map((i) => ({ title: i.title, dir: i.sentiment_dir > 0 ? "bullish" : "bearish", magnitude: i.impact, sector: i.sector, storyRank: i.rank })) };
+      }
+      const stories = apex.getNews(limit) || [];
+      return {
+        count: stories.length,
+        stories: stories.map((s) => ({ title: s.title, rank: s.rank, verified: s.verify_score, corroboration: s.article_count, lane: s.impact && s.impact.lane, impact: (s.impact && s.impact.tickers) || [] })),
+      };
+    },
+    apex_market_snapshot: async () => {
+      const apex = getApex();
+      if (!apex) throw errorWithStatus("APEX data engine is not available in this runtime.", 412);
+      const ov = apex.getOverview() || { indices: [] }; const r = apex.getRegime(); const m = apex.getMovers(); const cg = apex.getCryptoGlobal(); const macro = apex.getMacro() || []; const news = apex.getNews(6) || [];
+      const mv = (arr) => (arr || []).map((x) => ({ t: x.ticker, pct: x.changePct != null ? +x.changePct.toFixed(2) : null }));
+      return {
+        regime: r ? { score: r.score, label: r.label, fearGreed: r.fearGreedLabel, vix: r.vix, marketMomentumPct: r.momentum != null ? +r.momentum.toFixed(2) : null, breadthPctUp: r.pctUp != null ? Math.round(r.pctUp * 100) : null } : null,
+        indices: (ov.indices || []).map((i) => ({ t: i.ticker, last: i.last, changePct: i.changePct != null ? +i.changePct.toFixed(2) : null })),
+        crypto: cg ? { totalMcapTrillions: +(cg.totalMcap / 1e12).toFixed(2), btcDominance: +cg.btcDom.toFixed(1), change24hPct: +cg.mcapChangePct.toFixed(2) } : null,
+        stocks: { gainers: mv(m.stocks.gainers), losers: mv(m.stocks.losers) },
+        cryptoMovers: { gainers: mv(m.crypto.gainers), losers: mv(m.crypto.losers) },
+        macro: macro.map((x) => ({ series: x.label, value: x.value, unit: x.unit })),
+        topNews: news.map((s) => ({ title: s.title, lane: s.impact && s.impact.lane, tickers: ((s.impact && s.impact.tickers) || []).map((t) => t.t || t.s).filter(Boolean) })),
+      };
+    },
+    apex_ticker_report: async (args) => {
+      const apex = getApex();
+      if (!apex) throw errorWithStatus("APEX data engine is not available in this runtime.", 412);
+      const sym = cleanString(args.ticker, 12).toUpperCase();
+      const isCrypto = /USDT?$/.test(sym) || sym === "BTC" || sym === "ETH";
+      const quote = apex.getQuote(sym) || null;
+      const fundamentals = isCrypto ? null : await apex.getFundamentals(sym);
+      const newsImpact = (apex.getNewsImpact(sym, 6) || []).map((i) => ({ title: i.title, dir: i.sentiment_dir > 0 ? "bullish" : "bearish", sector: i.sector }));
+      const insider = (apex.getInsider(sym) || []).slice(0, 8).map((t) => ({ name: t.name, side: t.side, shares: t.change, price: t.price, date: t.date }));
+      return { ticker: sym, isCrypto, quote, fundamentals, newsImpact, insider };
+    },
+    apex_brief: async (args) => {
+      const apex = getApex();
+      if (!apex) throw errorWithStatus("APEX data engine is not available in this runtime.", 412);
+      const type = cleanString(args.type || "now", 16);
+      return apex.getBrief(type);
+    },
+    apex_health_check: async () => {
+      const apex = getApex();
+      if (!apex) throw errorWithStatus("APEX data engine is not available in this runtime.", 412);
+      const r = await apex.runHealthCheck();
+      return { ok: r.ok, down: r.down, disabled: r.disabled, skipped: r.skipped, analysis: r.analysis, report: r.report, proposedFixes: r.fixes };
+    },
+    apex_health_apply: async (args) => {
+      const apex = getApex();
+      if (!apex) throw errorWithStatus("APEX data engine is not available in this runtime.", 412);
+      const ids = Array.isArray(args.ids) ? args.ids.map((x) => cleanString(x, 40)) : null;
+      const proposed = apex.getHealthFixes() || [];
+      if (!proposed.length) return { applied: [], message: "No fixes are pending. Run apex_health_check first." };
+      return apex.applyHealthFixes(ids);
+    },
+    kalshi_markets: async (args) => providers.kalshi.markets(cleanString(args.query, 700)),
+    kalshi_market_discovery: async (args) => providers.kalshi.marketDiscovery({
+      query: cleanString(args.query, 700),
+      limit: asNumber(args.limit, 12, 1, 50),
+      maxPages: asNumber(args.maxPages, 8, 1, 10),
+    }),
+    kalshi_balance: async () => providers.kalshi.balance(),
+    kalshi_positions: async (args) => providers.kalshi.positions(args),
+    kalshi_fills: async (args) => {
+      const result = await providers.kalshi.fills(args);
+      return {
+        latestFill: result.latestFill,
+        fillCount: result.fillCount,
+        fills: result.fills,
+        plainEnglish: result.plainEnglish,
+        cursor: result.cursor,
+      };
+    },
+    kalshi_portfolio: async () => providers.kalshi.portfolioSummary(),
+    canvas_courses: async () => providers.canvas.courses(),
+    canvas_assignments: async (args) => providers.canvas.assignments(args),
+    canvas_browser_assignments: async (args) => {
+      const settings = getSettings();
+      const base = cleanString(args.url || settings.canvasBaseUrl || "https://northeastern.instructure.com", 500).replace(/\/+$/, "");
+      const target = `${base}/calendar`;
+      const navigation = await browser.navigate({ url: target });
+      const snapshot = await browser.snapshot({});
+      return {
+        opened: true,
+        url: navigation.url,
+        title: snapshot.title,
+        loginLikelyRequired: /log in|login|sign in|sso|password|username/i.test(`${snapshot.title} ${snapshot.pageText || ""}`),
+        elements: snapshot.elements,
+        securitySignals: snapshot.securitySignals || [],
+      };
+    },
+    web_research: webResearch,
+    research_v2: async (args) => {
+      if (!researchV2) researchV2 = createResearchV2({ getSettings, webResearch, urlRead: cortex.urlRead });
+      return researchV2.run({
+      query: cleanString(args.query, 1200),
+      intent: cleanString(args.intent, 80),
+      mode: cleanString(args.mode, 20),
+      ...(args.maxSearches == null ? {} : { maxSearches: asNumber(args.maxSearches, 5, 1, 10) }),
+      ...(args.readTopSources == null ? {} : { readTopSources: asNumber(args.readTopSources, 3, 0, 6) }),
+    });
+    },
+    web_research_deep: async (args) => cortex.deepResearch({
+      query: cleanString(args.query, 1200),
+      context: cleanString(args.context, 4000),
+      readTopSources: asNumber(args.readTopSources, 2, 0, 5),
+    }),
+    url_read: async (args) => cortex.urlRead({
+      url: cleanString(args.url, 2000),
+      maxChars: asNumber(args.maxChars, 18000, 500, 60000),
+    }),
+    compose_artifact: async (args) => composer.compose(args),
+    artifact_status: async (args) => composer.status(args),
+    pc_graph_rebuild: async (args) => pcGraph.rebuild({
+      roots: Array.isArray(args.roots) ? args.roots.map((root) => cleanString(root, 1200)).filter(Boolean) : undefined,
+      limit: asNumber(args.limit, 1200, 1, 50000),
+    }),
+    pc_graph_search: async (args) => pcGraph.search({
+      query: cleanString(args.query, 500),
+      limit: asNumber(args.limit, 12, 1, 50),
+    }),
+    pc_graph_timeline: async (args) => pcGraph.timeline({
+      hours: asNumber(args.hours, 24, 1, 720),
+      limit: asNumber(args.limit, 30, 1, 100),
+    }),
+    pc_graph_explain: async (args) => pcGraph.explain({
+      target: cleanString(args.target || args.query, 500),
+    }),
+    pc_graph_inspect: async () => pcGraph.inspect(),
+    agent_deploy: async (args) => skillAutopilot.deployAgent({
+      agent: cleanString(args.agent || args.role || "coordinator", 50),
+      title: cleanString(args.title, 180),
+      objective: cleanString(args.objective || args.prompt, 4000),
+      autonomyLevel: cleanString(args.autonomyLevel || "act", 40),
+    }),
+    skill_compile: async (args) => skillAutopilot.compile({
+      name: cleanString(args.name, 160),
+      trigger: cleanString(args.trigger, 200),
+      objective: cleanString(args.objective || args.prompt, 4000),
+      steps: Array.isArray(args.steps) ? args.steps : undefined,
+    }),
+    skill_run: async (args) => skillAutopilot.run({
+      id: cleanString(args.id, 200),
+      name: cleanString(args.name, 200),
+      trigger: cleanString(args.trigger, 200),
+      input: cleanString(args.input, 4000),
+      objective: cleanString(args.objective, 4000),
+      autonomyLevel: cleanString(args.autonomyLevel || "act", 40),
+    }),
+    skill_list: async (args) => skillAutopilot.list({ limit: asNumber(args.limit, 30, 1, 100) }),
+    skill_inspect: async () => skillAutopilot.inspect(),
+    news_headlines: newsHeadlines,
+    weather_forecast: weatherForecast,
+    memory_search: memorySearch,
+    memory_add: memoryAdd,
+    life_graph: async (args) => memoryStore.lifeGraph({ limit: asNumber(args.limit, 120, 1, 200) }),
+    neural_vault_status: async () => requireNeuralVault().status(),
+    neural_vault_context: async (args) => requireNeuralVault().getContextPack(
+      cleanString(args.query || args.message, 1200),
+      { limit: asNumber(args.limit, 8, 1, 20) },
+    ),
+    neural_vault_resolve: async (args) => requireNeuralVault().resolveReferences(cleanString(args.message || args.query, 1200)),
+    neural_vault_actions: async (args) => {
+      const vault = requireNeuralVault();
+      const query = cleanString(args.query, 1000);
+      return {
+        query,
+        matches: query ? vault.matchActionMacros(query) : [],
+        macros: vault.listActionMacros(),
+      };
+    },
+    neural_vault_integrations: async (args) => {
+      const vault = requireNeuralVault();
+      return {
+        apiKeyMetadata: vault.listApiKeyMetadata(),
+        health: vault.listIntegrationHealth({ limit: asNumber(args.limit, 40, 1, 100) }),
+        capabilities: vault.listCapabilityMemory({ limit: 100 }),
+      };
+    },
+    neural_vault_api_key_metadata: async (args) => ({
+      metadata: requireNeuralVault().rememberApiKeyMetadata({
+        provider: cleanString(args.provider, 80),
+        keyLabel: cleanString(args.keyLabel || args.label, 160),
+        envVarName: cleanString(args.envVarName, 160),
+        status: cleanString(args.status || "unknown", 40),
+        requiredForTools: Array.isArray(args.requiredForTools) ? args.requiredForTools.map((item) => cleanString(item, 120)).filter(Boolean) : [],
+        notes: cleanString(args.notes, 1000),
+      }),
+    }),
+    neural_vault_maintenance: async () => requireNeuralVault().maintenanceRun(),
+    memory_os_v4_status: async () => requireNeuralVault().memoryOsStatus(),
+    memory_os_v4_query: async (args) => requireNeuralVault().queryMemoryOs(
+      cleanString(args.query || args.q, 1200),
+      { limit: asNumber(args.limit, 10, 1, 50) },
+    ),
+    memory_os_v4_scan_files: async (args) => requireNeuralVault().scanMemoryFiles({ limit: asNumber(args.limit, 220, 1, 2500) }),
+    memory_os_v4_run_agent: async (args) => requireNeuralVault().runMemoryAgent(cleanString(args.agentId || args.agent || "memory-manager-agent", 120), {
+      task: cleanString(args.task, 1000),
+      limit: asNumber(args.limit, 180, 1, 2500),
+    }),
+    device_files: async (args) => ({
+      files: (deviceFiles ? deviceFiles() : []).slice(0, asNumber(args.limit, 30, 1, 80)),
+    }),
+    device_latest_image: async () => {
+      const image = latestDeviceImage ? latestDeviceImage() : { found: false };
+      if (!image?.found) throw errorWithStatus(image?.message || "No uploaded device image was found.", 404);
+      return image;
+    },
+    mesh_status: async () => {
+      if (!meshStatus) throw errorWithStatus("Device mesh status is not available in this runtime.", 412);
+      return meshStatus();
+    },
+    mesh_objects: async (args) => {
+      if (!meshObjects) throw errorWithStatus("Device mesh object portal is not available in this runtime.", 412);
+      const objects = meshObjects();
+      const id = cleanString(args.id, 200);
+      if (id) {
+        const object = objects.find((item) => item.id === id);
+        if (!object) throw errorWithStatus("Mesh object not found.", 404);
+        return { object };
+      }
+      const type = cleanString(args.type, 40).toLowerCase();
+      return {
+        objects: objects
+          .filter((item) => !type || String(item.type || "").toLowerCase() === type)
+          .slice(0, asNumber(args.limit, 30, 1, 100)),
+      };
+    },
+    mesh_pair_link: async (args) => {
+      if (!meshCreatePair) throw errorWithStatus("Device mesh pairing is not available in this runtime.", 412);
+      return meshCreatePair({ target: cleanString(args.target || "phone", 80) });
+    },
+    mesh_self_test: async () => {
+      if (!meshSelfTest) throw errorWithStatus("Device mesh self-test is not available in this runtime.", 412);
+      return meshSelfTest();
+    },
+    mesh_send_command: async (args, context) => {
+      if (!meshCreateCommand) throw errorWithStatus("Device mesh command routing is not available in this runtime.", 412);
+      return meshCreateCommand({
+        targetDeviceId: cleanString(args.targetDeviceId || "any", 100),
+        type: cleanString(args.type || "ask_jarvis", 80),
+        title: cleanString(args.title, 160),
+        body: cleanString(args.body || args.message, 2000),
+        payload: args.payload && typeof args.payload === "object" ? args.payload : {},
+        priority: cleanString(args.priority || "normal", 30),
+        sourceDeviceId: context.deviceId || "jarvis",
+      });
+    },
+    coop_symbiote_status: async () => {
+      if (!coopSymbioteMesh) throw errorWithStatus("Co-Op Symbiote Mesh is not available in this runtime.", 412);
+      return coopSymbioteMesh.status();
+    },
+    coop_symbiote_create_session: async (args) => {
+      if (!coopSymbioteMesh) throw errorWithStatus("Co-Op Symbiote Mesh is not available in this runtime.", 412);
+      return { session: coopSymbioteMesh.createSession({
+        title: cleanString(args.title || "Jarvis Co-Op Symbiote Mesh", 120),
+        mode: cleanString(args.mode || "Code Review Mode", 80),
+        peerName: cleanString(args.peerName || "", 80),
+      }) };
+    },
+    coop_symbiote_manifest: async (args) => {
+      if (!coopSymbioteMesh) throw errorWithStatus("Co-Op Symbiote Mesh is not available in this runtime.", 412);
+      return { files: coopSymbioteMesh.fileManifest({ limit: asNumber(args.limit, 80, 1, 240) }) };
+    },
+    coop_symbiote_chat: async (args) => {
+      if (!coopSymbioteMesh) throw errorWithStatus("Co-Op Symbiote Mesh is not available in this runtime.", 412);
+      return coopSymbioteMesh.addChat(cleanString(args.sessionId, 120), {
+        text: cleanString(args.text, 2000),
+        senderName: cleanString(args.senderName || "Devansh", 80),
+      });
+    },
+    coop_symbiote_patch: async (args) => {
+      if (!coopSymbioteMesh) throw errorWithStatus("Co-Op Symbiote Mesh is not available in this runtime.", 412);
+      return coopSymbioteMesh.proposePatch(cleanString(args.sessionId, 120), {
+        filePath: cleanString(args.filePath, 240),
+        originalText: String(args.originalText || ""),
+        replacementText: String(args.replacementText || ""),
+        summary: cleanString(args.summary || "", 240),
+        author: "Jarvis",
+      });
+    },
+    coop_symbiote_ghost_test: async (args) => {
+      if (!coopSymbioteMesh) throw errorWithStatus("Co-Op Symbiote Mesh is not available in this runtime.", 412);
+      return coopSymbioteMesh.ghostTest(cleanString(args.sessionId, 120), cleanString(args.patchId, 120));
+    },
+    coop_symbiote_debate: async (args) => {
+      if (!coopSymbioteMesh) throw errorWithStatus("Co-Op Symbiote Mesh is not available in this runtime.", 412);
+      return coopSymbioteMesh.debate(cleanString(args.sessionId, 120), { topic: cleanString(args.topic, 500) });
+    },
+    coop_symbiote_memory: async (args) => requireNeuralVault().coopMemorySummary(cleanString(args.sessionId, 120)),
+    codebase_search: async (args) => ({
+      query: cleanString(args.query, 500),
+      matches: await codeKnowledge.search(cleanString(args.query, 500), { limit: asNumber(args.limit, 8, 1, 20) }),
+    }),
+    jarvis_self_inspect: async () => ({
+      codebase: codeKnowledge.inspect(),
+      capabilities: definitions,
+      applications: Object.keys(appCatalog),
+      mesh: meshStatus ? meshStatus() : null,
+      neuralVault: neuralVault ? neuralVault.status() : null,
+    }),
+    draft_email: draftEmail,
+    send_email: async (args) => providers.google.sendEmail((await draftEmail(args)).draft),
+    browser_search: browserSearch,
+    browser_status: () => browser.status(),
+    browser_login_handoff: (args) => browser.loginHandoff(args),
+    browser_page_brief: (args) => browser.pageBrief(args),
+    browser_navigate: (args) => browser.navigate(args),
+    browser_snapshot: (args) => browser.snapshot(args),
+    browser_tabs: (args) => browser.tabs(args),
+    browser_act: (args) => browser.act(args),
+    browser_commit: (args) => browser.commit(args),
+    browser_file_search: (args) => browser.findFiles(args),
+    browser_inspect: (args) => browser.inspect(args),
+    browser_click: (args) => browser.click(args),
+    browser_type: (args) => browser.type(args),
+    browser_extract: (args) => browser.extract(args),
+    browser_screenshot: (args) => browser.screenshot(args),
+    browser_wait: (args) => browser.wait(args),
+    browser_verify: (args) => browser.verify(args),
+    screen_capture: async (args) => {
+      if (!screenCapture) throw errorWithStatus("Screen capture is not available in this runtime", 412);
+      return screenCapture({ reason: cleanString(args.reason, 240) });
+    },
+    instagram_reply: instagramReply,
+    list_windows: async (args) => { if (!windowsBroker) throw errorWithStatus("Windows broker is not available", 412); return windowsBroker.call("list_windows", args); },
+    inspect_window: async (args) => { if (!windowsBroker) throw errorWithStatus("Windows broker is not available", 412); return windowsBroker.call("inspect_window", args); },
+    focus_window: async (args) => { if (!windowsBroker) throw errorWithStatus("Windows broker is not available", 412); return windowsBroker.call("focus_window", args); },
+    invoke_control: async (args) => { if (!windowsBroker) throw errorWithStatus("Windows broker is not available", 412); return windowsBroker.call("invoke_control", args); },
+    set_control_value: async (args) => { if (!windowsBroker) throw errorWithStatus("Windows broker is not available", 412); return windowsBroker.call("set_control_value", args); },
+    run_command: async (args) => {
+      const cmd = cleanString(args.command, 4000);
+      if (!cmd) throw errorWithStatus("command is required");
+      // Block PowerShell constructs that can cause infinite resource consumption
+      const BLOCKED_PS = [
+        /\bwhile\s*\(/i, /\bfor\s*\(/i, /\bforeach\s*\(/i, /\bdo\s*\{/i,
+        /\bInvoke-Expression\b|\biex\b/i,
+        /\bStart-Process\b|\bNew-Object\s+System\.Diagnostics\.Process\b/i,
+        /\bInvoke-Item\b/i,
+        /\bSuspend-Job\b|\bRemove-Job\b/i,
+        /\bSet-MpPreference\b|\bDisable-WindowsOptionalFeature\b/i,
+      ];
+      const blocked = BLOCKED_PS.find((re) => re.test(cmd));
+      if (blocked) throw errorWithStatus("Command contains a disallowed PowerShell construct", 403);
+      const timeoutMs = asNumber(args.timeout_ms, 15000, 1000, 30000);
+      try {
+        const { stdout, stderr } = await execFileAsync(
+          "powershell.exe",
+          ["-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", cmd],
+          { timeout: timeoutMs, windowsHide: true, maxBuffer: MAX_OUTPUT },
+        );
+        return { ok: true, stdout: stdout.trim().slice(0, 50000), stderr: (stderr || "").trim().slice(0, 5000), exitCode: 0 };
+      } catch (err) {
+        return { ok: false, stdout: (err.stdout || "").trim(), stderr: (err.stderr || err.message || "").trim(), exitCode: err.code || 1, timedOut: Boolean(err.killed) };
+      }
+    },
+    write_file: async (args) => {
+      const filePath = cleanString(args.path, 1000);
+      if (!filePath) throw errorWithStatus("path is required");
+      if (/^C:\\(Windows|Program Files|Program Files \(x86\))\\/i.test(filePath)) {
+        throw errorWithStatus("Writing to system directories is not permitted", 403);
+      }
+      const content = String(args.content ?? "");
+      const MAX_FILE_BYTES = 50 * 1024 * 1024; // 50 MB hard cap
+      if (Buffer.byteLength(content, "utf8") > MAX_FILE_BYTES) {
+        throw errorWithStatus(`File content exceeds 50 MB limit`, 413);
+      }
+      fs.mkdirSync(path.dirname(filePath), { recursive: true });
+      fs.writeFileSync(filePath, content, "utf8");
+      return { ok: true, path: filePath, bytesWritten: Buffer.byteLength(content, "utf8") };
+    },
+    delete_file: async (args) => {
+      const filePath = cleanString(args.path, 1000);
+      if (!filePath) throw errorWithStatus("path is required");
+      if (/^C:\\(Windows|Program Files|Program Files \(x86\))\\/i.test(filePath)) {
+        throw errorWithStatus("Deleting system directories is not permitted", 403);
+      }
+      const stat = fs.statSync(filePath, { throwIfNoEntry: false });
+      if (!stat) throw errorWithStatus(`File not found: ${filePath}`, 404);
+      if (stat.isDirectory()) {
+        fs.rmdirSync(filePath);
+      } else {
+        fs.unlinkSync(filePath);
+      }
+      return { ok: true, deleted: filePath, wasDirectory: stat.isDirectory() };
+    },
+    read_clipboard: async () => {
+      const text = await powershell("Get-Clipboard -Raw", 5000);
+      return { ok: true, text: text.slice(0, 10000), length: text.length };
+    },
+    write_clipboard: async (args) => {
+      const text = String(args.text || "").slice(0, 50000);
+      const tmp = path.join(os.tmpdir(), `jarvis-clip-${crypto.randomBytes(6).toString("hex")}.txt`);
+      fs.writeFileSync(tmp, text, "utf8");
+      try {
+        await powershell(`Get-Content -Path '${tmp.replace(/'/g, "''")}' -Raw | Set-Clipboard`, 5000);
+      } finally {
+        try { fs.unlinkSync(tmp); } catch {}
+      }
+      return { ok: true, length: text.length };
+    },
+    toast_notification: async (args) => {
+      const title = cleanString(args.title, 200).replace(/[<>&"]/g, "");
+      const message = cleanString(args.message, 500).replace(/[<>&"]/g, "");
+      const xml = `<toast><visual><binding template="ToastGeneric"><text>${title}</text><text>${message}</text></binding></visual></toast>`;
+      const tmp = path.join(os.tmpdir(), `jarvis-toast-${crypto.randomBytes(6).toString("hex")}.xml`);
+      fs.writeFileSync(tmp, xml, "utf8");
+      const escapedTmp = tmp.replace(/'/g, "''");
+      const script = [
+        `[Windows.UI.Notifications.ToastNotificationManager,Windows.UI.Notifications,ContentType=WindowsRuntime]|Out-Null`,
+        `[Windows.Data.Xml.Dom.XmlDocument,Windows.Data.Xml.Dom.XmlDocument,ContentType=WindowsRuntime]|Out-Null`,
+        `$x=[Windows.Data.Xml.Dom.XmlDocument]::new()`,
+        `$x.LoadXml((Get-Content -Path '${escapedTmp}' -Raw))`,
+        `[Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier('Jarvis').Show([Windows.UI.Notifications.ToastNotification]::new($x))`,
+      ].join(";");
+      try {
+        await powershell(script, 8000);
+      } finally {
+        try { fs.unlinkSync(tmp); } catch {}
+      }
+      return { ok: true, title, message };
+    },
+    computer_use: async (args) => {
+      if (!computerUse) throw errorWithStatus("computer_use requires screen capture — not available in this runtime.", 412);
+      const task = cleanString(args.task || args.instruction || args.goal || args.command, 1200);
+      if (!task) throw errorWithStatus("computer_use requires a task description.", 400);
+      if (/\b(password|captcha|purchase|buy|sell|trade|submit.*payment|pay|checkout|wire|bank|delete account)\b/i.test(task)) {
+        throw errorWithStatus("computer_use blocked a sensitive or financial action. Use an explicit approved workflow instead.", 403);
+      }
+      const maxSteps = Math.min(asNumber(args.maxSteps || args.max_steps, 15, 1, 25), 25);
+      const stepLog = [];
+      const result = await computerUse.execute(task, {
+        maxSteps,
+        onStep: (s) => stepLog.push({ step: s.step, action: s.action, reasoning: s.reasoning, done: s.done }),
+      });
+      return { ok: result.success, task, result: result.result, steps: stepLog, stepsCompleted: result.stepsCompleted };
+    },
+    screen_locate: async (args) => {
+      if (!computerUse) throw errorWithStatus("screen_locate requires screen capture.", 412);
+      const elementDescription = cleanString(args.description || args.target || args.element, 400);
+      if (!elementDescription) throw errorWithStatus("screen_locate requires a description of the element to find.", 400);
+      const located = await computerUse.locateElement(elementDescription);
+      return { ok: located.found, ...located };
+    },
+    mouse_scroll: async (args) => {
+      if (!computerUse) throw errorWithStatus("mouse_scroll requires screen capture.", 412);
+      const direction = ["up", "down", "left", "right"].includes(args.direction) ? args.direction : "down";
+      const amount = Math.max(1, Math.min(10, asNumber(args.amount, 3, 1, 10)));
+      let sx = args.x != null ? Math.round(Number(args.x)) : null;
+      let sy = args.y != null ? Math.round(Number(args.y)) : null;
+      if (sx == null || sy == null) {
+        try {
+          const cap = await screenCapture({ reason: "mouse_scroll center" });
+          const dims = (cap?.dimensions || "1920x1080").split("x");
+          if (sx == null) sx = Math.round(Number(dims[0]) / 2);
+          if (sy == null) sy = Math.round(Number(dims[1]) / 2);
+        } catch { sx = sx ?? 960; sy = sy ?? 540; }
+      }
+      const scrollResult = await computerUse.mouseScroll(sx, sy, direction, amount);
+      return { ok: scrollResult.ok, x: sx, y: sy, direction, amount };
+    },
+    screen_analyze: async (args) => {
+      if (!screenCapture) throw errorWithStatus("Screen capture is not available in this runtime", 412);
+      const question = cleanString(args.question || "Describe everything visible on this screen in detail.", 500);
+      let capture;
+      try {
+        capture = await screenCapture({ reason: "screen_analyze" });
+      } catch (err) {
+        throw errorWithStatus(`Screen capture failed: ${err.message}`, 500);
+      }
+      let imageBase64;
+      try {
+        if (capture?.imageBase64) {
+          imageBase64 = capture.imageBase64;
+        } else if (capture?.imagePath) {
+          imageBase64 = fs.readFileSync(capture.imagePath).toString("base64");
+        } else {
+          throw errorWithStatus("Screen capture returned no image data", 500);
+        }
+      } catch (err) {
+        if (err.statusCode) throw err;
+        throw errorWithStatus(`Failed to load captured image: ${err.message}`, 500);
+      }
+      const settings = getSettings();
+      const apiKey = settings?.geminiKey || process.env.GEMINI_API_KEY;
+      if (!apiKey) throw errorWithStatus("Gemini API key is not configured for screen analysis", 412);
+      const { GoogleGenAI } = require("@google/genai");
+      const ai = new GoogleGenAI({ apiKey });
+      const result = await ai.models.generateContent({
+        model: "gemini-2.0-flash",
+        contents: [{ role: "user", parts: [
+          { inlineData: { data: imageBase64, mimeType: "image/png" } },
+          { text: question },
+        ] }],
+      });
+      const analysis = result.candidates?.[0]?.content?.parts?.[0]?.text || result.text || "";
+      return { ok: true, question, analysis, capturedAt: capture?.capturedAt || new Date().toISOString() };
+    },
+  };
+
+  async function execute(tool, args = {}, context = {}) {
+    const definition = definitionFor(tool);
+    const handler = handlers[tool];
+    if (!definition || !handler) throw errorWithStatus(`Unknown capability: ${tool}`, 404);
+    if (tool === "open_url") {
+      try {
+        normalizeOpenUrl(args.url);
+      } catch (error) {
+        return {
+          ok: false,
+          status: "failed",
+          capability: definition,
+          error: error.message,
+          statusCode: error.statusCode || 400,
+        };
+      }
+    }
+    const cutoff = Date.now() - 60_000;
+    while (actionHistory.length && actionHistory[0] < cutoff) actionHistory.shift();
+    const policy = evaluateAutonomy({
+      definition,
+      tool,
+      args,
+      profile: getAutonomyProfile ? getAutonomyProfile() : { level: "act" },
+      context,
+      recentActionCount: actionHistory.length,
+    });
+    if (!policy.allowed) {
+      return {
+        ok: false,
+        status: policy.needsElevation ? "autonomy_elevation_required" : "denied",
+        capability: definition,
+        policy,
+        error: policy.reason,
+      };
+    }
+    const safeBrowserContinuation = new Set([
+      "browser_navigate",
+      "browser_status",
+      "browser_login_handoff",
+      "browser_page_brief",
+      "browser_snapshot",
+      "browser_tabs",
+      "browser_act",
+      "browser_file_search",
+      "browser_inspect",
+      "browser_extract",
+      "browser_screenshot",
+      "browser_wait",
+      "browser_verify",
+      "screen_capture",
+      "screen_inspect",
+      "screen_act",
+      "device_files",
+      "device_latest_image",
+      "mesh_status",
+      "mesh_objects",
+      "mesh_pair_link",
+      "mesh_send_command",
+      "coop_symbiote_status",
+      "coop_symbiote_create_session",
+      "coop_symbiote_manifest",
+      "coop_symbiote_chat",
+      "coop_symbiote_patch",
+      "coop_symbiote_ghost_test",
+      "coop_symbiote_debate",
+      "coop_symbiote_memory",
+      "web_research_deep",
+      "url_read",
+      "compose_artifact",
+      "artifact_status",
+      "pc_graph_rebuild",
+      "pc_graph_search",
+      "pc_graph_timeline",
+      "pc_graph_explain",
+      "pc_graph_inspect",
+      "agent_deploy",
+      "skill_compile",
+      "skill_run",
+      "skill_list",
+      "skill_inspect",
+      "neural_vault_status",
+      "neural_vault_context",
+      "neural_vault_resolve",
+      "neural_vault_actions",
+      "neural_vault_integrations",
+      "neural_vault_api_key_metadata",
+      "neural_vault_maintenance",
+      "memory_os_v4_status",
+      "memory_os_v4_query",
+      "memory_os_v4_scan_files",
+      "memory_os_v4_run_agent",
+      "mesh_self_test",
+      "desktop_control",
+    ]);
+    const indirectBlocked = context.indirect && !safeBrowserContinuation.has(tool) && (
+      definition.risk !== "observe"
+      || ["list_processes", "network_inventory", "search_files", "memory_search"].includes(tool)
+    );
+    if (indirectBlocked) {
+      return { ok: false, status: "denied", capability: definition, error: "Indirect tool output cannot authorize this capability." };
+    }
+    if (context.source === "voice" && ["execute", "commit"].includes(definition.risk)) {
+      return { ok: false, status: "denied", capability: definition, error: "Phone voice sessions cannot authorize computer-control or commit actions." };
+    }
+    if ((definition.confirmationRequired || policy.requiresConfirmation) && !context.confirmed) {
+      if (!context.sessionId) {
+        return {
+          ok: false,
+          status: "approval_session_required",
+          capability: definition,
+          error: "This action was prepared by a background agent and requires approval from an active local session.",
+        };
+      }
+      return { ok: false, status: "confirmation_required", confirmation: requestConfirmation(tool, args, context), capability: definition };
+    }
+
+    const started = Date.now();
+    try {
+      const result = await handler(args, context);
+      if (definition.risk !== "observe") actionHistory.push(Date.now());
+      const receipt = createReceipt({
+        action: `capability.${tool}`,
+        target: tool,
+        risk: definition.risk,
+        status: "verified",
+        input: hash(args),
+        plan: [`Validate ${tool} arguments`, "Execute bounded adapter", "Verify provider or local result"],
+        result: JSON.stringify(result).slice(0, 2000),
+        verification: ["Executor returned successfully", `Duration ${Date.now() - started}ms`],
+        deviceId: context.deviceId || "local-browser",
+      });
+      return { ok: true, status: "completed", capability: definition, result, receipt };
+    } catch (error) {
+      const receipt = createReceipt({
+        action: `capability.${tool}`,
+        target: tool,
+        risk: definition.risk,
+        status: "failed",
+        input: hash(args),
+        result: cleanString(error.message, 1000),
+        verification: ["Execution failed; no success claim was emitted"],
+        deviceId: context.deviceId || "local-browser",
+      });
+      return { ok: false, status: "failed", capability: definition, error: error.message, statusCode: error.statusCode || 500, receipt };
+    }
+  }
+
+  async function approveConfirmation(id, context = {}) {
+    const confirmations = loadConfirmations();
+    const confirmation = confirmations.find((item) => item.id === id);
+    if (!confirmation) throw errorWithStatus("Confirmation is invalid or expired", 403);
+    if (!context.sessionId || confirmation.actor.sessionId !== context.sessionId) throw errorWithStatus("Confirmation belongs to another session", 403);
+    if (context.deviceId && confirmation.actor.deviceId !== context.deviceId) throw errorWithStatus("Confirmation belongs to another device", 403);
+    writeJsonAtomic(confirmationsPath, confirmations.filter((item) => item.id !== id));
+    return execute(confirmation.tool, confirmation.args, { ...context, confirmed: true, confirmationId: id });
+  }
+
+  return {
+    definitions,
+    declarations,
+    apps: Object.keys(appCatalog),
+    execute,
+    close: () => {
+      browser.close?.();
+      pcGraph.close();
+      skillAutopilot.close();
+    },
+    approveConfirmation,
+    pendingConfirmations: (sessionId) => loadConfirmations()
+      .filter((item) => !sessionId || item.actor.sessionId === sessionId)
+      .map((item) => ({
+        id: item.id,
+        tool: item.tool,
+        risk: item.risk,
+        createdAt: item.createdAt,
+        expiresAt: item.expiresAt,
+        argumentHash: item.argumentHash,
+      })),
+  };
+}
+
+module.exports = { createCapabilityEngine };

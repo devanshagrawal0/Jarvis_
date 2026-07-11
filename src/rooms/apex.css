@@ -1,0 +1,114 @@
+/* ═══════════════════════════════════════════════════════════
+   APEX — Intelligent Trading Room
+   Boot sequence + room shell. Mirrors the Helix load pattern:
+   a full-screen boot canvas hands off to the room, which fades
+   in on top. For now the room is a single backdrop image.
+   ═══════════════════════════════════════════════════════════ */
+
+.apex-shell {
+  position: fixed;
+  inset: 0;
+  z-index: 9000;
+  background: #04060b;
+  overflow: hidden;
+  font-family: "SF Pro Display", "Inter", "Helvetica Neue", system-ui, sans-serif;
+}
+
+/* ── Boot canvas ─────────────────────────────────────────── */
+.apex-boot-canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+  pointer-events: none;
+  will-change: transform;
+}
+
+/* ── Room ────────────────────────────────────────────────── */
+.apex-room {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  transition: opacity 1.2s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.apex-room--visible { opacity: 1; }
+
+/* ── Room background — the cityscape image, with a top haze + darkening so
+   the translucent panels stay readable over it. ── */
+.apex-room-bg {
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(ellipse 120% 90% at 50% 8%, rgba(20,32,56,0.55), transparent 60%),
+    #05070d url("/apex/room-bg.png") center / cover no-repeat;
+}
+
+/* Cinematic vignette — darkens edges, focuses the eye, reads as a lens. */
+.apex-room::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  pointer-events: none;
+  background:
+    radial-gradient(ellipse 108% 92% at 50% 44%, transparent 58%, rgba(2,4,8,0.55) 100%);
+}
+@media (prefers-reduced-motion: reduce) { .apex-room-bg, .apex-room-bg::after { animation: none; } }
+
+/* ── Exit affordance ─────────────────────────────────────── */
+.apex-exit {
+  position: absolute;
+  top: 22px;
+  left: 24px;
+  z-index: 5;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  background: rgba(6, 12, 22, 0.55);
+  border: 1px solid rgba(140, 190, 240, 0.22);
+  border-radius: 8px;
+  color: rgba(190, 218, 245, 0.8);
+  font-family: "SF Mono", Consolas, monospace;
+  font-size: 11px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  padding: 8px 14px;
+  cursor: pointer;
+  backdrop-filter: blur(8px);
+  transition: background 0.2s ease, color 0.2s ease, border-color 0.2s ease;
+}
+.apex-exit:hover {
+  background: rgba(12, 22, 38, 0.7);
+  border-color: rgba(120, 200, 255, 0.45);
+  color: #cfe8fa;
+}
+.apex-exit:focus-visible { outline: 1px solid #5ec8ff; outline-offset: 2px; }
+
+/* ── Corner wordmark on the room (placeholder identity) ──── */
+.apex-room-mark {
+  position: absolute;
+  top: 24px;
+  right: 26px;
+  z-index: 5;
+  font-weight: 800;
+  font-size: 15px;
+  letter-spacing: 0.4em;
+  padding-left: 0.4em;
+  color: rgba(220, 236, 250, 0.85);
+  text-shadow: 0 0 24px rgba(94, 200, 255, 0.35);
+  pointer-events: none;
+}
+.apex-room-mark small {
+  display: block;
+  margin-top: 4px;
+  font-weight: 400;
+  font-size: 8px;
+  letter-spacing: 0.28em;
+  color: rgba(140, 185, 225, 0.5);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .apex-room { transition-duration: 0.01s; }
+}

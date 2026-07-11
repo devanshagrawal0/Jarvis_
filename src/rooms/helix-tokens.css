@@ -1,0 +1,140 @@
+/* ═══════════════════════════════════════════════════════════════════
+   HELIX Design Tokens — v1.0 (UI-1 Build)
+   Single source of truth for all HELIX visual variables.
+   ═══════════════════════════════════════════════════════════════════ */
+
+:root {
+
+  /* ── Background Layers ──────────────────────────────────────────── */
+  --hx-bg-room:              #020408;
+  --hx-bg-topbar:            rgba(2, 4, 12, 0.98);
+  --hx-bg-panel:             rgba(2, 4, 12, 0.92);
+  --hx-bg-panel-tabs:        rgba(2, 3, 10, 0.80);
+  --hx-bg-panel-header:      rgba(2, 3, 10, 0.80);
+  --hx-bg-core:              rgba(2, 4, 14, 0.95);
+  --hx-bg-wire:              rgba(2, 3, 10, 0.99);
+  --hx-bg-card:              rgba(4, 7, 20, 0.70);
+  --hx-bg-card-hover:        rgba(8, 14, 36, 0.85);
+  --hx-bg-surface:           rgba(255, 255, 255, 0.03);
+  --hx-bg-surface-hover:     rgba(255, 255, 255, 0.05);
+  --hx-bg-surface-active:    rgba(255, 255, 255, 0.08);
+  --hx-bg-toast:             rgba(4, 7, 20, 0.98);
+
+  /* Overlay backdrop (full-screen scrim behind floating panels) */
+  --hx-bg-backdrop:          rgba(0, 0, 0, 0.65);
+  --hx-bg-backdrop-heavy:    rgba(0, 0, 0, 0.80);
+  --hx-backdrop-blur:        blur(12px);
+
+  /* Overlay panels — glass effect (floating/modal layers only) */
+  --hx-bg-overlay:           rgba(3, 5, 18, 0.97);
+  --hx-bg-overlay-mid:       rgba(4, 6, 20, 0.95);
+  --hx-bg-overlay-light:     rgba(5, 8, 24, 0.92);
+  --hx-overlay-blur:         blur(24px) saturate(1.5);
+  --hx-overlay-blur-light:   blur(16px) saturate(1.3);
+
+  /* ── Borders ────────────────────────────────────────────────────── */
+  --hx-border-faint:         rgba(255, 255, 255, 0.04);
+  --hx-border-subtle:        rgba(255, 255, 255, 0.05);
+  --hx-border-base:          rgba(255, 255, 255, 0.07);
+  --hx-border-mid:           rgba(255, 255, 255, 0.10);
+  --hx-border-strong:        rgba(255, 255, 255, 0.18);
+
+  /* Accent borders */
+  --hx-border-accent:        rgba(74, 158, 255, 0.30);
+  --hx-border-accent-hi:     rgba(74, 158, 255, 0.50);
+  --hx-border-danger:        rgba(255, 80, 80, 0.22);
+  --hx-border-success:       rgba(74, 255, 158, 0.22);
+  --hx-border-synthesis:     rgba(74, 255, 240, 0.22);
+  --hx-border-signal:        rgba(255, 225, 74, 0.22);
+  --hx-border-memory:        rgba(158, 74, 255, 0.22);
+  --hx-border-construction:  rgba(255, 158, 74, 0.22);
+
+  /* ── Text ───────────────────────────────────────────────────────── */
+  --hx-text-primary:         rgba(255, 255, 255, 0.88);
+  --hx-text-secondary:       rgba(255, 255, 255, 0.65);
+  --hx-text-muted:           rgba(255, 255, 255, 0.38);
+  --hx-text-ghost:           rgba(255, 255, 255, 0.25);
+  --hx-text-micro:           rgba(255, 255, 255, 0.18);
+  --hx-text-dim:             rgba(255, 255, 255, 0.16);
+
+  /* ── Accent / Brand ─────────────────────────────────────────────── */
+  --hx-accent:               #4a9eff;
+  --hx-accent-dim:           rgba(74, 158, 255, 0.08);
+  --hx-accent-mid:           rgba(74, 158, 255, 0.15);
+  --hx-accent-hi:            rgba(74, 158, 255, 0.25);
+  --hx-accent-glow:          rgba(74, 158, 255, 0.18);
+  --hx-accent-text:          rgba(74, 158, 255, 0.90);
+
+  --hx-danger:               rgba(255, 80, 80, 0.85);
+  --hx-danger-bg:            rgba(255, 80, 80, 0.07);
+  --hx-danger-mid:           rgba(255, 80, 80, 0.14);
+  --hx-danger-text:          rgba(255, 100, 100, 0.80);
+
+  --hx-success:              #4aff9e;
+  --hx-success-dim:          rgba(74, 255, 158, 0.40);
+  --hx-success-bg:           rgba(74, 255, 158, 0.07);
+
+  /* ── Strand Colors ──────────────────────────────────────────────── */
+  --hx-strand-evidence:      #4a9eff;
+  --hx-strand-strategy:      #4aff9e;
+  --hx-strand-construction:  #ff9e4a;
+  --hx-strand-memory:        #9e4aff;
+  --hx-strand-signal:        #ffe14a;
+  --hx-strand-synthesis:     #4afff0;
+
+  /* ── Shadows ────────────────────────────────────────────────────── */
+  --hx-shadow-card:          0 4px 20px rgba(0, 0, 0, 0.40),
+                             0 0 0 1px rgba(255, 255, 255, 0.04);
+  --hx-shadow-card-glow:     0 4px 20px rgba(0, 0, 0, 0.40),
+                             0 0 12px color-mix(in srgb, var(--strand-color, #4a9eff) 12%, transparent),
+                             0 0 0 1px rgba(255, 255, 255, 0.05);
+  --hx-shadow-overlay:       0 32px 80px rgba(0, 0, 0, 0.85),
+                             0 0 0 1px rgba(255, 255, 255, 0.05);
+  --hx-shadow-toast:         0 6px 28px rgba(0, 0, 0, 0.70),
+                             0 0 0 1px rgba(255, 255, 255, 0.03);
+  --hx-shadow-accent:        0 0 20px rgba(74, 158, 255, 0.22);
+  --hx-shadow-panel:         0 0 0 1px rgba(255, 255, 255, 0.04);
+
+  /* ── Border Radius ──────────────────────────────────────────────── */
+  --hx-radius-xs:            2px;
+  --hx-radius-sm:            3px;
+  --hx-radius-md:            4px;
+  --hx-radius-lg:            6px;
+  --hx-radius-xl:            8px;
+  --hx-radius-2xl:           12px;
+
+  /* ── Spacing ────────────────────────────────────────────────────── */
+  --hx-space-xs:             4px;
+  --hx-space-sm:             8px;
+  --hx-space-md:             12px;
+  --hx-space-lg:             16px;
+  --hx-space-xl:             24px;
+
+  /* ── Typography ─────────────────────────────────────────────────── */
+  --hx-font-display:         'Orbitron', 'Courier New', monospace;
+  --hx-font-body:            'Inter', system-ui, -apple-system, sans-serif;
+  --hx-font-mono:            'JetBrains Mono', 'Fira Code', 'Courier New', monospace;
+
+  /* ── Animation ──────────────────────────────────────────────────── */
+  --hx-ease-enter:           cubic-bezier(0.16, 1, 0.3, 1);
+  --hx-ease-exit:            cubic-bezier(0.4, 0, 1, 1);
+  --hx-ease-smooth:          cubic-bezier(0.25, 0.1, 0.25, 1);
+  --hx-dur-micro:            120ms;
+  --hx-dur-fast:             150ms;
+  --hx-dur-enter:            300ms;
+  --hx-dur-exit:             180ms;
+  --hx-dur-slow:             450ms;
+
+  /* ── Z-Index Scale ──────────────────────────────────────────────── */
+  --hx-z-canvas:             0;
+  --hx-z-panel:              10;
+  --hx-z-float:              20;
+  --hx-z-widget:             30;
+  --hx-z-scanline:           8999;
+  --hx-z-overlay:            9000;
+  --hx-z-float-window:       9100;
+  --hx-z-toast:              9100;
+  --hx-z-widget-picker:      9600;
+  --hx-z-cmd:                9200;
+  --hx-z-takeover:           9500;
+}

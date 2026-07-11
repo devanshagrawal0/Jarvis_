@@ -1,0 +1,661 @@
+/* ═══════════════════════════════════════════════════════════
+   APEX — Home screen. All rules scoped under .apex-home so
+   nothing leaks into the rest of the app. Renders on top of
+   the room's cityscape background (translucent panels).
+   ═══════════════════════════════════════════════════════════ */
+.apex-home{
+  /* ── Observatory palette · tinted near-blacks (engineered, not grey) ── */
+  --ax-void:#060809; --ax-base:#0a0e12; --ax-surface:#10151a; --ax-elev:#161c22;
+  /* Glass panels: dark tint (never white-on-dark) so text contrast stays stable */
+  --ax-panel:rgba(11,17,26,0.80); --ax-panelhi:rgba(17,25,36,0.88);
+  /* Faint accent-tinted edges — depth comes from rim-light, not fat borders */
+  --ax-bd:rgba(120,205,225,0.14); --ax-bdsoft:rgba(120,205,225,0.07); --ax-bdglow:rgba(34,211,238,0.5);
+  --ax-hair:rgba(120,205,225,0.1);
+  /* Interface accent = cyan; used surgically for focus/active/selection */
+  --ax-cy:#22d3ee; --ax-cydim:rgba(90,205,230,0.55);
+  /* Signal accent = amber (cockpit duotone) — attention / premium highlights */
+  --ax-sig:#f5a524; --ax-sigdim:rgba(245,165,36,0.55);
+  /* Text: bright values, dim labels (HUD brightness hierarchy) */
+  --ax-tx:#e8f0f4; --ax-mut:rgba(184,206,220,0.5); --ax-dim:rgba(140,175,200,0.3);
+  /* Semantic P&L — kept OUT of the accent family so data never fights chrome */
+  --ax-pos:#34d399; --ax-neg:#f43f5e; --ax-warn:#f5a524; --ax-pur:#a98bff; --ax-acc:var(--ax-cy);
+  --ax-posglow:rgba(52,211,153,0.35); --ax-negglow:rgba(244,63,94,0.35);
+  --ax-mono:"JetBrains Mono",ui-monospace,"SF Mono","Cascadia Mono",Menlo,monospace;
+  --ax-disp:"Oxanium",ui-sans-serif,"Segoe UI",system-ui,sans-serif;
+  --ax-sans:ui-sans-serif,-apple-system,"Segoe UI",Inter,system-ui,sans-serif;
+  /* Fluid type steps (1080p-tuned, graceful to 4K) */
+  --ax-fs-micro:clamp(8px,.55vw,10px); --ax-fs-label:clamp(10px,.7vw,12px);
+  --ax-fs-body:clamp(12px,.85vw,14px); --ax-fs-val:clamp(14px,1.1vw,19px);
+  position:absolute; inset:0; z-index:2; display:flex; flex-direction:column;
+  font-family:var(--ax-sans); color:var(--ax-tx); font-size:13px; line-height:1.4;
+  -webkit-font-smoothing:antialiased; text-rendering:optimizeLegibility;
+}
+.apex-home *{box-sizing:border-box}
+.apex-home .num{font-family:var(--ax-mono);font-variant-numeric:tabular-nums;letter-spacing:-.01em}
+.apex-home .pos{color:var(--ax-pos)} .apex-home .neg{color:var(--ax-neg)} .apex-home .warn{color:var(--ax-warn)}
+.apex-home.focusmode .pnl:not(.focused){opacity:.18;filter:blur(1px);transition:.3s}
+
+.apex-home .top{display:flex;align-items:center;gap:20px;padding:0 18px;height:50px;flex:0 0 auto;
+  border-bottom:1px solid var(--ax-bdsoft);background:rgba(4,9,18,.55);backdrop-filter:blur(10px);z-index:5}
+.apex-home .brand .mk{font-family:var(--ax-disp);font-weight:800;letter-spacing:.3em;font-size:15px;background:linear-gradient(180deg,#eafaff,#7cc8ee);
+  -webkit-background-clip:text;background-clip:text;color:transparent;text-shadow:0 0 22px rgba(90,200,255,.4)}
+.apex-home .brand .sub{font-size:7.5px;letter-spacing:.24em;color:var(--ax-mut);text-transform:uppercase;margin-top:1px}
+.apex-home .tabs{display:flex;gap:2px;flex:1;overflow-x:auto;scrollbar-width:none}
+.apex-home .tabs::-webkit-scrollbar{display:none}
+.apex-home .tab{font-family:var(--ax-disp);font-weight:500;letter-spacing:.02em;padding:6px 11px;font-size:11.5px;color:var(--ax-mut);white-space:nowrap;cursor:pointer;border-radius:7px;transition:.15s;position:relative}
+.apex-home .tab:hover{color:var(--ax-tx);background:rgba(60,140,220,.08)}
+.apex-home .tab.on{color:var(--ax-cy)}
+.apex-home .tab.on::after{content:"";position:absolute;left:11px;right:11px;bottom:-1px;height:2px;background:var(--ax-cy);box-shadow:0 0 8px var(--ax-cy);border-radius:2px}
+.apex-home .topr{display:flex;align-items:center;gap:12px}
+.apex-home .fresh{display:flex;align-items:center;gap:6px;font-size:10px;color:var(--ax-mut);font-family:var(--ax-mono)}
+.apex-home .dot{width:6px;height:6px;border-radius:50%;background:var(--ax-pos);box-shadow:0 0 7px var(--ax-pos);animation:ax-bp 2s infinite}
+.apex-home .fresh.stale{color:var(--ax-sig)}
+.apex-home .fresh.stale .dot{background:var(--ax-sig);box-shadow:0 0 7px var(--ax-sig);animation:ax-bp 1s infinite}
+@keyframes ax-bp{0%,100%{opacity:1}50%{opacity:.4}}
+.apex-home .hb{width:66px;height:20px;opacity:.8}
+.apex-home .ic{width:29px;height:29px;display:grid;place-items:center;border-radius:8px;color:var(--ax-mut);cursor:pointer;font-size:13px;transition:.15s;border:1px solid transparent;position:relative}
+.apex-home .ic:hover{color:var(--ax-cy);border-color:var(--ax-bd);background:rgba(60,140,220,.08)}
+.apex-home .ic .nd{position:absolute;top:4px;right:5px;width:6px;height:6px;border-radius:50%;background:var(--ax-neg);box-shadow:0 0 6px var(--ax-neg)}
+.apex-home .views{display:flex;align-items:center;gap:6px;padding:6px 10px;border:1px solid var(--ax-bd);border-radius:8px;font-size:11px;color:var(--ax-cydim);cursor:pointer;background:rgba(10,26,48,.4)}
+.apex-home .avatar{width:29px;height:29px;border-radius:50%;background:linear-gradient(135deg,#2a4d78,#0e2137);border:1px solid var(--ax-bd);display:grid;place-items:center;font-size:11px;font-weight:700;color:var(--ax-cy)}
+.apex-home .kbd{font-family:var(--ax-mono);font-size:9px;padding:3px 7px;border:1px solid var(--ax-bdsoft);border-radius:5px;color:var(--ax-cydim);cursor:pointer}
+.apex-home .kbd:hover{border-color:var(--ax-bd);color:var(--ax-cy)}
+.apex-home .exit{font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--ax-cydim);cursor:pointer;padding:6px 10px;border:1px solid var(--ax-bdsoft);border-radius:8px}
+.apex-home .exit:hover{border-color:var(--ax-bd);color:var(--ax-cy)}
+
+.apex-home .tape{flex:0 0 auto;height:26px;background:rgba(4,9,18,.7);border-bottom:1px solid var(--ax-bdsoft);overflow:hidden;display:flex;align-items:center;z-index:4}
+.apex-home .tape .track{display:flex;gap:26px;white-space:nowrap;animation:ax-scroll 40s linear infinite;padding-left:100%}
+.apex-home .tape .ti{font-family:var(--ax-mono);font-size:11px;display:inline-flex;gap:7px;align-items:center}
+.apex-home .tape .ti b{color:var(--ax-tx);font-weight:600}
+@keyframes ax-scroll{to{transform:translateX(-100%)}}
+
+.apex-home .grid{flex:1;display:grid;grid-template-columns:286px 1fr 340px;gap:var(--ax-gap,11px);padding:var(--ax-gap,11px);overflow:hidden;min-height:0}
+.apex-home .col{display:flex;flex-direction:column;gap:var(--ax-gap,11px);overflow-y:auto;min-height:0;scrollbar-width:thin;scrollbar-color:rgba(0,170,255,.25) transparent;padding-right:2px}
+.apex-home .col::-webkit-scrollbar{width:4px}.apex-home .col::-webkit-scrollbar-thumb{background:rgba(0,170,255,.25);border-radius:2px}
+
+.apex-home .pnl{position:relative;background:linear-gradient(180deg,var(--ax-panelhi),var(--ax-panel));border:1px solid var(--ax-bd);
+  clip-path:polygon(0 11px,11px 0,100% 0,100% calc(100% - 11px),calc(100% - 11px) 100%,0 100%);
+  padding:var(--ax-pad,12px) calc(var(--ax-pad,12px) + 1px) calc(var(--ax-pad,12px) + 1px);flex:0 0 auto;
+  /* layered light: top rim highlight + faint inner edge + deep float shadow */
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.05),0 6px 20px rgba(0,0,0,.4);
+  transition:box-shadow .2s,transform .18s,border-color .2s}
+.apex-home .pnl:hover{transform:translateY(-2px);box-shadow:inset 0 1px 0 rgba(255,255,255,.08),0 10px 26px rgba(0,0,0,.5);border-color:var(--ax-bd)}
+.apex-home .pnl.focused{box-shadow:inset 0 1px 0 rgba(120,220,240,.16),0 0 0 1px var(--ax-bdglow),0 0 46px rgba(34,211,238,.2);z-index:3}
+/* focus reticle — corner bracket locks on and pulses */
+.apex-home .pnl.focused::after{opacity:.9;width:16px;height:16px;animation:ax-reticle 1.9s ease-in-out infinite}
+@keyframes ax-reticle{0%,100%{opacity:.5}50%{opacity:1}}
+@media (prefers-reduced-motion:reduce){.apex-home .pnl.focused::after{animation:none}}
+/* top scanline glint */
+.apex-home .pnl::before{content:"";position:absolute;top:0;left:11px;right:0;height:1px;background:linear-gradient(90deg,var(--ax-bdglow),transparent 62%);opacity:.55}
+/* corner brackets — the signature FUI framing, drawn just inside the panel */
+.apex-home .pnl::after{content:"";position:absolute;top:6px;right:6px;width:13px;height:13px;pointer-events:none;
+  border-top:1px solid var(--ax-cydim);border-right:1px solid var(--ax-cydim);opacity:.42;transition:opacity .25s}
+.apex-home .pnl:hover::after,.apex-home .pnl.focused::after{opacity:.85}
+.apex-home .ph{display:flex;align-items:center;gap:8px;margin-bottom:11px;padding-bottom:7px;border-bottom:1px solid rgba(120,170,210,.1)}
+.apex-home .ph .pi{color:var(--ax-cydim);font-size:11px;opacity:.65;flex:none}
+.apex-home .ph .pt{font-family:var(--ax-disp);font-size:12.5px;font-weight:700;letter-spacing:.03em;color:#eaf4ff;text-shadow:0 0 10px rgba(90,170,230,.25)}
+.apex-home .ph .pr{margin-left:auto;font-size:9.5px;color:var(--ax-cydim);cursor:pointer}
+.apex-home .ph .pr:hover{color:var(--ax-cy)}
+.apex-home .badge{font-family:var(--ax-disp);font-size:8px;font-weight:700;letter-spacing:.12em;padding:2px 7px;border-radius:4px;text-transform:uppercase}
+.apex-home .b-new{color:#1a1205;background:var(--ax-sig);box-shadow:0 0 10px rgba(245,165,36,.45)}
+.apex-home .b-live{color:var(--ax-pos);border:1px solid rgba(52,211,153,.4);display:inline-flex;align-items:center;gap:4px}
+.apex-home .b-live::before{content:"";width:5px;height:5px;border-radius:50%;background:var(--ax-pos);box-shadow:0 0 6px var(--ax-pos);animation:ax-bp 1.5s infinite}
+.apex-home .row{display:flex;align-items:center;justify-content:space-between}
+.apex-home .lbl{font-family:var(--ax-disp);font-size:9px;font-weight:500;letter-spacing:.14em;text-transform:uppercase;color:var(--ax-mut)}
+.apex-home .big{font-size:25px;font-weight:300}
+.apex-home .spark{display:block;width:100%}
+.apex-home .flash-g{animation:ax-fg .5s}.apex-home .flash-r{animation:ax-fr .5s}
+@keyframes ax-fg{0%{background:rgba(52,211,153,.25)}100%{background:transparent}}
+@keyframes ax-fr{0%{background:rgba(244,85,107,.25)}100%{background:transparent}}
+
+.apex-home .pulse-top{display:flex;gap:13px;align-items:center}
+.apex-home .regime-tag{font-size:15px;font-weight:700}
+.apex-home .submetrics{display:grid;grid-template-columns:1fr 1fr 1fr;gap:7px;margin-top:11px}
+.apex-home .sm{background:rgba(6,14,26,.5);border:1px solid var(--ax-bdsoft);border-radius:7px;padding:6px 8px}
+.apex-home .sm .v{font-size:14px;font-family:var(--ax-mono);margin-top:1px}
+.apex-home .hmm{display:flex;gap:2px;margin-top:10px;height:18px;border-radius:4px;overflow:hidden}
+.apex-home .hmm i{flex:1;opacity:.85;transition:.1s}.apex-home .hmm i:hover{opacity:1;transform:scaleY(1.15)}
+.apex-home .hmm-lgd{display:flex;gap:9px;margin-top:5px;font-size:8px;color:var(--ax-mut)}
+.apex-home .hmm-lgd i{width:8px;height:8px;border-radius:2px;display:inline-block;margin-right:3px;vertical-align:-1px}
+.apex-home .donut-wrap{display:flex;gap:13px;align-items:center;margin-top:3px}
+.apex-home .alloc{flex:1;display:flex;flex-direction:column;gap:4px}
+.apex-home .alloc .a{display:flex;align-items:center;gap:7px;font-size:10.5px}
+.apex-home .alloc .sw{width:9px;height:9px;border-radius:2px}.apex-home .alloc .ap{margin-left:auto;font-family:var(--ax-mono);color:var(--ax-mut)}
+.apex-home .riskchips{display:flex;gap:6px;margin-top:11px}
+.apex-home .rc{flex:1;background:rgba(6,14,26,.5);border:1px solid var(--ax-bdsoft);border-radius:6px;padding:6px 7px;text-align:center;cursor:pointer;transition:.15s}
+.apex-home .rc:hover{border-color:var(--ax-bd)}
+.apex-home .rc .v{font-family:var(--ax-mono);font-size:12px;margin-top:2px}
+.apex-home .botstats{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:10px}
+.apex-home .botstats .v{font-size:18px;font-family:var(--ax-mono)}
+.apex-home .lead{display:flex;flex-direction:column;gap:4px}
+.apex-home .lr{display:flex;align-items:center;gap:8px;font-size:10.5px;padding:5px 7px;border-radius:6px;background:rgba(6,14,26,.4)}
+.apex-home .lr .rk{width:14px;font-family:var(--ax-mono);color:var(--ax-cy);font-size:10px}
+.apex-home .lr .nm{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.apex-home .lr canvas{width:50px;height:15px}.apex-home .lr .pl{font-family:var(--ax-mono);font-size:10.5px}
+
+.apex-home .mkt-grid{display:grid;grid-template-columns:minmax(0,1.6fr) minmax(0,1fr);gap:13px}
+@media (max-width:1180px){.apex-home .mkt-grid{grid-template-columns:1fr}}
+.apex-home .mapwrap{position:relative;border:1px solid var(--ax-bdsoft);border-radius:9px;overflow:hidden;background:rgba(4,10,20,.5);min-height:174px}
+.apex-home .mapwrap canvas{display:block;width:100%;height:100%}
+.apex-home .map-tag{position:absolute;top:8px;left:10px;font-size:8.5px;letter-spacing:.12em;color:var(--ax-cydim);text-transform:uppercase}
+.apex-home .idx-col{display:flex;flex-direction:column;gap:7px}
+.apex-home .idx{background:rgba(6,14,26,.5);border:1px solid var(--ax-bdsoft);border-radius:8px;padding:7px 9px;cursor:pointer;transition:.15s}
+.apex-home .idx:hover{border-color:var(--ax-bd)}
+.apex-home .idx .in{font-size:8.5px;letter-spacing:.1em;color:var(--ax-mut);text-transform:uppercase}
+.apex-home .idx .iv{font-size:15px;font-family:var(--ax-mono);margin-top:1px}
+.apex-home .idx .ic2{font-size:10.5px;font-family:var(--ax-mono)}.apex-home .idx canvas{width:100%;height:20px;margin-top:2px}
+.apex-home .statrow{display:grid;grid-template-columns:repeat(5,1fr);gap:9px;margin-top:12px;padding-top:12px;border-top:1px solid var(--ax-bdsoft)}
+.apex-home .st{text-align:center;cursor:pointer}.apex-home .st .sv{font-size:15px;font-family:var(--ax-mono);margin-top:3px}.apex-home .st .sc{font-size:9.5px;font-family:var(--ax-mono);margin-top:1px}
+.apex-home .fg-gauge{display:flex;flex-direction:column;align-items:center}
+.apex-home .newrow{display:grid;grid-template-columns:1fr 1fr 1fr;gap:11px}
+.apex-home .quad{position:relative;width:100%;aspect-ratio:1.2;margin-top:2px}
+.apex-home .breadth{display:flex;flex-direction:column;gap:8px;margin-top:2px}
+.apex-home .bg-item{display:flex;align-items:center;gap:8px}
+.apex-home .bg-item .bn{font-size:9.5px;color:var(--ax-mut);width:74px;flex:0 0 auto}
+.apex-home .bg-item .bar{flex:1;height:5px;border-radius:3px;background:rgba(255,255,255,.06);overflow:hidden}
+.apex-home .bg-item .bar i{display:block;height:100%;border-radius:3px}
+.apex-home .bg-item .bv{font-family:var(--ax-mono);font-size:10.5px;width:38px;text-align:right}
+.apex-home .unusual{display:flex;flex-direction:column;gap:5px;margin-top:2px}
+.apex-home .ua{display:flex;align-items:center;gap:7px;font-size:10.5px;padding:5px 7px;border-radius:6px;background:rgba(6,14,26,.4);border:1px solid var(--ax-bdsoft)}
+.apex-home .ua.fresh-in{animation:ax-slide .5s}
+@keyframes ax-slide{from{opacity:0;transform:translateX(-12px)}to{opacity:1;transform:none}}
+.apex-home .ua .ut{font-family:var(--ax-mono);font-weight:700;font-size:10.5px;width:42px;color:var(--ax-tx)}
+.apex-home .ua .ud{flex:1;color:var(--ax-mut);font-size:9.5px}.apex-home .ua .uz{font-family:var(--ax-mono);font-size:10.5px;color:var(--ax-warn)}
+.apex-home .vizc{display:block;width:100%;border-radius:8px;background:rgba(4,10,20,.4)}
+.apex-home .movers-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}
+@media (max-width:900px){.apex-home .movers-grid{grid-template-columns:repeat(2,1fr)}}
+.apex-home .mv-col{display:flex;flex-direction:column;gap:4px}
+.apex-home .mv-h{font-size:9.5px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;margin-bottom:2px}
+.apex-home .mv-r{display:grid;grid-template-columns:auto 1fr auto;grid-template-areas:"tk px chip" "bar bar bar";align-items:center;gap:3px 6px;font-size:10.5px;padding:5px 7px;border-radius:6px;background:rgba(8,15,26,.45);border:1px solid var(--ax-bdsoft);cursor:pointer;transition:.14s}
+.apex-home .mv-r:hover{border-color:var(--ax-bd);background:rgba(12,22,36,.65);transform:translateX(2px)}
+.apex-home .mv-r .tk{grid-area:tk;font-weight:600;color:var(--ax-tx);cursor:pointer;border-bottom:none}
+.apex-home .mv-r .mv-px{grid-area:px;text-align:right;color:var(--ax-mut);font-size:10px}
+.apex-home .mv-r .dchip{grid-area:chip}
+.apex-home .mv-bar{grid-area:bar;height:3px;background:rgba(255,255,255,.05);border-radius:2px;overflow:hidden;margin-top:2px}
+.apex-home .mv-bar i{display:block;height:100%;border-radius:2px;opacity:.7;transition:width .5s ease}
+/* reusable delta chip — colored soft-tint pill (research spec) */
+.apex-home .dchip{font-family:var(--ax-mono);font-variant-numeric:tabular-nums;font-size:10px;font-weight:600;padding:1.5px 6px;border-radius:5px;letter-spacing:-.01em;white-space:nowrap}
+.apex-home .dchip.pos{color:#5fe6a8;background:rgba(52,211,153,.14)}
+.apex-home .dchip.neg{color:#ff7a89;background:rgba(244,63,94,.14)}
+.apex-home .qa{display:grid;grid-template-columns:repeat(5,1fr);gap:9px}
+.apex-home .qab{display:flex;flex-direction:column;align-items:center;gap:5px;padding:11px 5px;border-radius:9px;border:1px solid var(--ax-bdsoft);background:rgba(8,16,30,.5);cursor:pointer;transition:.15s}
+.apex-home .qab:hover{border-color:var(--ax-bd);background:rgba(14,30,52,.6);transform:translateY(-1px)}
+.apex-home .qab .qi{font-size:16px;color:var(--ax-cy)}.apex-home .qab .qn{font-size:10.5px;font-weight:600}.apex-home .qab .qs{font-size:8.5px;color:var(--ax-mut)}
+
+.apex-home .news{display:flex;flex-direction:column;gap:1px}
+.apex-home .ntabs{display:flex;gap:5px;margin-bottom:8px}
+.apex-home .ntab{font-size:9px;padding:3px 8px;border-radius:5px;border:1px solid var(--ax-bdsoft);color:var(--ax-mut);cursor:pointer}
+.apex-home .ntab.on{color:var(--ax-cy);border-color:var(--ax-bd);background:rgba(60,140,220,.08)}
+.apex-home .ni{display:flex;gap:9px;padding:8px 4px;border-bottom:1px solid rgba(255,255,255,.04);cursor:pointer}
+.apex-home .ni:hover{background:rgba(60,140,220,.06)}
+.apex-home .ni .sent{width:3px;border-radius:2px;flex:0 0 auto}
+.apex-home .ni .body{flex:1;min-width:0}.apex-home .ni .hl{font-size:11px;line-height:1.35;color:rgba(210,235,252,.92)}
+.apex-home .ni .meta{display:flex;align-items:center;gap:6px;margin-top:4px}.apex-home .ni .src{font-size:8.5px;color:var(--ax-mut);font-family:var(--ax-mono)}
+.apex-home .tag{font-size:7.5px;font-weight:700;letter-spacing:.06em;padding:2px 5px;border-radius:4px;text-transform:uppercase}
+.apex-home .ai-brief{font-size:11.5px;line-height:1.6;color:rgba(200,228,248,.85)}
+.apex-home .cite{color:var(--ax-cy);font-size:9px;font-family:var(--ax-mono);vertical-align:super;cursor:pointer;padding:0 1px}
+.apex-home .cite:hover{text-shadow:0 0 8px var(--ax-cy)}
+.apex-home .ins-block{margin-top:10px}.apex-home .ins-block .it{font-size:9px;letter-spacing:.1em;text-transform:uppercase;color:var(--ax-cydim);margin-bottom:3px}
+.apex-home .ins-block .ix{font-size:10.5px;line-height:1.5;color:rgba(190,220,245,.8)}
+.apex-home .conf{display:flex;align-items:center;gap:8px}
+.apex-home .src-hl{animation:ax-srcpulse 1.2s}
+@keyframes ax-srcpulse{0%,100%{box-shadow:0 0 0 1px var(--ax-bd)}50%{box-shadow:0 0 0 2px var(--ax-cy),0 0 30px rgba(60,200,255,.4)}}
+.apex-home .alerts{display:flex;flex-direction:column;gap:7px}
+.apex-home .al{display:flex;align-items:center;gap:9px;padding:8px 9px;border-radius:8px;background:rgba(8,16,30,.5);border:1px solid var(--ax-bdsoft)}
+.apex-home .al.fresh-in{animation:ax-slide .5s}
+.apex-home .al .ai2{width:25px;height:25px;border-radius:7px;display:grid;place-items:center;font-size:11px;flex:0 0 auto}
+.apex-home .al .at{flex:1;min-width:0}.apex-home .al .atx{font-size:10.5px;color:rgba(210,232,250,.9);line-height:1.3}.apex-home .al .am{font-size:8.5px;color:var(--ax-mut);font-family:var(--ax-mono);margin-top:2px}
+.apex-home .al .cd{font-size:9.5px;font-family:var(--ax-mono);color:var(--ax-warn);white-space:nowrap}
+
+.apex-home .aibar{flex:0 0 auto;margin:0 11px 10px;padding:11px 13px;position:relative;
+  background:linear-gradient(160deg,rgba(8,20,40,.85),rgba(4,10,22,.9));border:1px solid var(--ax-bd);border-radius:14px;
+  box-shadow:0 0 30px rgba(0,120,220,.14),0 -8px 30px rgba(0,0,0,.4)}
+.apex-home .aibar-h{display:flex;align-items:center;gap:8px;margin-bottom:8px}
+.apex-home .aibar-h .t{font-size:9.5px;letter-spacing:.12em;text-transform:uppercase;color:var(--ax-cydim);font-weight:600}
+.apex-home .modes{display:flex;gap:4px;margin-left:6px}
+.apex-home .mode{font-size:9.5px;padding:4px 10px;border-radius:7px;border:1px solid var(--ax-bdsoft);color:var(--ax-mut);cursor:pointer;transition:.15s}
+.apex-home .mode.on{color:#08131f;background:var(--ax-acc);font-weight:600;box-shadow:0 0 12px var(--ax-acc)}
+.apex-home .mode:not(.on):hover{color:var(--ax-tx);border-color:var(--ax-bd)}
+.apex-home .trace{font-family:var(--ax-mono);font-size:8.5px;color:var(--ax-dim);margin-left:auto;display:flex;gap:12px;align-items:center}
+.apex-home .trace b{color:var(--ax-cydim);font-weight:400}
+.apex-home .aibar-in{display:flex;align-items:center;gap:10px;background:rgba(4,10,20,.6);border:1px solid var(--ax-bdsoft);border-radius:10px;padding:10px 13px}
+.apex-home .aibar-in input{flex:1;background:none;border:none;outline:none;color:var(--ax-tx);font-size:12.5px;font-family:var(--ax-sans)}
+.apex-home .aibar-in input::placeholder{color:var(--ax-dim)}
+.apex-home .aibar-in .send{width:30px;height:30px;border-radius:8px;background:var(--ax-acc);color:#08131f;display:grid;place-items:center;cursor:pointer;font-size:13px;box-shadow:0 0 14px var(--ax-acc)}
+.apex-home .aibar-in .mic{color:var(--ax-cydim);cursor:pointer;font-size:14px}
+.apex-home .chips{display:flex;gap:7px;margin-top:9px;flex-wrap:wrap}
+.apex-home .ac{display:flex;align-items:center;gap:6px;font-size:10px;padding:5px 10px;border-radius:8px;border:1px solid var(--ax-bdsoft);color:var(--ax-cydim);cursor:pointer;background:rgba(8,18,34,.4)}
+.apex-home .ac:hover{border-color:var(--ax-bd);color:var(--ax-cy)}
+.apex-home .jresp{margin-top:9px;padding:10px 12px;border-radius:9px;background:rgba(4,10,20,.5);border:1px solid var(--ax-bdsoft);font-size:11px;line-height:1.55;color:rgba(200,228,248,.85)}
+.apex-home .jresp .rt{font-family:var(--ax-mono);font-size:8.5px;color:var(--ax-cydim);margin-bottom:6px;display:flex;gap:10px}
+.apex-home .jresp .jresp-body{white-space:pre-wrap;word-break:break-word;max-height:46vh;overflow-y:auto}
+.apex-home .jresp .rt .jresp-exp{margin-left:auto;cursor:pointer;color:var(--ax-acc);font-weight:600}
+.apex-home .jresp .rt .jresp-exp:hover{text-decoration:underline}
+.apex-home .jbtn-log{font-family:var(--ax-mono);font-size:8.5px;letter-spacing:.04em;color:var(--ax-cydim);background:rgba(120,205,225,.08);border:1px solid var(--ax-bdsoft);border-radius:6px;padding:3px 8px;cursor:pointer;transition:.14s;margin-left:8px}
+.apex-home .jbtn-log:hover{background:rgba(120,205,225,.18);color:#dff}
+.apex-home .jbtn-log:disabled{opacity:.4;cursor:default}
+/* Transcript / expanded-output modal */
+.apex-home .jtrans{width:min(760px,94vw);max-height:84vh;display:flex;flex-direction:column;background:linear-gradient(160deg,rgba(8,16,28,.97),rgba(4,8,16,.98));border:1px solid var(--ax-bd);border-radius:14px;box-shadow:0 24px 80px rgba(0,0,0,.6);overflow:hidden}
+.apex-home .jtrans-h{display:flex;align-items:center;justify-content:space-between;padding:13px 16px;border-bottom:1px solid var(--ax-bdsoft)}
+.apex-home .jtrans-t{font-family:var(--ax-disp,inherit);font-size:14px;font-weight:700;color:#dbeeff;display:flex;align-items:center;gap:10px}
+.apex-home .jtrans-act{display:flex;align-items:center;gap:10px}
+.apex-home .jtrans-act .x{cursor:pointer;color:var(--ax-cydim);font-size:14px}
+.apex-home .jtrans-act .x:hover{color:#fff}
+.apex-home .jtrans-body{overflow-y:auto;padding:14px 16px;display:flex;flex-direction:column;gap:12px}
+.apex-home .jturn{border-left:2px solid var(--ax-bdsoft);padding-left:11px}
+.apex-home .jturn.user{border-left-color:rgba(120,205,225,.5)}
+.apex-home .jturn.model{border-left-color:var(--ax-acc)}
+.apex-home .jturn-role{font-family:var(--ax-mono);font-size:8.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--ax-cydim);margin-bottom:4px}
+.apex-home .jturn-text{white-space:pre-wrap;word-break:break-word;font-size:12px;line-height:1.6;color:rgba(210,232,248,.9)}
+
+/* View-Transition tab cross-fade (only active when APEX calls startViewTransition) */
+::view-transition-old(root),::view-transition-new(root){animation-duration:.26s;animation-timing-function:cubic-bezier(.2,.8,.2,1)}
+/* ── Add-widget tray (slide-out widget library) ── */
+.apex-home .tray-back{position:absolute;inset:0;z-index:55;background:rgba(2,5,11,.5);backdrop-filter:blur(3px);display:flex;justify-content:flex-end;animation:cmdk-fade .16s ease}
+.apex-home .tray{width:min(420px,90%);height:100%;background:linear-gradient(180deg,rgba(18,26,36,.98),rgba(11,16,24,.99));border-left:1px solid var(--ax-bd);
+  box-shadow:inset 1px 0 0 rgba(255,255,255,.05),-24px 0 70px rgba(0,0,0,.55);padding:18px;overflow-y:auto;animation:tray-in .28s cubic-bezier(.2,.8,.2,1)}
+@keyframes tray-in{from{transform:translateX(30px);opacity:.4}to{transform:none;opacity:1}}
+.apex-home .tray-h{display:flex;align-items:center;justify-content:space-between;margin-bottom:3px}
+.apex-home .tray-t{font-family:var(--ax-disp);font-size:15px;font-weight:700;letter-spacing:.04em;color:#eaf4ff}
+.apex-home .tray-h .x{cursor:pointer;color:var(--ax-mut);font-size:13px}.apex-home .tray-h .x:hover{color:var(--ax-cy)}
+.apex-home .tray-sub{margin-bottom:14px}
+.apex-home .tray-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.apex-home .tray-card{display:flex;flex-direction:column;gap:5px;padding:11px;border-radius:9px;cursor:pointer;background:rgba(8,14,22,.5);border:1px solid var(--ax-bdsoft);transition:.18s}
+.apex-home .tray-card:hover{border-color:var(--ax-bd);transform:translateY(-2px);box-shadow:0 8px 22px rgba(0,0,0,.4)}
+.apex-home .tray-card.on{background:rgba(34,211,238,.06);border-color:rgba(34,211,238,.22)}
+.apex-home .tray-ic{font-size:15px;color:var(--ax-cydim)}
+.apex-home .tray-nm{font-size:11.5px;font-weight:600;color:var(--ax-tx);line-height:1.2}
+.apex-home .tray-act{font-family:var(--ax-disp);font-size:8.5px;font-weight:600;letter-spacing:.1em;text-transform:uppercase}
+.apex-home .tray-card.on .tray-act{color:var(--ax-pos)}.apex-home .tray-card:not(.on) .tray-act{color:var(--ax-sig)}
+/* ── Per-widget ⋯ menu + right-click context menu ── */
+.apex-home .pmenu-btn{margin-left:auto;background:none;border:none;color:var(--ax-mut);font-size:15px;line-height:1;letter-spacing:1px;cursor:pointer;padding:0 2px;border-radius:5px;opacity:0;transition:opacity .18s,color .18s;height:18px}
+.apex-home .ph:hover .pmenu-btn,.apex-home .pmenu-btn.on{opacity:1}
+.apex-home .pmenu-btn:hover,.apex-home .pmenu-btn.on{color:var(--ax-cy)}
+.apex-home .pmenu{position:absolute;top:30px;right:8px;z-index:20;min-width:158px;padding:5px;
+  background:linear-gradient(180deg,rgba(22,30,40,.98),rgba(13,19,27,.99));border:1px solid var(--ax-bd);border-radius:10px;
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.06),0 16px 44px rgba(0,0,0,.6),0 0 30px rgba(34,211,238,.1);animation:cmdk-rise .16s ease}
+.apex-home .pmenu-i{display:flex;align-items:center;gap:9px;padding:7px 9px;border-radius:7px;cursor:pointer;font-size:11.5px;color:var(--ax-tx)}
+.apex-home .pmenu-i span{width:15px;text-align:center;color:var(--ax-cydim);font-size:11px}
+.apex-home .pmenu-i:hover{background:linear-gradient(90deg,rgba(34,211,238,.14),rgba(34,211,238,.04))}
+.apex-home .pmenu-i.off{opacity:.35;pointer-events:none}
+.apex-home .pmenu-i.danger:hover{background:rgba(244,63,94,.14)}.apex-home .pmenu-i.danger:hover span{color:var(--ax-neg)}
+.apex-home .pmenu-sep{height:1px;background:var(--ax-bdsoft);margin:4px 6px}
+.apex-home .ctx-back{position:fixed;inset:0;z-index:60}
+.apex-home .ctxmenu{position:fixed;min-width:158px}
+.apex-home .ctxmenu .pmenu{position:static;top:auto;right:auto}
+.apex-home .ctxmenu-h{font-family:var(--ax-disp);font-size:8.5px;font-weight:600;letter-spacing:.14em;text-transform:uppercase;color:var(--ax-cydim);
+  padding:8px 11px 5px;background:linear-gradient(180deg,rgba(22,30,40,.99),rgba(13,19,27,.99));border:1px solid var(--ax-bd);border-bottom:none;border-radius:10px 10px 0 0;position:relative;z-index:1;margin-bottom:-6px}
+.apex-home .cmdk{position:absolute;inset:0;z-index:50;background:rgba(2,5,11,.62);backdrop-filter:blur(6px) saturate(120%);display:flex;align-items:flex-start;justify-content:center;padding-top:11vh;animation:cmdk-fade .16s ease}
+@keyframes cmdk-fade{from{opacity:0}to{opacity:1}}
+.apex-home .cmdk-box{width:min(600px,92%);background:linear-gradient(180deg,rgba(20,28,38,.96),rgba(12,18,26,.97));border:1px solid var(--ax-bd);border-radius:14px;overflow:hidden;
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.07),0 24px 90px rgba(0,0,0,.66),0 0 46px rgba(34,211,238,.14);animation:cmdk-rise .2s cubic-bezier(.2,.8,.2,1)}
+@keyframes cmdk-rise{from{transform:translateY(-10px) scale(.99);opacity:0}to{transform:none;opacity:1}}
+.apex-home .cmdk-top{display:flex;align-items:center;gap:10px;padding:0 16px;border-bottom:1px solid var(--ax-bdsoft)}
+.apex-home .cmdk-ic{font-family:var(--ax-disp);color:var(--ax-cy);font-size:15px;opacity:.7;text-shadow:0 0 10px var(--ax-cydim)}
+.apex-home .cmdk-in{flex:1;background:none;border:none;outline:none;color:var(--ax-tx);font-size:15px;padding:15px 2px;font-family:var(--ax-sans)}
+.apex-home .cmdk-in::placeholder{color:var(--ax-dim)}
+.apex-home .cmdk-esc{font-family:var(--ax-mono);font-size:9px;color:var(--ax-mut);border:1px solid var(--ax-bdsoft);border-radius:4px;padding:2px 6px}
+.apex-home .cmdk-list{max-height:min(52vh,420px);overflow-y:auto;padding:7px;scrollbar-width:thin;scrollbar-color:rgba(34,211,238,.25) transparent}
+.apex-home .cmdk-list::-webkit-scrollbar{width:5px}.apex-home .cmdk-list::-webkit-scrollbar-thumb{background:rgba(34,211,238,.22);border-radius:3px}
+.apex-home .cmdk-head{font-family:var(--ax-disp);font-size:8.5px;font-weight:600;letter-spacing:.16em;text-transform:uppercase;color:var(--ax-cydim);padding:9px 12px 4px}
+.apex-home .cmdk-i{display:flex;align-items:center;gap:11px;padding:9px 12px;border-radius:8px;cursor:pointer;font-size:12.5px;position:relative}
+.apex-home .cmdk-i.sel{background:linear-gradient(90deg,rgba(34,211,238,.16),rgba(34,211,238,.05));box-shadow:inset 2px 0 0 var(--ax-cy)}
+.apex-home .cmdk-i .ci{color:var(--ax-cy);width:18px;text-align:center;opacity:.85}
+.apex-home .cmdk-i .cl{flex:1;color:var(--ax-tx)}
+.apex-home .cmdk-i .csk{font-family:var(--ax-mono);font-size:10px;color:var(--ax-sig);border:1px solid rgba(245,165,36,.3);border-radius:4px;padding:1px 6px;min-width:18px;text-align:center}
+.apex-home .cmdk-empty{padding:18px 14px;color:var(--ax-mut);font-size:12px}
+.apex-home .cmdk-foot{display:flex;gap:16px;padding:9px 16px;border-top:1px solid var(--ax-bdsoft);font-size:9.5px;color:var(--ax-mut);font-family:var(--ax-disp);letter-spacing:.04em}
+.apex-home .cmdk-foot b{color:var(--ax-cydim);font-family:var(--ax-mono);margin-right:3px}
+
+.apex-home .drawer{position:absolute;top:0;right:0;bottom:0;width:min(480px,94%);z-index:45;background:rgba(7,13,24,.98);border-left:1px solid var(--ax-bd);
+  box-shadow:-20px 0 60px rgba(0,0,0,.5);transform:translateX(100%);transition:transform .3s cubic-bezier(.22,1,.36,1);padding:18px;overflow-y:auto}
+.apex-home .drawer.show{transform:none}
+.apex-home .dr-h{display:flex;align-items:center;gap:10px;margin-bottom:4px}
+.apex-home .dr-h .sym{font-size:24px;font-weight:700;font-family:var(--ax-mono)}
+.apex-home .dr-h .x{margin-left:auto;cursor:pointer;color:var(--ax-mut);font-size:18px}
+.apex-home .dr-px{font-size:30px;font-family:var(--ax-mono);font-weight:300}
+.apex-home .dr-sec{margin-top:16px}
+.apex-home .dr-sec .st2{font-size:9px;letter-spacing:.12em;text-transform:uppercase;color:var(--ax-cydim);margin-bottom:8px}
+.apex-home .dr-stats{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.apex-home .dr-stat{background:rgba(6,14,26,.5);border:1px solid var(--ax-bdsoft);border-radius:7px;padding:8px 10px}
+.apex-home .dr-stat .v{font-family:var(--ax-mono);font-size:14px;margin-top:2px}
+/* ── v3 Phase B: ticker dossier ── */
+.apex-home .dr-h .dr-cyc{display:flex;gap:2px;margin-left:auto}
+.apex-home .dr-h .dr-cyc i{cursor:pointer;color:var(--ax-mut);font-size:16px;width:22px;height:22px;display:grid;place-items:center;border:1px solid var(--ax-bdsoft);border-radius:6px;font-style:normal}
+.apex-home .dr-h .dr-cyc i:hover{color:var(--ax-cy);border-color:var(--ax-bd)}
+.apex-home .dr-h .dr-cyc + .x{margin-left:8px}
+.apex-home .dr-px .dr-gap{font-size:11px;font-family:var(--ax-mono);margin-left:8px;padding:2px 6px;border-radius:5px;background:rgba(6,14,26,.6)}
+.apex-home .dr-ranges{display:flex;flex-direction:column;gap:9px;margin-top:12px}
+.apex-home .dr-rng .rb-lab{font-size:8.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--ax-mut);margin-bottom:4px;display:flex;align-items:center}
+.apex-home .rangebar .rb-track{position:relative;height:6px;border-radius:3px;background:rgba(255,255,255,.06);overflow:visible}
+.apex-home .rangebar .rb-fill{position:absolute;left:0;top:0;bottom:0;background:linear-gradient(90deg,rgba(60,200,255,.25),var(--ax-cy));border-radius:3px}
+.apex-home .rangebar .rb-dot{position:absolute;top:50%;width:9px;height:9px;border-radius:50%;background:#eafaff;transform:translate(-50%,-50%);box-shadow:0 0 8px var(--ax-cy);z-index:2}
+.apex-home .rangebar .rb-mark{position:absolute;top:50%;width:2px;height:11px;transform:translate(-50%,-50%);opacity:.8}
+.apex-home .rangebar .rb-ends{display:flex;justify-content:space-between;font-size:9px;color:var(--ax-mut);margin-top:3px}
+.apex-home .dr-tfs{display:flex;gap:4px;margin-top:14px}
+.apex-home .dr-tf{flex:1;text-align:center;font-size:10px;font-family:var(--ax-mono);padding:5px 0;border:1px solid var(--ax-bdsoft);border-radius:6px;color:var(--ax-mut);cursor:pointer;transition:.12s}
+.apex-home .dr-tf:hover{color:var(--ax-tx);border-color:var(--ax-bd)}
+.apex-home .dr-tf.on{color:var(--ax-cy);border-color:var(--ax-bd);background:rgba(60,140,220,.14)}
+.apex-home .dossier-chart{width:100%;margin-top:10px;border:1px solid var(--ax-bdsoft);border-radius:8px;background:rgba(4,10,20,.4)}
+.apex-home .dossier-chart.placeholder{display:grid;place-items:center;color:var(--ax-mut);font-family:var(--ax-mono);font-size:11px}
+.apex-home .dr-ins{display:flex;flex-direction:column;gap:4px}
+.apex-home .dr-ins-r{display:flex;align-items:center;gap:8px;font-size:10.5px;padding:5px 7px;border-radius:6px;background:rgba(6,14,26,.4);border:1px solid var(--ax-bdsoft)}
+.apex-home .dr-ins-r .di-nm{flex:1;color:var(--ax-tx);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.apex-home .dr-ins-r .di-side{font-size:8px;font-weight:700;letter-spacing:.06em;padding:1px 5px;border-radius:4px}
+.apex-home .dr-ins-r .di-side.pos{color:var(--ax-pos);border:1px solid rgba(52,211,153,.4)}
+.apex-home .dr-ins-r .di-side.neg{color:var(--ax-neg);border:1px solid rgba(244,85,107,.4)}
+.apex-home .dr-ins-r .di-sh{width:48px;text-align:right;color:var(--ax-tx)}
+.apex-home .dr-ins-r .di-pr{width:64px;text-align:right;color:var(--ax-mut)}
+.apex-home .dr-ins-r .di-dt{width:38px;text-align:right;color:var(--ax-dim);font-size:9px}
+.apex-home .dr-actions{display:flex;gap:8px;margin-top:18px;position:sticky;bottom:-18px;padding:12px 0 2px;background:linear-gradient(0deg,rgba(7,13,24,1) 60%,transparent)}
+.apex-home .dr-act{flex:1;text-align:center;font-size:11px;padding:9px 6px;border:1px solid var(--ax-bdsoft);border-radius:8px;color:var(--ax-mut);cursor:pointer;transition:.14s}
+.apex-home .dr-act:hover{color:var(--ax-tx);border-color:var(--ax-bd);background:rgba(60,140,220,.08)}
+.apex-home .dr-act.primary{color:var(--ax-acc);border-color:var(--ax-bd);background:rgba(60,140,220,.12)}
+
+.apex-home .toasts{position:absolute;bottom:120px;right:16px;z-index:48;display:flex;flex-direction:column;gap:8px;pointer-events:none}
+.apex-home .toast{display:flex;align-items:center;gap:10px;padding:11px 14px;border-radius:10px;background:rgba(10,20,36,.96);border:1px solid var(--ax-bd);box-shadow:0 8px 30px rgba(0,0,0,.5);min-width:240px;max-width:340px;animation:ax-toastin .4s;font-size:11.5px}
+.apex-home .toast .tci{width:26px;height:26px;border-radius:7px;display:grid;place-items:center;font-size:13px;flex:0 0 auto}
+@keyframes ax-toastin{from{opacity:0;transform:translateX(30px)}to{opacity:1;transform:none}}
+
+.apex-home .scrub{position:absolute;bottom:0;left:0;right:0;height:44px;z-index:6;background:rgba(4,9,18,.95);border-top:1px solid var(--ax-bd);display:flex;align-items:center;gap:14px;padding:0 18px}
+.apex-home .scrub .lv{font-size:9px;font-family:var(--ax-mono);color:var(--ax-pos);letter-spacing:.1em;cursor:pointer}
+.apex-home .scrub .rail{flex:1;height:4px;border-radius:3px;background:rgba(255,255,255,.08);position:relative;cursor:pointer}
+.apex-home .scrub .rail .fill{position:absolute;left:0;top:0;bottom:0;background:var(--ax-cy);border-radius:3px;box-shadow:0 0 8px var(--ax-cy)}
+.apex-home .scrub .rail .hd{position:absolute;top:-3px;width:10px;height:10px;border-radius:50%;background:#eafaff;box-shadow:0 0 10px var(--ax-cy);transform:translateX(-5px)}
+.apex-home .scrub .tt{font-size:10px;font-family:var(--ax-mono);color:var(--ax-mut)}
+
+/* customize / reorder / views / linking */
+.apex-home .col--grid{display:grid;grid-template-columns:repeat(3,1fr);gap:var(--ax-gap,11px);align-content:start;align-items:start}
+.apex-home .col--grid .pnl{min-width:0}
+.apex-home .pnl.span3{grid-column:span 3}
+.apex-home .pnl.cz{outline:1px dashed var(--ax-bd);outline-offset:2px;cursor:grab}
+.apex-home .pnl.dragover{outline:1px solid var(--ax-cy)}
+.apex-home .cz-ctl{display:flex;gap:8px;align-items:center}
+.apex-home .cz-ctl i{cursor:pointer;color:var(--ax-cydim);font-style:normal;font-size:11px;line-height:1}
+.apex-home .cz-ctl i:hover{color:var(--ax-cy)}
+.apex-home .tk{cursor:pointer;border-bottom:1px dotted rgba(60,200,255,.3)}
+.apex-home .tk:hover{color:var(--ax-cy)}
+.apex-home .views-wrap{position:relative}
+.apex-home .views.on{border-color:var(--ax-bdglow);color:var(--ax-cy)}
+.apex-home .views-menu{position:absolute;top:calc(100% + 6px);right:0;z-index:40;background:rgba(10,18,32,.98);border:1px solid var(--ax-bd);border-radius:10px;padding:6px;min-width:210px;box-shadow:0 14px 44px rgba(0,0,0,.55)}
+.apex-home .vm-lbl{font-size:8px;letter-spacing:.12em;text-transform:uppercase;color:var(--ax-mut);padding:6px 8px 3px}
+.apex-home .vm-i{padding:8px 10px;border-radius:7px;font-size:11.5px;cursor:pointer;display:flex;align-items:center;gap:8px;color:var(--ax-tx)}
+.apex-home .vm-i:hover{background:rgba(60,140,220,.12)}
+.apex-home .vm-i.on{color:var(--ax-cy)}
+.apex-home .vm-i .vm-x{margin-left:auto;color:var(--ax-mut);font-size:12px}
+.apex-home .vm-i .vm-x:hover{color:var(--ax-neg)}
+.apex-home .vm-sep{height:1px;background:var(--ax-bdsoft);margin:5px 4px}
+.apex-home .tab-ph{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;text-align:center;padding:40px}
+.apex-home .tab-ph .tph-i{font-size:34px;color:var(--ax-cydim);opacity:.7}
+.apex-home .tab-ph .tph-t{font-size:22px;font-weight:300;color:var(--ax-tx);letter-spacing:.06em}
+.apex-home .tab-ph .tph-s{font-size:12px;color:var(--ax-mut);max-width:360px;line-height:1.6}
+.apex-home .tab-ph .tph-b{margin-top:8px;font-size:11px;padding:8px 16px;border:1px solid var(--ax-bd);border-radius:8px;color:var(--ax-cy);cursor:pointer}
+.apex-home .tab-ph .tph-b:hover{background:rgba(60,140,220,.1)}
+
+/* ═══ v3 Phase A: density, themes, motion, tooltips, cheatsheet ═══ */
+.apex-home[data-density="comfortable"]{--ax-pad:12px;--ax-gap:11px}
+.apex-home[data-density="compact"]{--ax-pad:9px;--ax-gap:8px;font-size:12.5px}
+.apex-home[data-density="dense"]{--ax-pad:6px;--ax-gap:6px;font-size:11.5px}
+
+.apex-home[data-theme="midnight"]{
+  --ax-panel:rgba(16,12,32,0.72);--ax-panelhi:rgba(22,16,44,0.86);
+  --ax-bd:rgba(150,120,255,0.28);--ax-bdsoft:rgba(130,100,235,0.14);--ax-bdglow:rgba(170,139,255,0.55);
+  --ax-cy:#b39dff;--ax-cydim:rgba(170,139,255,0.6);--ax-tx:#eae4ff;--ax-mut:rgba(180,165,225,0.6);
+}
+.apex-home[data-theme="contrast"]{
+  --ax-panel:rgba(2,6,13,0.92);--ax-panelhi:rgba(6,12,22,0.96);
+  --ax-bd:rgba(0,229,255,0.5);--ax-bdsoft:rgba(0,200,255,0.28);--ax-bdglow:rgba(0,229,255,0.8);
+  --ax-cy:#22e5ff;--ax-cydim:rgba(80,235,255,0.85);--ax-tx:#ffffff;--ax-mut:rgba(205,230,248,0.8);--ax-dim:rgba(170,205,230,0.5);
+}
+
+@keyframes ax-flash-up{0%{background:rgba(52,211,153,.38);border-radius:4px;transform:translateY(5px);opacity:.3}28%{opacity:1}100%{background:transparent;transform:none}}
+@keyframes ax-flash-dn{0%{background:rgba(244,85,107,.38);border-radius:4px;transform:translateY(-5px);opacity:.3}28%{opacity:1}100%{background:transparent;transform:none}}
+.apex-home .ax-flash-up{animation:ax-flash-up .5s cubic-bezier(.3,1.2,.4,1);display:inline-block}
+.apex-home .ax-flash-dn{animation:ax-flash-dn .5s cubic-bezier(.3,1.2,.4,1);display:inline-block}
+@keyframes ax-rise{from{opacity:0;transform:translateY(12px) scale(.985);filter:blur(3px)}55%{filter:blur(0)}to{opacity:1;transform:none;filter:none}}
+.apex-home .pnl{animation:ax-rise .5s cubic-bezier(.2,.8,.2,1) both}
+@media (prefers-reduced-motion:reduce){.apex-home .pnl{animation:none}}
+
+.apex-home .ax-tip-anchor{position:relative;display:inline-flex;align-items:center}
+.apex-home .ax-info{font-size:8.5px;color:var(--ax-cydim);margin-left:3px;cursor:help;opacity:.7}
+.apex-home .ax-info:hover{opacity:1;color:var(--ax-cy)}
+.apex-home .ax-tip{position:fixed;transform:translate(-50%,-100%) translateY(-8px);max-width:240px;padding:8px 10px;
+  background:rgba(6,12,22,.97);border:1px solid var(--ax-bd);border-radius:8px;font-size:10.5px;line-height:1.5;
+  color:var(--ax-tx);letter-spacing:normal;text-transform:none;font-weight:400;z-index:9999;pointer-events:none;
+  box-shadow:0 10px 30px rgba(0,0,0,.5);white-space:normal;text-align:left}
+
+.apex-home .vm-swatches{display:flex;flex-direction:column;gap:2px;padding:2px 0}
+.apex-home .vm-sw{display:flex;align-items:center;gap:8px;padding:6px 10px;font-size:11px;color:var(--ax-mut);cursor:pointer;border-radius:6px}
+.apex-home .vm-sw span{width:11px;height:11px;border-radius:3px;box-shadow:0 0 6px currentColor}
+.apex-home .vm-sw:hover{background:rgba(60,140,220,.1);color:var(--ax-tx)}
+.apex-home .vm-sw.on{color:var(--ax-cy)}
+.apex-home .vm-seg{display:flex;gap:3px;padding:3px 8px 6px}
+.apex-home .vm-segi{flex:1;text-align:center;font-size:9.5px;padding:5px 4px;border:1px solid var(--ax-bdsoft);border-radius:6px;color:var(--ax-mut);cursor:pointer}
+.apex-home .vm-segi.on{color:var(--ax-cy);border-color:var(--ax-bd);background:rgba(60,140,220,.12)}
+
+.apex-home .cheats{position:absolute;inset:0;background:rgba(2,6,14,.55);backdrop-filter:blur(4px);z-index:60;display:grid;place-items:center}
+.apex-home .cheats-box{width:340px;max-width:90%;background:var(--ax-panelhi);border:1px solid var(--ax-bd);border-radius:12px;padding:16px 18px;box-shadow:0 20px 60px rgba(0,0,0,.6)}
+.apex-home .cheats-h{display:flex;justify-content:space-between;align-items:center;font-size:12px;font-weight:600;letter-spacing:.1em;text-transform:uppercase;color:var(--ax-cy);margin-bottom:12px}
+.apex-home .cheats-h .x{cursor:pointer;color:var(--ax-mut)}
+.apex-home .cheats-row{display:flex;align-items:center;gap:12px;padding:6px 0;font-size:12px;color:var(--ax-tx)}
+.apex-home .cheats-row kbd{font-family:var(--ax-mono);font-size:10px;min-width:52px;text-align:center;padding:4px 8px;border:1px solid var(--ax-bd);border-radius:6px;color:var(--ax-cydim);background:rgba(6,14,26,.6)}
+
+/* ═══ v3 Phase C: session strip, brief card, away banner ═══ */
+.apex-home .sess-strip{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:8px;margin-bottom:11px}
+.apex-home .sess{display:grid;grid-template-columns:1fr auto;gap:2px 8px;align-items:center;padding:7px 11px;border:1px solid var(--ax-bdsoft);border-radius:8px;background:rgba(8,15,26,.45);cursor:pointer;transition:.14s;overflow:hidden}
+.apex-home .sess:hover{border-color:var(--ax-bd);background:rgba(12,22,36,.65)}
+.apex-home .sess .sess-n{grid-column:1;grid-row:1;font-weight:600;font-size:11px;color:var(--ax-tx);letter-spacing:.02em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.apex-home .sess .dchip{grid-column:2;grid-row:1;justify-self:end}
+.apex-home .sess .sess-last{grid-column:1;grid-row:2;font-size:11px;color:var(--ax-mut)}
+.apex-home .sess .sess-gap{grid-column:2;grid-row:2;justify-self:end;font-size:9px}
+
+.apex-home .away-banner{display:flex;align-items:center;gap:10px;margin:0 var(--ax-gap,11px) 0;padding:8px 12px;border:1px solid var(--ax-bd);border-radius:8px;background:rgba(14,26,44,.55);font-size:11.5px;color:var(--ax-tx);animation:ax-rise .4s both}
+.apex-home .away-banner .ab-i{color:var(--ax-cy)}
+.apex-home .away-banner .ab-b{margin-left:auto;color:var(--ax-acc);cursor:pointer;font-size:10.5px}
+.apex-home .away-banner .ab-x{cursor:pointer;color:var(--ax-mut);font-size:12px}
+
+.apex-home .bc-overlay{position:absolute;inset:0;background:rgba(2,6,14,.6);backdrop-filter:blur(5px);z-index:58;display:grid;place-items:center;padding:20px}
+.apex-home .briefcard{width:560px;max-width:96%;max-height:88%;overflow-y:auto;background:var(--ax-panelhi);border:1px solid var(--ax-bd);border-radius:14px;box-shadow:0 30px 80px rgba(0,0,0,.6);animation:ax-rise .3s both}
+.apex-home .bc-h{display:flex;align-items:center;gap:10px;padding:16px 18px;border-bottom:1px solid var(--ax-bdsoft);position:sticky;top:0;background:var(--ax-panelhi);z-index:2}
+.apex-home .bc-h .bc-title{font-size:13px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--ax-cy)}
+.apex-home .bc-h .bc-tag{font-size:10px;font-weight:700;padding:2px 8px;border-radius:5px;border:1px solid var(--ax-bdsoft);color:var(--ax-mut)}
+.apex-home .bc-h .bc-tag.pos{color:var(--ax-pos);border-color:rgba(52,211,153,.4)}.apex-home .bc-h .bc-tag.neg{color:var(--ax-neg);border-color:rgba(244,85,107,.4)}
+.apex-home .bc-h .x{margin-left:auto;cursor:pointer;color:var(--ax-mut);font-size:16px}
+.apex-home .bc-body{padding:16px 18px}
+.apex-home .bc-headline{font-size:18px;font-weight:600;color:var(--ax-tx);margin-bottom:8px;line-height:1.3}
+.apex-home .bc-narr{font-size:12.5px;line-height:1.6;color:rgba(200,225,248,.85);margin-bottom:14px}
+.apex-home .bc-chips{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:14px}
+.apex-home .bc-chip{background:rgba(6,14,26,.5);border:1px solid var(--ax-bdsoft);border-radius:8px;padding:8px 10px;text-align:center}
+.apex-home .bc-chip .lbl{display:block;margin-bottom:3px}
+.apex-home .bc-chip b{font-family:var(--ax-mono);font-size:14px;font-weight:400}
+.apex-home .bc-sec{margin-bottom:14px}
+.apex-home .bc-st{font-size:9px;letter-spacing:.12em;text-transform:uppercase;color:var(--ax-cydim);margin-bottom:7px;display:flex;align-items:center;gap:6px}
+.apex-home .bc-st .cite{cursor:pointer;color:var(--ax-cy)}
+.apex-home .bc-watch{margin:0;padding-left:16px;font-size:12px;line-height:1.7;color:rgba(200,225,248,.85)}
+.apex-home .bc-2col{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+.apex-home .bc-mv{display:flex;justify-content:space-between;align-items:center;gap:8px;font-size:11px;padding:4px 8px;border-radius:5px;cursor:pointer}
+.apex-home .bc-mv:hover{background:rgba(60,140,220,.08)}
+.apex-home .bc-mv .tk{font-weight:600;font-family:var(--ax-mono)}
+.apex-home .bc-news{display:flex;align-items:center;gap:8px;font-size:11px;padding:5px 0}
+.apex-home .bc-news .sent{width:5px;height:5px;border-radius:50%;flex:0 0 auto}
+.apex-home .bc-news .bc-nt{flex:1;color:rgba(210,232,250,.9);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.apex-home .bc-news .tag{font-size:8.5px;padding:1px 6px;border:1px solid var(--ax-bd);border-radius:4px;color:var(--ax-cy);cursor:pointer}
+.apex-home .bc-actions{margin-top:6px}
+
+/* ═══ v3 Phase D: news river ═══ */
+.apex-home .nr-top{display:flex;align-items:center;gap:10px;margin-bottom:8px}
+.apex-home .nr-sent{display:flex;align-items:center;gap:6px}
+.apex-home .nr-sent .nr-bar{display:flex;width:64px;height:5px;border-radius:3px;overflow:hidden;background:rgba(255,255,255,.06)}
+.apex-home .nr-sent .nr-bar i{display:block}.apex-home .nr-sent .nr-bar i.pos{background:var(--ax-pos)}.apex-home .nr-sent .nr-bar i.neg{background:var(--ax-neg)}
+.apex-home .nr-sort{margin-left:auto;display:flex;gap:2px;font-size:9.5px}
+.apex-home .nr-sort span{padding:3px 8px;border-radius:5px;color:var(--ax-mut);cursor:pointer;border:1px solid transparent}
+.apex-home .nr-sort span.on{color:var(--ax-cy);border-color:var(--ax-bdsoft);background:rgba(60,140,220,.1)}
+.apex-home .nr-lanes{display:flex;gap:4px;flex-wrap:wrap;margin-bottom:9px}
+.apex-home .nr-lane{font-size:9px;padding:3px 8px;border-radius:5px;border:1px solid var(--ax-bdsoft);color:var(--ax-mut);cursor:pointer;white-space:nowrap;transition:.12s}
+.apex-home .nr-lane:hover{color:var(--ax-tx)}
+.apex-home .nr-lane.on{border-color:var(--ax-bd);background:rgba(60,140,220,.1)}
+.apex-home .nr-list .ni{cursor:pointer}
+.apex-home .ni.nr-pinned{border-left:2px solid var(--ax-cy);padding-left:6px;background:rgba(60,140,220,.05)}
+.apex-home .ni .nr-pin{color:var(--ax-cy);margin-right:5px;font-size:8px;animation:ax-bp 1.8s infinite}
+.apex-home .ni .nr-cred{font-size:7.5px;font-weight:700;letter-spacing:.05em;padding:1px 5px;border:1px solid;border-radius:4px}
+.apex-home .nr-preview{position:fixed;transform:translateX(-100%) translateX(-12px);width:280px;max-width:40vw;padding:11px 13px;
+  background:rgba(6,12,22,.98);border:1px solid var(--ax-bd);border-radius:10px;z-index:9998;pointer-events:none;box-shadow:0 14px 40px rgba(0,0,0,.55)}
+.apex-home .nr-preview .nrp-t{font-size:12px;font-weight:600;color:var(--ax-tx);line-height:1.4;margin-bottom:6px}
+.apex-home .nr-preview .nrp-m{font-size:9.5px;color:var(--ax-cydim);text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px}
+.apex-home .nr-preview .nrp-tk{display:flex;gap:6px;flex-wrap:wrap;font-family:var(--ax-mono);font-size:10px;font-weight:600;margin-bottom:6px}
+.apex-home .nr-preview .nrp-s{font-size:9.5px;color:var(--ax-mut);line-height:1.4}
+
+/* ═══ v3 Phase E: correlation matrix, RRG, realized vol ═══ */
+.apex-home .corr-grid{display:grid;gap:2px}
+.apex-home .corr-cell{aspect-ratio:1;display:grid;place-items:center;font-family:var(--ax-mono);font-size:8.5px;border-radius:3px;color:#eafaff;min-height:20px}
+.apex-home .corr-cell.corr-hdr{background:transparent;color:var(--ax-mut);font-size:8px;font-weight:600}
+.apex-home .rrg-svg{width:100%;height:auto;display:block;background:rgba(4,10,20,.35);border-radius:8px}
+/* Crypto Fear & Greed gauge */
+.apex-home .fng{display:flex;flex-direction:column;gap:6px}
+.apex-home .fng-gauge{width:100%;height:auto;display:block}
+.apex-home .fng-spark{display:flex;flex-direction:column;gap:3px;padding:0 2px}
+.apex-home .fng-spark svg{background:rgba(4,10,20,.35);border-radius:6px;padding:2px 0}
+/* Retail attention (Wikipedia) */
+.apex-home .watn{display:flex;flex-direction:column;gap:6px}
+.apex-home .watn-row{display:grid;grid-template-columns:44px 1fr 52px 42px;align-items:center;gap:7px}
+.apex-home .watn-tk{font-family:var(--ax-mono);font-size:11px;font-weight:600;color:#eafaff;cursor:pointer}
+.apex-home .watn-tk:hover{color:var(--ax-cy)}
+.apex-home .watn-bar{height:8px;background:rgba(255,255,255,.06);border-radius:4px;overflow:hidden}
+.apex-home .watn-bar i{display:block;height:100%;border-radius:4px;transition:width .5s ease}
+.apex-home .watn-spark{height:18px;opacity:.85}
+.apex-home .watn-spk{font-family:var(--ax-mono);font-size:10px;text-align:right;font-weight:600}
+/* SEC Form-4 tape */
+.apex-home .s4{display:flex;flex-direction:column;gap:3px}
+.apex-home .s4-row{display:grid;grid-template-columns:30px 1fr auto;align-items:center;gap:8px;padding:4px 6px;border-radius:5px;text-decoration:none;transition:background .15s}
+.apex-home .s4-row:hover{background:rgba(90,160,220,.08)}
+.apex-home .s4-role{font-family:var(--ax-mono);font-size:8px;font-weight:700;text-align:center;padding:2px 0;border-radius:3px;letter-spacing:.04em}
+.apex-home .s4-role.rep{background:rgba(52,211,153,.14);color:#5fe0a8}
+.apex-home .s4-role.isr{background:rgba(90,170,230,.14);color:#7fc0ff}
+.apex-home .s4-name{font-size:11px;color:#dce7f2;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.apex-home .s4-time{font-family:var(--ax-mono);font-size:9px;color:var(--ax-mut)}
+/* BTC network heat */
+.apex-home .btcn{display:flex;flex-direction:column;gap:9px}
+.apex-home .btcn-cong-top{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:4px}
+.apex-home .btcn-bar{height:9px;background:rgba(255,255,255,.06);border-radius:5px;overflow:hidden}
+.apex-home .btcn-bar i{display:block;height:100%;border-radius:5px;transition:width .6s ease}
+.apex-home .btcn-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:7px}
+.apex-home .btcn-tile{display:flex;flex-direction:column;gap:2px;background:rgba(8,16,28,.5);border:1px solid rgba(120,170,210,.09);border-radius:7px;padding:7px 9px}
+.apex-home .btcn-v{font-family:var(--ax-mono);font-size:14px;font-weight:700;color:#eaf4ff;line-height:1}
+.apex-home .btcn-l{font-size:8.5px;color:var(--ax-mut);letter-spacing:.02em}
+/* Quant Risk Lab */
+.apex-home .rl{display:flex;flex-direction:column;gap:10px}
+.apex-home .rl-head{display:flex;align-items:center;gap:7px}
+.apex-home .rl-in{width:58px;background:rgba(8,16,28,.6);border:1px solid rgba(120,170,210,.18);border-radius:6px;color:#eaf4ff;font-family:var(--ax-mono);font-size:12px;font-weight:700;padding:5px 8px;text-transform:uppercase}
+.apex-home .rl-in:focus{outline:none;border-color:var(--ax-cy)}
+.apex-home .rl-go{background:rgba(90,170,230,.16);border:1px solid rgba(120,170,210,.25);border-radius:6px;color:#cfe8fa;font-size:11px;font-weight:600;padding:5px 11px;cursor:pointer}
+.apex-home .rl-go:hover{background:rgba(90,170,230,.28)}
+.apex-home .rl-days{margin-left:auto;font-family:var(--ax-mono);font-size:9px;color:var(--ax-mut)}
+.apex-home .rl-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:7px}
+.apex-home .rl-tile{display:flex;flex-direction:column;gap:2px;background:rgba(8,16,28,.5);border:1px solid rgba(120,170,210,.09);border-radius:7px;padding:7px 9px}
+.apex-home .rl-v{font-family:var(--ax-mono);font-size:15px;font-weight:700;color:#eaf4ff;line-height:1}
+.apex-home .rl-l{font-size:8.5px;color:var(--ax-mut);letter-spacing:.02em}
+.apex-home .rl-sub{display:grid;grid-template-columns:1.5fr 1fr;gap:12px}
+.apex-home .rl-bars{display:flex;align-items:flex-end;gap:1.5px;height:52px;margin-top:4px}
+.apex-home .rl-bar{flex:1;min-height:1px;border-radius:1px 1px 0 0}
+.apex-home .rl-rs-svg{width:100%;height:34px;background:rgba(4,10,20,.35);border-radius:6px;margin-top:4px}
+/* Anomaly scanner */
+.apex-home .anom{display:flex;flex-direction:column;gap:5px}
+.apex-home .anom-row{display:grid;grid-template-columns:46px 40px 46px 1fr;align-items:center;gap:8px}
+.apex-home .anom-tk{font-family:var(--ax-mono);font-size:11px;font-weight:600;color:#eafaff;cursor:pointer}
+.apex-home .anom-tk:hover{color:var(--ax-cy)}
+.apex-home .anom-sig{font-family:var(--ax-mono);font-size:11px;font-weight:700}
+.apex-home .anom-sig.hot{text-shadow:0 0 8px currentColor}
+.apex-home .anom-ch{font-family:var(--ax-mono);font-size:10px;text-align:right}
+.apex-home .anom-bar{height:7px;background:rgba(255,255,255,.06);border-radius:4px;overflow:hidden}
+.apex-home .anom-bar i{display:block;height:100%;border-radius:4px}
+/* Breadth Heartbeat EKG */
+.apex-home .ekg{display:flex;flex-direction:column;gap:9px}
+.apex-home .ekg-top{display:flex;align-items:center;gap:12px}
+.apex-home .ekg-bpm{display:flex;align-items:baseline;gap:3px;font-family:var(--ax-mono)}
+.apex-home .ekg-bpmv{font-size:26px;font-weight:700;line-height:1;text-shadow:0 0 12px currentColor}
+.apex-home .ekg-bpml{font-size:9px;opacity:.7;letter-spacing:.1em}
+.apex-home .ekg-stats{display:flex;gap:10px;font-family:var(--ax-mono);font-size:9.5px;color:#cfe8fa;margin-top:2px}
+.apex-home .ekg-screen{position:relative;height:66px;background:radial-gradient(ellipse at center,rgba(10,26,20,.6),rgba(4,10,16,.85));border:1px solid rgba(80,150,110,.15);border-radius:8px;overflow:hidden}
+.apex-home .ekg-screen::before{content:"";position:absolute;inset:0;background-image:linear-gradient(rgba(120,200,150,.05) 1px,transparent 1px),linear-gradient(90deg,rgba(120,200,150,.05) 1px,transparent 1px);background-size:16px 16px}
+.apex-home .ekg-track{position:absolute;inset:0;width:100%;height:100%;animation:ekg-scroll var(--ekg-dur,3s) linear infinite}
+.apex-home .ekg-line{fill:none;stroke:var(--ekg-col,#34d399);stroke-width:1.6;filter:drop-shadow(0 0 4px var(--ekg-col,#34d399));vector-effect:non-scaling-stroke}
+@keyframes ekg-scroll{from{transform:translateX(0)}to{transform:translateX(-100%)}}
+@media (prefers-reduced-motion:reduce){.apex-home .ekg-track{animation:none}}
+/* Market Mandala */
+.apex-home .mandala{display:flex;flex-direction:column;gap:6px;align-items:center}
+.apex-home .mandala-svg{width:100%;max-width:250px;height:auto;display:block}
+.apex-home .mandala-spin{animation:mandala-rot 90s linear infinite}
+@keyframes mandala-rot{from{transform:rotate(0)}to{transform:rotate(360deg)}}
+@media (prefers-reduced-motion:reduce){.apex-home .mandala-spin{animation:none}}
+.apex-home .dr-vol{display:flex;gap:6px;align-items:flex-end;margin-top:2px}
+.apex-home .dv-col{flex:1;display:flex;flex-direction:column;align-items:center;gap:3px}
+.apex-home .dv-track{width:100%;height:44px;display:flex;align-items:flex-end;justify-content:center}
+.apex-home .dv-bar{width:62%;min-height:2px;border-radius:3px 3px 0 0;background:linear-gradient(180deg,var(--ax-cy),rgba(60,200,255,.3))}
+.apex-home .dv-v{font-size:9.5px;color:var(--ax-tx)}
+.apex-home .dv-w{font-size:8px;color:var(--ax-mut)}
+.apex-home .dr-cone{margin-top:9px;font-size:10.5px;display:flex;align-items:center;gap:6px}
+.apex-home .dr-cone b{font-size:13px}
+
+/* ═══ v3 Phase F: watchlist + alerts ═══ */
+.apex-home .ua-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:7px}
+.apex-home .ua-new{font-size:10px;color:var(--ax-acc);cursor:pointer;padding:2px 8px;border:1px solid var(--ax-bdsoft);border-radius:6px}
+.apex-home .ua-new:hover{border-color:var(--ax-bd)}
+.apex-home .ua-alerts{display:flex;flex-direction:column;gap:5px}
+.apex-home .ua-al{display:flex;align-items:center;gap:7px;font-size:10.5px;padding:5px 8px;border-radius:6px;background:rgba(6,14,26,.4);border:1px solid var(--ax-bdsoft)}
+.apex-home .ua-al.fired{border-color:rgba(245,167,66,.4);background:rgba(245,167,66,.06)}
+.apex-home .ua-al .tk{font-weight:600;font-family:var(--ax-mono);cursor:pointer}
+.apex-home .ua-al .ua-cond{color:var(--ax-mut);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.apex-home .ua-al .ua-x{cursor:pointer;color:var(--ax-dim);font-size:11px}
+.apex-home .ua-al .ua-x:hover{color:var(--ax-neg)}
+.apex-home .ua-dot{width:6px;height:6px;border-radius:50%;flex:0 0 auto}
+.apex-home .ua-dot.live{background:var(--ax-pos);box-shadow:0 0 6px var(--ax-pos);animation:ax-bp 1.6s infinite}
+.apex-home .ua-dot.fired{background:var(--ax-warn);box-shadow:0 0 6px var(--ax-warn)}
+.apex-home .am-form{display:flex;gap:6px;align-items:center}
+.apex-home .am-in{background:rgba(6,14,26,.6);border:1px solid var(--ax-bdsoft);border-radius:6px;color:var(--ax-tx);font-size:11px;padding:7px 8px;font-family:var(--ax-sans)}
+.apex-home .am-in.am-tk{width:80px;font-family:var(--ax-mono);text-transform:uppercase}
+.apex-home .am-in.am-val{width:64px;font-family:var(--ax-mono)}
+.apex-home .am-in:focus{outline:none;border-color:var(--ax-bd)}
+.apex-home select.am-in{flex:1;cursor:pointer}
+.apex-home .am-add{background:var(--ax-acc);color:#08131f;border:none;border-radius:6px;font-size:11px;font-weight:700;padding:7px 12px;cursor:pointer}
+.apex-home .am-row{display:flex;align-items:center;gap:8px;font-size:11px;padding:7px 8px;border-radius:6px;background:rgba(6,14,26,.4);border:1px solid var(--ax-bdsoft);margin-bottom:5px}
+.apex-home .am-row .tk{font-weight:600;font-family:var(--ax-mono);cursor:pointer}
+.apex-home .am-row .am-cond{color:var(--ax-mut);flex:1}
+.apex-home .am-row .am-fired{color:var(--ax-warn);font-size:9px}
+.apex-home .am-row .am-watching{color:var(--ax-pos);font-size:9px}
+.apex-home .am-row .am-x{cursor:pointer;color:var(--ax-dim);font-size:12px}
+.apex-home .am-row .am-x:hover{color:var(--ax-neg)}
+.apex-home .dr-act.on{color:var(--ax-warn);border-color:rgba(245,167,66,.4)}
+
+/* ═══ v4 G2: microstructure (depth heatmap, volume profile, tape) ═══ */
+.apex-home .depthmap,.apex-home .volprofile{border-radius:8px;background:radial-gradient(ellipse at center,rgba(8,16,30,.6),rgba(3,8,16,.75));border:1px solid var(--ax-bdsoft)}
+.apex-home .tape-list{display:flex;flex-direction:column;gap:1px;font-family:var(--ax-mono);font-size:10.5px}
+.apex-home .tp-row{display:flex;align-items:center;gap:8px;padding:3px 7px;border-radius:4px;background:rgba(6,14,26,.35)}
+.apex-home .tp-row.tp-big{background:rgba(60,140,220,.14);font-weight:600}
+.apex-home .tp-row .tp-side{width:10px}
+.apex-home .tp-row .tp-p{width:70px}
+.apex-home .tp-row .tp-q{flex:1;color:var(--ax-mut);text-align:right}
+.apex-home .tp-row .tp-t{color:var(--ax-dim);font-size:9px;width:52px;text-align:right}
+
+/* ═══ v4 G1: animated sector treemap ═══ */
+.apex-home .treemap{border-radius:8px;overflow:hidden;background:rgba(4,10,20,.4)}
+.apex-home .tm-tile{position:absolute;border-radius:3px;overflow:hidden;cursor:pointer;padding:4px 6px;display:flex;flex-direction:column;justify-content:flex-start;
+  transition:left .45s cubic-bezier(.4,1,.4,1),top .45s cubic-bezier(.4,1,.4,1),width .45s cubic-bezier(.4,1,.4,1),height .45s cubic-bezier(.4,1,.4,1),background .5s}
+.apex-home .tm-tile:hover{outline:1px solid rgba(255,255,255,.45);z-index:2}
+.apex-home .tm-tile .tm-n{font-size:9.5px;font-weight:600;color:rgba(240,248,255,.95);line-height:1.1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.apex-home .tm-tile .tm-c{font-size:10px;font-family:var(--ax-mono);color:rgba(255,255,255,.9);margin-top:1px}
+
+/* ═══ v4 G1: Market Constellation ═══ */
+.apex-home .constellation-wrap{position:relative}
+.apex-home .constellation{border-radius:10px;background:radial-gradient(ellipse at center,rgba(10,22,40,.5),rgba(4,10,20,.6));border:1px solid var(--ax-bdsoft)}
+.apex-home .const-legend{display:flex;gap:12px;align-items:center;margin-top:7px;font-size:8.5px;color:var(--ax-mut);text-transform:uppercase;letter-spacing:.06em}
+.apex-home .const-legend span{display:inline-flex;align-items:center;gap:4px}
+.apex-home .const-legend i{width:8px;height:8px;border-radius:50%;display:inline-block}
+
+@media (prefers-reduced-motion:reduce){.apex-home *{animation:none!important;transition:none!important}}
+
+/* ── Jarvis bar: online indicator + compact (reclaim panel height) ── */
+.apex-home .jv-on{font:700 8px/1 var(--ax-sans);letter-spacing:.12em;text-transform:uppercase;color:#4ade80;margin-left:2px;text-shadow:0 0 8px rgba(74,222,128,.6)}
+.apex-home .aibar{padding:8px 12px;margin:0 11px 8px}
+.apex-home .aibar-h{margin-bottom:6px}
+.apex-home .aibar-in{padding:8px 12px}
+.apex-home .chips{margin-top:7px}

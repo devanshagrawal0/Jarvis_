@@ -1,0 +1,54 @@
+.root {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  min-height: 480px;
+  overflow: hidden;
+  isolation: isolate;
+  background: #010d1b;
+}
+
+.root::before {
+  display: none;
+}
+
+.root::after {
+  display: none;
+}
+
+.canvas {
+  display: none !important;
+}
+
+.videoGlobeWrap {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  opacity: 1;
+}
+
+.videoGlobe {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  filter: none;
+}
+
+.demo {
+  width: 100vw;
+  height: 100vh;
+  min-height: 620px;
+  margin: 0;
+  overflow: hidden;
+  background: #02060b;
+}
+
+@media (max-width: 720px) {
+  .root {
+    min-height: 420px;
+  }
+}

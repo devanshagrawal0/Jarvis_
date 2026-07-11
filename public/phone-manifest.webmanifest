@@ -1,0 +1,47 @@
+{
+  "name": "JARVIS Phone Mesh",
+  "short_name": "JARVIS",
+  "description": "Jarvis AI assistant — phone control mesh",
+  "start_url": "/phone.html",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#02080e",
+  "theme_color": "#02080e",
+  "categories": ["productivity", "utilities"],
+  "icons": [
+    {
+      "src": "/icons/phone-icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/icons/phone-icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ],
+  "screenshots": [],
+  "shortcuts": [
+    {
+      "name": "Send to Jarvis",
+      "url": "/phone.html?tab=send",
+      "description": "Quickly send text or files"
+    },
+    {
+      "name": "View Screen",
+      "url": "/phone.html?tab=screen",
+      "description": "View and control laptop screen"
+    }
+  ],
+  "share_target": {
+    "action": "/phone.html",
+    "method": "GET",
+    "params": {
+      "title": "title",
+      "text": "text",
+      "url": "url"
+    }
+  }
+}
