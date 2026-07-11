@@ -6,6 +6,7 @@ import { WidgetLauncher } from "./globe-room/WidgetLauncher";
 import { WidgetStrip } from "./globe-room/WidgetStrip";
 import { HelixRoom } from "./rooms/HelixRoom";
 import { ApexRoom } from "./rooms/ApexRoom";
+import { ArbiterRoom } from "./rooms/ArbiterRoom";
 import { streamPost } from "./api";
 import type { BrainResponse } from "./types";
 import "./JarvisUI.css";
@@ -89,6 +90,7 @@ export function JarvisUI() {
   const [launcherOpen, setLauncherOpen] = useState(false);
   const [helixOpen, setHelixOpen] = useState(false);
   const [apexOpen, setApexOpen] = useState(false);
+  const [arbiterOpen, setArbiterOpen] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
@@ -124,6 +126,11 @@ export function JarvisUI() {
     }
     if (/^(?:(?:go to|open|launch|enter|show|take me to)\s+)?apex(?:\s+room)?$/.test(norm)) {
       setApexOpen(true);
+      return;
+    }
+    // Arbiter — accept "arbiter"/"arbitrer" (common spelling) with the same prefixes.
+    if (/^(?:(?:go to|open|launch|enter|show|take me to)\s+)?arbit(?:er|re)?r?(?:\s+room)?$/.test(norm)) {
+      setArbiterOpen(true);
       return;
     }
     abortRef.current?.abort();
@@ -168,6 +175,12 @@ export function JarvisUI() {
       {apexOpen && (
         <div style={{ position: "fixed", inset: 0, zIndex: 9999 }}>
           <ApexRoom onExit={() => setApexOpen(false)} />
+        </div>
+      )}
+
+      {arbiterOpen && (
+        <div style={{ position: "fixed", inset: 0, zIndex: 9999 }}>
+          <ArbiterRoom onExit={() => setArbiterOpen(false)} />
         </div>
       )}
 

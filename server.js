@@ -42,6 +42,14 @@ const { DEFAULT_AUTONOMY_PROFILE, normalizeAutonomyProfile } = require("./server
 const { createGoogleProvider } = require("./server/providers/google-provider");
 const { createCanvasProvider } = require("./server/providers/canvas-provider");
 const { createKalshiProvider } = require("./server/providers/kalshi-provider");
+// Arbiter — cross-platform (Kalshi × Polymarket) divergence engine + room.
+const { createPolymarketProvider } = require("./server/providers/polymarket-provider");
+const { createArbiterKalshi } = require("./server/arbiter/arbiter-kalshi");
+const { createArbiterEngine } = require("./server/arbiter/arbiter-engine");
+const { createArbiterLLM } = require("./server/arbiter/arbiter-llm");
+const { handleArbiterRoute, initArbiterRoutes } = require("./server/arbiter/arbiter-routes");
+const { initArbiterDB, baseRates: arbiterBaseRates } = require("./server/arbiter/arbiter-db");
+const { startArbiterScheduler } = require("./server/arbiter/arbiter-scheduler");
 // DM-1: Cloudflare Quick Tunnel — phones can reach Jarvis from any network
 const { startTunnel, stopTunnel, getTunnelUrl, isTunnelActive, getTunnelStatus } = require("./server/tunnel-manager");
 // DM-3: WebSocket Hub — real-time backbone replacing all HTTP polling
@@ -5480,6 +5488,12 @@ function publicMission(mission) {
 }
 
 async function handleApi(req, res, pathname, url) {
+  // ── Arbiter (Kalshi × Polymarket) routes ───────────────────────────────
+  if (pathname.startsWith("/api/arbiter/")) {
+    const handled = await handleArbiterRoute(req, res, { pathname, sendJson });
+    if (handled) return;
+  }
+
   // ── APEX room data routes (Wave 1: keyless ingestion) ──────────────────
   if (pathname.startsWith("/api/apex/")) {
     if (!apexIngest || !apexDb) { sendJson(res, 503, { error: "APEX data layer unavailable" }); return; }
@@ -10516,6 +10530,29 @@ providers = {
   }),
   kalshi: createKalshiProvider({ getSettings: loadSettings }),
 };
+
+// ── Arbiter (Kalshi × Polymarket divergence engine) ──────────────────────
+// Read-only, public data (Polymarket Gamma + Kalshi elections API — no keys).
+// LLM enrichment (match verification + probability estimate) is optional and
+// activates only when ANTHROPIC_API_KEY is set; without it the engine still
+// surfaces cross-platform divergence edges. Fully guarded so a failure here
+// can never take down the server.
+try {
+  const arbiterProviders = {
+    polymarket: createPolymarketProvider({ getSettings: loadSettings }),
+    kalshi: createArbiterKalshi(),
+  };
+  const arbiterLLM = createArbiterLLM({
+    apiKey: process.env.ANTHROPIC_API_KEY,
+    getBaseRates: () => { try { return arbiterBaseRates(); } catch { return {}; } },
+  });
+  const arbiterEngine = createArbiterEngine({ providers: arbiterProviders, llm: arbiterLLM });
+  initArbiterRoutes({ engine: arbiterEngine });
+  initArbiterDB(RUNTIME_DIR);
+  startArbiterScheduler({ engine: arbiterEngine, providers: arbiterProviders });
+  console.log("[init] Arbiter started (Kalshi × Polymarket" + (process.env.ANTHROPIC_API_KEY ? " + LLM enrichment)" : ", divergence-only — set ANTHROPIC_API_KEY for enrichment)"));
+} catch (e) { console.error("[init] Arbiter failed:", e.message); }
+
 let helixDb = null;
 try { helixDb = createHelixDb(RUNTIME_DIR); } catch (e) { console.error("[init] helixDb failed:", e.message); }
 let apexDb = null, apexIngest = null;
