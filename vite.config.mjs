@@ -27,8 +27,7 @@ export default defineConfig({
         phone: path.resolve("phone.html"),
         widgetLab: path.resolve("widget-lab.html"),
         globe: path.resolve("globe.html"),
-        globeRoom: path.resolve("globe-room.html"),
-        bostonMap: path.resolve("boston-map.html")
+        globeRoom: path.resolve("globe-room.html")
       }
     }
   }

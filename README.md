@@ -15,7 +15,7 @@ Built with React 19 + TypeScript + Three.js on the front end, a Node.js brain/ag
   - [Jarvis Home / HUD](#jarvis-home--hud)
   - [APEX — Trading Command Center](#apex--trading-command-center)
   - [THE FORGE — quant strategy & bot builder](#the-forge--quant-strategy--bot-builder)
-  - [Other rooms](#other-rooms-globe--boston--phone--widget-lab)
+  - [Other rooms](#other-rooms-globe--phone--widget-lab)
 - [How the AI brain works](#how-the-ai-brain-works)
 - [How memory works](#how-memory-works)
 - [Device Mesh (phone pairing)](#device-mesh-phone-pairing)
@@ -46,7 +46,7 @@ Everything runs **locally**. Market data comes from free public APIs; the AI bra
 - 🗄️ **Layered memory** — a "Neural Vault" that stores facts as both human-readable files and SQLite rows, with decay, governance, and procedural (skill) memory.
 - 📈 **APEX trading room** — live market ribbon, dossiers, news river, correlation/RRG, watchlists, and a real alert engine — all from **public** data (shareable).
 - 🔨 **THE FORGE** — node-graph strategy builder, a deterministic backtest engine (single- and multi-symbol portfolio), a 6-tab analysis dock, an always-on Strategy Health rail, plus Improver / Sentinel / Darwin / Terraform / Meta-Labeler / Genesis / Oracle tools.
-- 🌐 **Immersive rooms** — a cyberpunk 3D globe room, a holographic Boston map, a phone companion, and a widget lab.
+- 🌐 **Immersive rooms** — a cyberpunk 3D globe room, a phone companion, and a widget lab.
 - 📱 **Device Mesh** — pair your phone via QR to send text/links/files and mirror screens.
 - 🖥️ **Desktop app** — Electron shell, packageable for Windows/macOS.
 - ☁️ **Optional Cloudflare** deploy path (Pages + Workers).
@@ -58,8 +58,8 @@ Everything runs **locally**. Market data comes from free public APIs; the AI bra
 ```
 ┌──────────────────────────────────────────────────────────────┐
 │  FRONTEND  (Vite · React 19 · TypeScript · Three.js/R3F)     │
-│  - Multi-page: index / phone / widget-lab / globe / globe-   │
-│    room / boston-map                                         │
+│  - Multi-page: index / phone / widget-lab / globe /          │
+│    globe-room                                                │
 │  - Rooms live under src/rooms/** and src/features/**         │
 │  - Talks to the backend over /api/** (Vite proxy → :8799)    │
 └───────────────▲──────────────────────────────────────────────┘
@@ -120,13 +120,12 @@ An always-on report card: a health-score gauge + checklist (data integrity, logi
 
 > **Universe:** by default a strategy backtests a ~30-name liquid large-cap basket (not a single ticker). Trim it, pick a preset (Mega-cap Tech, Index ETFs, Sectors, Semis, Dow 10, Crypto, or **All Large-cap**), or type your own.
 
-### Other rooms (Globe · Boston · Phone · Widget Lab)
+### Other rooms (Globe · Phone · Widget Lab)
 - **Globe Room** — a cyberpunk 3D globe workspace (Three.js / R3F).
-- **Boston Hologram** — a holographic 3D map of Boston / Northeastern.
 - **Phone** — a companion PWA surface for the device mesh.
 - **Widget Lab** — a sandbox for the widget system.
 
-> Note: the Globe and Boston rooms rely on heavy 3D/texture assets that are **git-ignored** (see [Heavy assets](#heavy-assets)); the core Jarvis + APEX + Forge experience needs none of them.
+> Note: the Globe room relies on heavy 3D/texture assets that are **git-ignored** (see [Heavy assets](#heavy-assets)); the core Jarvis + APEX + Forge experience needs none of them.
 
 ---
 
@@ -173,7 +172,7 @@ Repair/health routes: `GET /mesh/health`, `GET /mesh/pair?code=…`, `POST /mesh
 
 ## Tech stack & dependencies
 
-**Frontend:** React 19, TypeScript, Vite 7, Three.js + @react-three/fiber/drei, Framer Motion, Zustand, cmdk, Recharts/visx-style charts (custom SVG), MapLibre GL (Boston), lucide-react icons.
+**Frontend:** React 19, TypeScript, Vite 7, Three.js + @react-three/fiber/drei, Framer Motion, Zustand, cmdk, custom SVG charts, lucide-react icons.
 
 **Backend:** Node.js (ES modules + CommonJS mix), `better-sqlite3`, `ws` (WebSocket), `express`-style routing in `server.js`, Playwright (browser tools), provider SDKs (Google Generative AI, OpenAI).
 
@@ -240,7 +239,7 @@ Copy `.env.example` → `.env`. **Nothing is required to boot** — the app degr
 | `GITHUB_TOKEN`, `FIGMA_ACCESS_TOKEN`, `GOOGLE_*`, `INSTAGRAM_*`, `HIGGSFIELD_API_KEY` | optional integrations |
 | `KALSHI_API_KEY_ID`, `KALSHI_PRIVATE_KEY` | Kalshi event-contract trading (optional) |
 
-See `.env.example` for the full annotated list and `JARVIS_CREDENTIALS_SETUP.md` for provider setup details.
+See `.env.example` for the full annotated list and `docs/JARVIS_CREDENTIALS_SETUP.md` for provider setup details.
 
 ---
 
@@ -266,7 +265,7 @@ See `.env.example` for the full annotated list and `JARVIS_CREDENTIALS_SETUP.md`
 
 ```
 jarvis-ui/
-├─ index.html · phone.html · widget-lab.html · globe*.html · boston-map.html   # Vite entry points
+├─ index.html · phone.html · widget-lab.html · globe.html · globe-room.html   # Vite entry points
 ├─ vite.config.mjs · tsconfig*.json · package.json
 ├─ server.js                      # backend entry (agent brain, APIs, mesh)
 ├─ server/                        # backend modules
@@ -282,7 +281,7 @@ jarvis-ui/
 │  ├─ rooms/
 │  │  └─ apex/                    # APEX room + THE FORGE (forge/**)
 │  ├─ features/ · components/ · pages/ · phone/
-│  ├─ globe-room/ · boston-hologram/   # 3D rooms
+│  ├─ globe-room/                      # 3D room
 │  └─ api.ts · liveVoice.ts · …
 ├─ scripts/                       # build / test / analysis scripts
 ├─ docs/                          # deep-dive guides
@@ -295,7 +294,7 @@ The Forge lives under `src/rooms/apex/forge/` — `ForgeView.tsx` (UI), `forge-e
 
 ## Heavy assets
 
-To keep the repo lean, large binary media are **git-ignored** and not shipped: `*.mp4`, `*.glb`/`*.gltf`, `*.blend`, high-res textures under `public/globe-room/**` and `public/boston/**`, big geojson, and everything in `design/generated/**`. The **core app (Jarvis + APEX + Forge)** needs none of these. The **Globe** and **Boston** rooms will look bare without their 3D models/textures — supply them locally (drop them back into `public/`) if you want those rooms.
+To keep the repo lean, large binary media are **git-ignored** and not shipped: `*.mp4`, `*.glb`/`*.gltf`, `*.blend`, high-res textures under `public/globe-room/**`, big geojson, and everything in `design/**`. The **core app (Jarvis + APEX + Forge)** needs none of these. The **Globe** room will look bare without its 3D models/textures — supply them locally (drop them back into `public/`) if you want it.
 
 ---
 
