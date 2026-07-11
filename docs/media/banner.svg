@@ -43,30 +43,25 @@
   <text x="58" y="196" fill="url(#title)" font-size="82" font-weight="800" letter-spacing="1">JARVIS COMMAND OS</text>
 
   <!-- tagline -->
-  <text x="60" y="240" fill="#aab8c9" font-size="21">A Jarvis-style assistant — reasoning brain, layered memory, live tools,</text>
-  <text x="60" y="270" fill="#aab8c9" font-size="21">device mesh, and immersive 3D rooms. Flagship: <tspan fill="#7fe9ff" font-weight="700">THE FORGE</tspan> quant lab.</text>
+  <text x="60" y="240" fill="#aab8c9" font-size="21">One reasoning brain, a memory that compounds, and real tools —</text>
+  <text x="60" y="270" fill="#aab8c9" font-size="21">across three immersive rooms. Three rooms, one brain.</text>
 
-  <!-- room chips -->
-  <g font-size="14" font-weight="600">
-    <g transform="translate(60,296)">
-      <rect width="118" height="26" rx="13" fill="#0e2233" stroke="#22d3ee" stroke-opacity="0.5"/>
-      <text x="59" y="17" fill="#8fe6f5" text-anchor="middle">◆ THE FORGE</text>
+  <!-- room chips: the three rooms -->
+  <g font-size="14.5" font-weight="600">
+    <g transform="translate(60,294)">
+      <rect width="132" height="28" rx="14" fill="#0e2233" stroke="#22d3ee" stroke-opacity="0.6"/>
+      <text x="66" y="18" fill="#8fe6f5" text-anchor="middle">🧠 JARVIS OS</text>
     </g>
-    <g transform="translate(188,296)">
-      <rect width="92" height="26" rx="13" fill="#12182a" stroke="#3b82f6" stroke-opacity="0.5"/>
-      <text x="46" y="17" fill="#9db8ff" text-anchor="middle">APEX</text>
+    <g transform="translate(202,294)">
+      <rect width="106" height="28" rx="14" fill="#17122a" stroke="#a855f7" stroke-opacity="0.6"/>
+      <text x="53" y="18" fill="#c9a6ff" text-anchor="middle">🧬 HELIX</text>
     </g>
-    <g transform="translate(290,296)">
-      <rect width="96" height="26" rx="13" fill="#17122a" stroke="#a855f7" stroke-opacity="0.5"/>
-      <text x="48" y="17" fill="#c9a6ff" text-anchor="middle">HELIX</text>
+    <g transform="translate(318,294)">
+      <rect width="104" height="28" rx="14" fill="#12182a" stroke="#3b82f6" stroke-opacity="0.6"/>
+      <text x="52" y="18" fill="#9db8ff" text-anchor="middle">📈 APEX</text>
     </g>
-    <g transform="translate(396,296)">
-      <rect width="112" height="26" rx="13" fill="#0e2233" stroke="#2dd4bf" stroke-opacity="0.5"/>
-      <text x="56" y="17" fill="#8ff0e0" text-anchor="middle">GLOBE ROOM</text>
-    </g>
-    <g transform="translate(518,296)">
-      <rect width="124" height="26" rx="13" fill="#141a26" stroke="#4ade80" stroke-opacity="0.5"/>
-      <text x="62" y="17" fill="#9df0b8" text-anchor="middle">DEVICE MESH</text>
+    <g transform="translate(432,294)" font-size="13" font-weight="500">
+      <text x="0" y="18" fill="#5f7d95">▸ APEX flagship: <tspan fill="#7fe9ff" font-weight="700">THE FORGE</tspan> quant lab</text>
     </g>
   </g>
 
