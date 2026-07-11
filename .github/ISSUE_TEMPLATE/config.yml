@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: 💬 Questions & discussion
+    url: https://github.com/devanshagrawal0/Jarvis_/discussions
+    about: Ask a question or share an idea (not a bug or feature request)
+  - name: 🔒 Report a security issue
+    url: https://github.com/devanshagrawal0/Jarvis_/security/advisories/new
+    about: Please report vulnerabilities privately, not as public issues

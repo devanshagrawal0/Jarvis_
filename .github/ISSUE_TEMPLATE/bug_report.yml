@@ -1,0 +1,54 @@
+name: "🐛 Bug report"
+description: Report something that isn't working
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: Thanks for taking the time to file a bug! Please fill in the details below.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: A clear description of the bug, and what you expected instead.
+      placeholder: When I ... I expected ... but instead ...
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Open the ... room
+        2. Click ...
+        3. See error
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Which area?
+      options:
+        - Jarvis HUD / widgets
+        - THE FORGE (quant lab)
+        - HELIX (intelligence chamber)
+        - APEX (trading room)
+        - AI brain / agent runtime
+        - Memory / Neural Vault
+        - Device Mesh
+        - Globe room
+        - Build / setup
+        - Other
+    validations:
+      required: true
+  - type: input
+    id: env
+    attributes:
+      label: Environment
+      description: OS + Node version (e.g. "Windows 11, Node 20.11")
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs / console output
+      render: shell

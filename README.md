@@ -1,83 +1,166 @@
-# JARVIS Command OS
+<div align="center">
 
-> A local-first, AI-native **command center** for your desktop — a Jarvis-style assistant with a reasoning brain, a layered long-term memory, live browser/screen tools, device-mesh phone pairing, and a set of immersive 3D "rooms." Its flagship room is **APEX**, a trading command center whose centrepiece is **THE FORGE** — an AI-native quant strategy & bot builder with a real backtesting engine.
+<img src="./docs/media/banner.svg" alt="Jarvis Command OS" width="960" />
 
-Built with React 19 + TypeScript + Three.js on the front end, a Node.js brain/agent server on the back end, and an Electron shell for the desktop app.
+<br/>
 
----
+**A local-first, AI-native command center for your desktop — a reasoning brain, layered memory, live tools, a phone-to-laptop device mesh, and immersive 3D "rooms."**
 
-## Table of contents
+<br/>
 
-- [What is this?](#what-is-this)
-- [Feature highlights](#feature-highlights)
-- [Architecture](#architecture)
-- [The rooms](#the-rooms)
-  - [Jarvis Home / HUD](#jarvis-home--hud)
-  - [APEX — Trading Command Center](#apex--trading-command-center)
-  - [THE FORGE — quant strategy & bot builder](#the-forge--quant-strategy--bot-builder)
-  - [Other rooms](#other-rooms-globe--phone--widget-lab)
-- [How the AI brain works](#how-the-ai-brain-works)
-- [How memory works](#how-memory-works)
-- [Device Mesh (phone pairing)](#device-mesh-phone-pairing)
-- [Tech stack & dependencies](#tech-stack--dependencies)
-- [Getting started](#getting-started)
-- [Environment variables](#environment-variables)
-- [NPM scripts](#npm-scripts)
-- [Project structure](#project-structure)
-- [Heavy assets](#heavy-assets)
-- [Security & privacy](#security--privacy)
-- [Status & disclaimer](#status--disclaimer)
+![Last Commit](https://img.shields.io/github/last-commit/devanshagrawal0/Jarvis_?style=for-the-badge&color=22d3ee&labelColor=0a1120)
+![Top Language](https://img.shields.io/github/languages/top/devanshagrawal0/Jarvis_?style=for-the-badge&color=3b82f6&labelColor=0a1120)
+![Code Size](https://img.shields.io/github/languages/code-size/devanshagrawal0/Jarvis_?style=for-the-badge&color=a855f7&labelColor=0a1120)
+<br/>
+![React](https://img.shields.io/badge/React_19-20232A?style=for-the-badge&logo=react&logoColor=61DAFB)
+![TypeScript](https://img.shields.io/badge/TypeScript-3178C6?style=for-the-badge&logo=typescript&logoColor=white)
+![Node.js](https://img.shields.io/badge/Node.js-2f7d33?style=for-the-badge&logo=node.js&logoColor=white)
+![Three.js](https://img.shields.io/badge/Three.js-000000?style=for-the-badge&logo=three.js&logoColor=white)
+![Electron](https://img.shields.io/badge/Electron-2B2E3A?style=for-the-badge&logo=electron&logoColor=9FEAF9)
+![Vite](https://img.shields.io/badge/Vite-646CFF?style=for-the-badge&logo=vite&logoColor=white)
+
+</div>
 
 ---
 
-## What is this?
+## ✨ Highlights
 
-Jarvis Command OS is a personal "operating system for an AI assistant." Instead of a single chat box, it's a set of **rooms** — full-screen, mostly-3D workspaces — that share one brain (an LLM-backed agent runtime) and one memory. You talk to Jarvis from a persistent command bar; it can answer, run tools (browser, screen, files, web search, market data), remember what matters, and act across the rooms.
+- 🧠 **Tool-calling AI brain** — a ReAct agent runtime that classifies intent, filters its own toolset per turn, and can drive a browser, read your screen, search the web, hit market data, and act inside every room.
+- 🗄️ **Two-tier persistent memory** — a "Neural Vault" that survives across sessions: short-term working memory + a long-term store with a **time-decay engine**, hybrid retrieval (keyword + entity graph + vector), procedural skills, and a bi-temporal knowledge graph.
+- 🔨 **THE FORGE** — an AI-native quant lab: build a strategy as a **node graph**, backtest it on real public market data with a **no-look-ahead engine** (single-symbol *and* multi-symbol portfolio), then stress it with overfitting checks, walk-forward, Monte-Carlo, and evolutionary search.
+- 🧬 **HELIX** — an "Intelligence Chamber" that reasons across a **6-strand** knowledge model, ingests documents into a Knowledge Reservoir, cross-examines itself with a panel of **red-team agents**, and locks conclusions into a decision Vault.
+- 📈 **APEX** — a trading command center running entirely on **free public data** (so it's safe to share): live ticker, dossiers with candlesticks, news river, correlation/RRG, watchlists, and a real alert engine.
+- 🧩 **Live widget systems** — draggable, self-updating dashboard widgets in the Jarvis HUD and in HELIX (score meters, agent HUDs, strand radars, activity wires, and more).
+- 📱 **Device Mesh** — pair your phone by QR over a Cloudflare tunnel; send text/links/files and mirror screens over a WebSocket hub with WebRTC screen-share.
+- 🖥️ **Ships as a desktop app** — Electron shell, packageable for Windows & macOS. **Local-first**: nothing leaves your machine unless you wire up a cloud key.
 
-The most developed room is **APEX → THE FORGE**: a genuinely functional quant lab where you compose trading strategies as node graphs, backtest them on real public market data with a no-look-ahead engine, and stress-test them with overfitting checks, walk-forward analysis, Monte-Carlo, evolutionary optimization, and an AI "improver."
-
-Everything runs **locally**. Market data comes from free public APIs; the AI brain is pluggable (Gemini by default). No data leaves your machine unless you wire up a cloud key.
-
----
-
-## Feature highlights
-
-- 🧠 **AI brain** — Gemini-backed reasoning with an agent runtime, tool routing, and a capability engine.
-- 🗄️ **Layered memory** — a "Neural Vault" that stores facts as both human-readable files and SQLite rows, with decay, governance, and procedural (skill) memory.
-- 📈 **APEX trading room** — live market ribbon, dossiers, news river, correlation/RRG, watchlists, and a real alert engine — all from **public** data (shareable).
-- 🔨 **THE FORGE** — node-graph strategy builder, a deterministic backtest engine (single- and multi-symbol portfolio), a 6-tab analysis dock, an always-on Strategy Health rail, plus Improver / Sentinel / Darwin / Terraform / Meta-Labeler / Genesis / Oracle tools.
-- 🌐 **Immersive rooms** — a cyberpunk 3D globe room, a phone companion, and a widget lab.
-- 📱 **Device Mesh** — pair your phone via QR to send text/links/files and mirror screens.
-- 🖥️ **Desktop app** — Electron shell, packageable for Windows/macOS.
-- ☁️ **Optional Cloudflare** deploy path (Pages + Workers).
+> **Status —** an ambitious solo project, actively developed. The brain, memory, Forge engine, APEX data, HELIX, and device mesh are real and working. A few surfaces (live paper-trading, some bots) are **honestly demo-badged** in the UI while their engines are built out. Backtests use public data and modeled costs — **not financial advice.**
 
 ---
 
-## Architecture
+<div align="center">
 
-```
-┌──────────────────────────────────────────────────────────────┐
-│  FRONTEND  (Vite · React 19 · TypeScript · Three.js/R3F)     │
-│  - Multi-page: index / phone / widget-lab / globe /          │
-│    globe-room                                                │
-│  - Rooms live under src/rooms/** and src/features/**         │
-│  - Talks to the backend over /api/** (Vite proxy → :8799)    │
-└───────────────▲──────────────────────────────────────────────┘
-                │  HTTP + WebSocket (/api, /mesh, /agent)
-┌───────────────┴──────────────────────────────────────────────┐
-│  BACKEND  (Node.js · server.js + server/**)                  │
-│  - Agent runtime & tool gateway (agent-runtime.js)           │
-│  - Brain providers (server/providers/**, Gemini default)     │
-│  - Memory system (memory-*.js, neural-vault.js)              │
-│  - APEX data + DB (apex-db.js, apex-ingest.js)               │
-│  - Device mesh hub, capability engine, mission engine        │
-│  - SQLite persistence under runtime/ (git-ignored)           │
-└───────────────▲──────────────────────────────────────────────┘
-                │
-┌───────────────┴──────────────────────────────────────────────┐
-│  DESKTOP  (Electron · electron/main.cjs + preload.cjs)       │
-│  wraps the frontend + backend into a native app window.      │
-└──────────────────────────────────────────────────────────────┘
+### 🔨 THE FORGE — the flagship
+
+<img src="./docs/media/forge.svg" alt="THE FORGE — quant strategy builder" width="920" />
+
+</div>
+
+Compose a trading strategy as a **colour-coded node graph** (Universe → Signals → Entry → Exit / Sizing / Risk / Execution), then run it through a deterministic backtest engine with next-bar-open fills and modeled slippage + commission. A docked analysis area and an always-on **Strategy Health** rail turn every run into a report card.
+
+<details>
+<summary><b>Open the full Forge feature list</b></summary>
+
+<br/>
+
+**Three-panel command center**
+- **Left — Library:** searchable blocks (Universe, Signals, Filters, Risk, Sizing, Entries, Exits, Execution, Portfolio Constraints, Analytics), Quick-Start templates, and your saved projects.
+- **Center — Builder canvas:** a self-rendered node graph with a tool rail, minimap, and pan/zoom, plus a **Forms** mode to edit every field directly. Side tabs generate a **Python** code scaffold from the spec, a **Transcript** provenance log of every change, and a per-strategy **Research** pad.
+- **Right — Strategy Health rail:** a health-score gauge + checklist (data integrity, logic, backtest quality, sample size, robustness), an out-of-sample performance grid, equity/drawdown sparklines, a rule-based **Jarvis Analysis** (strengths / considerations / warnings / readiness-to-deploy), and the deep tools.
+
+**Docked analysis (7 tabs):** Backtest Results (metrics + equity curve + per-symbol contribution) · Monte-Carlo (block-bootstrap) · Parameter Heatmap (Terraform sweep) · Walk-Forward Matrix · Trade Distribution · Path Analysis · History (version timeline + A/B diff).
+
+**The engines — all real, client-side, no look-ahead:**
+| Engine | What it does |
+|---|---|
+| **Backtest** | Deterministic next-bar-open fills, modeled costs; single-symbol **and** a multi-symbol **portfolio** engine (shared cash, up to *N* concurrent positions, per-symbol contribution). |
+| **The Improver** | Recursive diagnosis tree — builds a per-trade ledger, runs testers, grows a tree of confirmed weaknesses, emits staged **action cards** you can apply and re-backtest. |
+| **Overfitting Sentinel** | Deflated Sharpe (trial-count-aware), walk-forward with embargo, parameter-jitter robustness, Monte-Carlo → a trust score. |
+| **Darwin** | Genetic algorithm that evolves the spec toward better risk-adjusted fitness. |
+| **Terraform** | 2-parameter sweep rendered as a fitness landscape / heatmap. |
+| **Meta-Labeler** | Out-of-sample (k-fold CV) logistic model that filters low-confidence trades. |
+| **Genesis** | Goal → strategy generator ("a low-drawdown momentum bot for NVDA"). |
+| **Signal Upload Studio** | Drop a `.py`/`.ipynb`, watch a staged analysis, get a derived signal with its runnable code + retrieval method stored and labeled. |
+| **Portfolio (HRP)** | Blend several strategies with hierarchical risk parity. |
+
+> **Universe:** by default a strategy backtests a ~30-name liquid large-cap basket (not a single ticker). Trim it, pick a preset (Mega-cap Tech, Index ETFs, Sectors, Semis, Dow 10, Crypto, or **All Large-cap**), or type your own.
+
+</details>
+
+---
+
+<div align="center">
+
+### 🧬 HELIX — the Intelligence Chamber
+
+<img src="./docs/media/helix.svg" alt="HELIX — Intelligence Chamber" width="920" />
+
+</div>
+
+Where Jarvis **reasons, cross-examines itself, and decides.** Knowledge is organised into **six strands** — *Evidence, Strategy, Construction, Memory, Signal, Synthesis* — each with its own freshness/decay rate. Feed documents into the **Knowledge Reservoir**, ask **The Oracle** a question and get an answer grounded in your sources (with citations and any contradictions flagged), let a panel of **red-team agents** (Skeptic, Steelman, Historian, Quant, Devil's Advocate) triangulate it, then **lock the conclusion into the Vault**. A **Workflow Studio** chains these steps, and a set of dashboard widgets (Helix Score, Contradictions, Agent HUD, Strand Radar, The Wire, Vault Preview…) keeps the chamber's state visible. HELIX can hand a thesis straight to THE FORGE.
+
+---
+
+<div align="center">
+
+### 📈 APEX — Trading Command Center
+
+<img src="./docs/media/apex.svg" alt="APEX — Trading Command Center" width="920" />
+
+</div>
+
+A shareable trading room built **only on free public data** (Finnhub, Tiingo, FRED, Marketaux, CoinGecko, SEC EDGAR, and more) — no proprietary or vendor feeds, so it's safe to demo. A live market ticker sits over a tabbed workspace: **Home** (dossiers with candlesticks, a briefing system, news river, correlation / RRG / volatility, watchlists, a real alert engine), plus **Forge, Live Markets, Portfolio, Paper Trading, Backtesting, Trading Bots, Live Testing.** A persistent **Jarvis Assistant** bar (Analyst / Trader / Quant / Research modes) can answer questions about anything on screen. APEX is also the room that hosts THE FORGE.
+
+---
+
+<div align="center">
+
+### 🧠 Jarvis Home — the HUD
+
+<img src="./docs/media/jarvis-hud.svg" alt="Jarvis Home HUD" width="920" />
+
+</div>
+
+The landing HUD and the hub for everything. A holographic command bar ("Ask Jarvis anything…") is context-aware — type a room name to enter it, or give Jarvis a task. Around the central **Jarvis Core** orb sit live **widgets**: a Module Matrix (registered capabilities), an Agent Rail (what the agents are doing right now), a Vision Feed (screen / camera / OCR), a Kalshi Pulse, a Memory panel, and the **Device Mesh** graph. Panels cover Modules, Projects, Agents, Connections, Kalshi, Vision, Memory, Devices, Co-Op, and Receipts.
+
+<details>
+<summary><b>Other surfaces — Globe Room · Phone · Widget Lab</b></summary>
+
+<br/>
+
+- **Globe Room** — a cyberpunk 3D globe workspace (Three.js / R3F). Relies on heavy 3D/texture assets that are **git-ignored** (see [Heavy assets](#-heavy-assets)); the core app needs none of them.
+- **Phone** — a companion PWA surface for the device mesh.
+- **Widget Lab** — a sandbox for building and previewing widgets.
+
+</details>
+
+---
+
+## 🏗️ Architecture
+
+```mermaid
+flowchart TD
+    subgraph FE["🖥️ Frontend — Vite · React 19 · TS · Three.js/R3F"]
+        HUD["Jarvis HUD<br/>+ widgets"]
+        APEX["APEX room"]
+        FORGE["THE FORGE"]
+        HELIX["HELIX chamber"]
+        GLOBE["Globe room"]
+    end
+
+    subgraph BE["⚙️ Backend — Node.js · server.js + server/**"]
+        AGENT["Agent runtime<br/>(ReAct loop + tool gateway)"]
+        BRAIN["Brain providers<br/>(Gemini default)"]
+        CAP["Capability engine<br/>(per-room tools)"]
+        MEM["Memory / Neural Vault"]
+        APEXDB["APEX data + ingest"]
+        MESH["Device Mesh hub"]
+    end
+
+    DESK["🪟 Electron shell<br/>main.cjs + preload.cjs"]
+    DB[("SQLite<br/>under runtime/")]
+    PHONE["📱 Paired phone (PWA)"]
+
+    FE -->|HTTP + WebSocket · /api /mesh /agent| BE
+    AGENT --> BRAIN
+    AGENT --> CAP
+    AGENT --> MEM
+    APEX --> APEXDB
+    MEM --> DB
+    APEXDB --> DB
+    MESH <-->|Cloudflare tunnel · WS · WebRTC| PHONE
+    DESK -.hosts.-> FE
+    DESK -.spawns.-> BE
 ```
 
 - **Ports:** frontend dev server `5173`, backend `8799` (Vite proxies `/api` → `8799`).
@@ -85,165 +168,112 @@ Everything runs **locally**. Market data comes from free public APIs; the AI bra
 
 ---
 
-## The rooms
-
-### Jarvis Home / HUD
-The landing HUD: an animated background, a holographic command bar ("Ask Jarvis anything…"), and the entry point to every room. Typing a room name (e.g. `apex`) opens it. The command bar is context-aware — it knows which room you're in and can act on it.
-
-### APEX — Trading Command Center
-A shareable trading room (public data only, so it can be demoed safely). Top nav, a **live market ticker**, and a tabbed workspace: **Home** (command deck — dossiers with candlesticks, a briefing system, news river, correlation / RRG / volatility, watchlists, a real alert engine), plus **Forge, Live Markets, Portfolio, Paper Trading, Backtesting, Trading Bots, Live Testing**. A persistent **Jarvis Assistant** bar at the bottom (Analyst / Trader / Quant / Research modes) can answer questions about anything on screen.
-
-### THE FORGE — quant strategy & bot builder
-The flagship. A command-center layout with three panels + a docked analysis area:
-
-**Left — Library**
-Tabs (Library / Projects / Blocks), search + filters, **Quick-Start Template** cards, and a **Strategy Blocks** palette (Universe, Signals, Filters, Risk, Position Sizing, Entries, Exits, Execution, Portfolio Constraints, Analytics) you drag onto the canvas.
-
-**Center — Builder canvas + analysis dock**
-- **Visual Builder** — the strategy *is* a colour-coded **node graph** (Universe → Signals → Entry Logic → Exit / Execution / Sizing / Risk) with a tool rail, minimap, and pan/zoom. A **Forms** mode lets you edit every field directly.
-- **Python / Transcript / Research** tabs — a read-only code scaffold generated from the spec, a provenance log of every change, and a per-strategy notes pad.
-- **Docked analysis dock (6 tabs)** — **Backtest Results** (metrics + equity curve + per-symbol contribution), **Monte-Carlo** (block-bootstrap distribution), **Parameter Heatmap** (121-cell Terraform sweep), **Walk-Forward Matrix**, **Trade Distribution**, **Path Analysis**, plus **History** (version timeline + A/B diff).
-
-**Right — Strategy Health rail**
-An always-on report card: a health-score gauge + checklist (data integrity, logic, backtest quality, sample size, robustness), an out-of-sample performance grid, mini equity/drawdown sparklines, a rule-based **Jarvis Analysis** (strengths / considerations / warnings / recommendations + readiness-to-deploy), an experiment queue, and the deep-analysis tools.
-
-**The engines (all real, client-side, no look-ahead):**
-- **Backtest engine** — deterministic, next-bar-open fills, modeled slippage + commission; **single-symbol** and a **multi-symbol portfolio** engine (shared cash, up to *N* concurrent positions, per-symbol contribution).
-- **The Improver** — a recursive diagnosis tree that builds a per-trade ledger, runs testers, grows a tree of confirmed weaknesses, and emits staged **action cards** you can apply and re-backtest.
-- **Overfitting Sentinel** — Deflated Sharpe (trial-count-aware), walk-forward with embargo, parameter-jitter robustness, Monte-Carlo → a trust score.
-- **Darwin** — a genetic algorithm that evolves the spec toward better risk-adjusted fitness.
-- **Terraform** — a 2-parameter sweep rendered as a fitness landscape / heatmap.
-- **Meta-Labeler** — an out-of-sample (k-fold CV) logistic model that filters low-confidence trades.
-- **Genesis** — goal → strategy generator ("a low-drawdown momentum bot for NVDA").
-- **Signal Upload Studio** — drop a `.py`/`.ipynb`, watch a staged analysis, get a derived signal (with its runnable code + retrieval method stored, well-labeled).
-- **Portfolio (HRP)** — blend several strategies with hierarchical risk parity.
-
-> **Universe:** by default a strategy backtests a ~30-name liquid large-cap basket (not a single ticker). Trim it, pick a preset (Mega-cap Tech, Index ETFs, Sectors, Semis, Dow 10, Crypto, or **All Large-cap**), or type your own.
-
-### Other rooms (Globe · Phone · Widget Lab)
-- **Globe Room** — a cyberpunk 3D globe workspace (Three.js / R3F).
-- **Phone** — a companion PWA surface for the device mesh.
-- **Widget Lab** — a sandbox for the widget system.
-
-> Note: the Globe room relies on heavy 3D/texture assets that are **git-ignored** (see [Heavy assets](#heavy-assets)); the core Jarvis + APEX + Forge experience needs none of them.
-
----
-
-## How the AI brain works
+## 🧠 How the AI brain works
 
 Jarvis routes every request through an **agent runtime** (`server/agent-runtime.js`):
 
-1. **Prepare** — classify intent/complexity and pick a route (conversation vs. tool-use vs. research). Some sources (e.g. the Forge) force a direct conversation route.
-2. **Provider** — call the configured LLM (Google **Gemini** by default via `GEMINI_API_KEY`; OpenAI optional). A budget cap keeps latency bounded.
-3. **Tools** — a **tool gateway** exposes capabilities (web search, browser control, screen/computer use, files, market data, memory) that the model can call.
+```mermaid
+flowchart LR
+    IN["Your request"] --> PREP["Classify intent<br/>& complexity"]
+    PREP --> ROUTE{"Route?"}
+    ROUTE -->|conversation| LLM["LLM provider<br/>(Gemini)"]
+    ROUTE -->|tool-use| TOOLS["Tool gateway<br/>(≤12 tools / turn)"]
+    ROUTE -->|research| TOOLS
+    TOOLS --> LLM
+    LLM --> ACT{"Needs another<br/>tool call?"}
+    ACT -->|yes, up to N loops| TOOLS
+    ACT -->|no| OUT["Stream answer → UI"]
+    CAP["Capability engine<br/>registers room tools"] -.-> TOOLS
+    MEM["Recall relevant<br/>memories"] -.-> PREP
+    OUT --> EXTRACT["Extract durable<br/>facts → memory"]
+```
+
+1. **Prepare** — classify intent/complexity and pick a route (conversation vs. tool-use vs. research). Some surfaces (e.g. the Forge) force a direct conversation route for composing.
+2. **Provider** — call the configured LLM (Google **Gemini** by default via `GEMINI_API_KEY`; OpenAI optional). A latency budget keeps turns bounded.
+3. **Tools** — a **tool gateway** exposes capabilities (web search, browser control, screen/computer use, files, market data, memory); the model gets the ~12 most relevant tools for the turn.
 4. **Capability engine** — registers each room's tools so Jarvis can act on what you're looking at (e.g. `apex_forge`, `apex_report`).
-5. **Evidence gate** — the assistant is discouraged from asserting unverified facts; generative UI surfaces (like the Forge) bypass this gate for composing.
-
-Everything is streamed back to the UI over `/api/**` (+ WebSocket for live updates).
+5. **Loop & recall** — a ReAct-style multi-turn loop lets Jarvis chain tool calls; relevant memories are pulled into the prompt and new facts are extracted after the turn.
 
 ---
 
-## How memory works
+## 🗄️ How memory works
 
-Jarvis has a layered, persistent memory ("Neural Vault / MemoryOS") stored **both** as human-readable files and SQLite rows under `runtime/` (git-ignored):
+Jarvis has a two-tier, persistent memory ("Neural Vault / MemoryOS") stored as SQLite under `runtime/` (git-ignored):
 
-- **Capture** — `memory-extractor.js` pulls durable facts out of conversations and actions.
-- **Store** — `memory-store.js` / `neural-vault.js` write each memory as an object (file + row) with metadata (type, source, importance).
-- **Types** — *user* (who you are), *feedback* (how Jarvis should work), *project* (ongoing work), *reference* (links/resources), plus **procedural memory** (`procedural-memory.js`) for learned skills.
-- **Decay** — `memory-decay.js` ages memories so stale ones fade and important ones persist.
-- **Governance** — `memory-governance.js` deduplicates, resolves conflicts, and keeps the store honest.
-- **Recall** — memories relevant to the current context are surfaced back into the brain's prompt, so Jarvis remembers across sessions.
+```mermaid
+flowchart TD
+    TURN["Conversation / action"] --> EX["Extractor<br/>pulls durable facts"]
+    EX --> ST["Store as memory object<br/>(type · source · importance)"]
+    ST --> SHORT[("Short-term<br/>working memory")]
+    ST --> LONG[("Long-term<br/>Neural Vault")]
+    LONG --> DECAY["Decay engine<br/>priority = importance × e^(−age / half-life)"]
+    LONG --> GOV["Governance<br/>dedupe · resolve conflicts"]
+    QUERY["New context"] --> RECALL["Hybrid retrieval"]
+    RECALL --> KW["Keyword / BM25"]
+    RECALL --> GRAPH["Entity graph"]
+    RECALL --> VEC["Vector similarity"]
+    KW & GRAPH & VEC --> FUSE["Rank-fuse → top memories"]
+    LONG --> RECALL
+    FUSE --> BRAIN["Back into the brain's prompt"]
+```
 
-Query endpoints: `/api/memory-os/v4/query`, `/api/memory-os/v4/agents`. Files live under `runtime/neural_vault/memory_os/`.
+- **Types** — *user* (who you are), *feedback* (how Jarvis should work), *project* (ongoing work), *reference* (links), plus **procedural memory** for learned skills (never expires).
+- **Decay** — each memory kind ages on its own half-life, so stale facts fade while important ones persist.
+- **Recall** — three retrieval signals (keyword, entity graph, vector) are rank-fused so the most relevant memories resurface across sessions.
 
-> Because memory is personal, the entire `runtime/` directory is **never committed**.
+> Because memory is personal, the entire `runtime/` directory is **never committed.**
 
 ---
 
-## Device Mesh (phone pairing)
+## 📱 Device Mesh (phone pairing)
 
 1. Start Jarvis on the laptop, open the **Devices** panel, click **Generate QR**.
-2. Scan on your phone and pair. Use `/mesh` on the phone to send text, links, files/photos, heartbeats, and screen-preview requests.
+2. Scan on your phone and pair (256-bit pairing). Use `/mesh` on the phone to send text, links, files/photos, heartbeats, and screen-preview requests.
 3. Phone QR links must use LAN / Tailscale / Cloudflare — **not** `localhost`.
 
-Repair/health routes: `GET /mesh/health`, `GET /mesh/pair?code=…`, `POST /mesh/api/inbox/{text,link,upload}`, `POST /mesh/api/self-test`.
+Health/repair routes: `GET /mesh/health`, `GET /mesh/pair?code=…`, `POST /mesh/api/inbox/{text,link,upload}`, `POST /mesh/api/self-test`.
 
 ---
 
-## Tech stack & dependencies
-
-**Frontend:** React 19, TypeScript, Vite 7, Three.js + @react-three/fiber/drei, Framer Motion, Zustand, cmdk, custom SVG charts, lucide-react icons.
-
-**Backend:** Node.js (ES modules + CommonJS mix), `better-sqlite3`, `ws` (WebSocket), `express`-style routing in `server.js`, Playwright (browser tools), provider SDKs (Google Generative AI, OpenAI).
-
-**Desktop:** Electron + electron-builder.
-
-**Tooling:** Playwright (visual + feature tests), Wrangler (optional Cloudflare), TypeScript, ESLint.
-
-> Full lists are in `package.json` (`dependencies` / `devDependencies`). Install pulls everything.
-
----
-
-## Getting started
-
-### Prerequisites
-- **Node.js 20+** and npm
-- Windows / macOS / Linux (desktop packaging is per-OS)
-- (Optional) a **Gemini API key** for the brain, and any [APEX data keys](#environment-variables) you want
-
-### Install & run
+## 🚀 Quick start
 
 ```bash
 # 1. install
 npm install
 
-# 2. configure keys (optional but recommended)
-cp .env.example .env        # then fill in the keys you have
+# 2. configure keys (optional — the app boots with none)
+cp .env.example .env        # then fill in whichever keys you have
 
-# 3a. run the web app (frontend + backend)
+# 3a. run the web app (two terminals)
 npm start                   # backend  → http://127.0.0.1:8799
-npm run dev                 # frontend → http://127.0.0.1:5173  (in a second terminal)
+npm run dev                 # frontend → http://127.0.0.1:5173
 
-# 3b. OR run the desktop app
+# 3b. …OR run the desktop app
 npm run app:dev
 ```
 
 Then open **http://127.0.0.1:5173** and type a room name (e.g. `apex`) in the command bar.
 
-### Build
+<details>
+<summary><b>⚙️ Build, desktop packaging & Cloudflare</b></summary>
+
+<br/>
 
 ```bash
 npm run build               # production web build (dist/)
 npm run app:build:win       # Windows portable desktop app
 npm run app:build:mac       # macOS dmg/zip (on macOS)
+npm run cf:build && npm run cf:deploy   # optional Cloudflare deploy
 ```
 
-### Cloudflare (optional)
+</details>
 
-```bash
-npm run cf:build && npm run cf:deploy
-```
+<details>
+<summary><b>📋 Prerequisites & NPM scripts</b></summary>
 
----
+<br/>
 
-## Environment variables
-
-Copy `.env.example` → `.env`. **Nothing is required to boot** — the app degrades gracefully and many data sources need no key. Highlights:
-
-| Variable | Purpose |
-|---|---|
-| `GEMINI_API_KEY` | Jarvis reasoning brain (primary) |
-| `OPENAI_API_KEY` | optional alternate model |
-| `APEX_FINNHUB_KEY`, `APEX_TIINGO_KEY`, `APEX_FRED_KEY`, `APEX_MARKETAUX_KEY`, `APEX_ALPHAVANTAGE_KEY`, `APEX_COINGECKO_KEY` | APEX market data (all free tiers) |
-| `BRAVE_SEARCH_API_KEY`, `EXA_API_KEY`, `NEWS_API_KEY` | web/news research tools |
-| `GITHUB_TOKEN`, `FIGMA_ACCESS_TOKEN`, `GOOGLE_*`, `INSTAGRAM_*`, `HIGGSFIELD_API_KEY` | optional integrations |
-| `KALSHI_API_KEY_ID`, `KALSHI_PRIVATE_KEY` | Kalshi event-contract trading (optional) |
-
-See `.env.example` for the full annotated list and `docs/JARVIS_CREDENTIALS_SETUP.md` for provider setup details.
-
----
-
-## NPM scripts
+**Prerequisites:** Node.js 20+ and npm · Windows / macOS / Linux · (optional) a Gemini key for the brain and any APEX data keys you want.
 
 | Script | What it does |
 |---|---|
@@ -254,14 +284,49 @@ See `.env.example` for the full annotated list and `docs/JARVIS_CREDENTIALS_SETU
 | `npm run app:dev` | run the Electron desktop app |
 | `npm run app:build:win` / `:mac` | package the desktop app |
 | `npm run test` | full suite (check + backend + feature tests) |
-| `npm run test:backend` / `test:feature` | targeted test suites |
 | `npm run cf:deploy` | build + deploy to Cloudflare |
 
 (See `package.json` for the complete list, including memory-OS and device-mesh test/repair scripts.)
 
+</details>
+
 ---
 
-## Project structure
+## ⚙️ Configuration (environment variables)
+
+Copy `.env.example` → `.env`. **Nothing is required to boot** — the app degrades gracefully and many data sources need no key.
+
+<details>
+<summary><b>Show the environment-variable table</b></summary>
+
+<br/>
+
+| Variable | Purpose |
+|---|---|
+| `GEMINI_API_KEY` | Jarvis reasoning brain (primary) |
+| `OPENAI_API_KEY` | optional alternate model |
+| `APEX_FINNHUB_KEY`, `APEX_TIINGO_KEY`, `APEX_FRED_KEY`, `APEX_MARKETAUX_KEY`, `APEX_ALPHAVANTAGE_KEY`, `APEX_COINGECKO_KEY` | APEX market data (all free tiers) |
+| `BRAVE_SEARCH_API_KEY`, `EXA_API_KEY`, `NEWS_API_KEY` | web/news research tools |
+| `GITHUB_TOKEN`, `FIGMA_ACCESS_TOKEN`, `GOOGLE_*`, `INSTAGRAM_*`, `HIGGSFIELD_API_KEY` | optional integrations |
+| `KALSHI_API_KEY_ID`, `KALSHI_PRIVATE_KEY` | Kalshi event-contract data (optional) |
+
+See `.env.example` for the full annotated list and [`docs/JARVIS_CREDENTIALS_SETUP.md`](docs/JARVIS_CREDENTIALS_SETUP.md) for provider setup.
+
+</details>
+
+---
+
+## 🧰 Tech stack
+
+**Frontend:** React 19 · TypeScript · Vite 7 · Three.js + @react-three/fiber/drei · Framer Motion · Zustand · cmdk · custom SVG charts · lucide-react.
+**Backend:** Node.js (ESM + CommonJS) · `better-sqlite3` · `ws` (WebSocket) · Playwright (browser tools) · provider SDKs (Google Generative AI, OpenAI).
+**Desktop:** Electron + electron-builder. **Tooling:** Playwright tests · Wrangler (optional Cloudflare) · TypeScript · ESLint.
+
+> Full lists are in `package.json`.
+
+---
+
+## 📁 Project structure
 
 ```
 jarvis-ui/
@@ -269,43 +334,44 @@ jarvis-ui/
 ├─ vite.config.mjs · tsconfig*.json · package.json
 ├─ server.js                      # backend entry (agent brain, APIs, mesh)
 ├─ server/                        # backend modules
-│  ├─ agent-runtime.js · tool-gateway.js · capability-engine.js
-│  ├─ providers/                  # LLM providers (Gemini, …)
-│  ├─ memory-*.js · neural-vault.js · procedural-memory.js
-│  ├─ apex-db.js · apex-ingest.js # APEX market data + storage
+│  ├─ agent-runtime.js · capability-engine.js · providers/   # brain + tools
+│  ├─ neural-vault.js · memory-*.js · procedural-memory.js   # memory
+│  ├─ apex-db.js · apex-ingest.js                            # APEX market data
 │  └─ mesh-hub.js · mission-engine.js · …
 ├─ electron/                      # main.cjs + preload.cjs (desktop shell)
-├─ public/                        # static assets (icons, manifests, apex bg, …)
+├─ public/                        # static assets (icons, manifests, room bg)
 ├─ src/
-│  ├─ main.tsx · App.tsx          # app roots
+│  ├─ SimpleApp.tsx               # Jarvis HUD + widget system
 │  ├─ rooms/
-│  │  └─ apex/                    # APEX room + THE FORGE (forge/**)
-│  ├─ features/ · components/ · pages/ · phone/
-│  ├─ globe-room/                      # 3D room
-│  └─ api.ts · liveVoice.ts · …
+│  │  ├─ apex/                    # APEX room + THE FORGE (forge/**)
+│  │  ├─ HelixRoom.tsx · helix/   # HELIX chamber + widgets
+│  │  └─ ApexRoom.tsx
+│  ├─ features/                   # memory-os, task-to-skill, local-file-access
+│  ├─ globe-room/ · phone/ · components/
+│  └─ api.ts · …
 ├─ scripts/                       # build / test / analysis scripts
-├─ docs/                          # deep-dive guides
+├─ docs/                          # deep-dive guides + media/ (README visuals)
 └─ .env.example · .gitignore
 ```
 
-The Forge lives under `src/rooms/apex/forge/` — `ForgeView.tsx` (UI), `forge-engine.ts` (backtest engine), `ForgeDock.tsx` / `ForgeGraph.tsx` / `ForgeStudio.tsx`, and the `improver/` engines (sentinel, darwin, terraform, meta, genesis, analyze…).
+The Forge lives under `src/rooms/apex/forge/` — `ForgeView.tsx` (UI), `forge-engine.ts` (backtest engine), `ForgeDock.tsx` / `ForgeStudio.tsx`, `forge-versions.ts`, and the `improver/` engines (sentinel, darwin, terraform, meta, genesis, analyze…).
 
 ---
 
-## Heavy assets
+## 🖼️ Heavy assets
 
-To keep the repo lean, large binary media are **git-ignored** and not shipped: `*.mp4`, `*.glb`/`*.gltf`, `*.blend`, high-res textures under `public/globe-room/**`, big geojson, and everything in `design/**`. The **core app (Jarvis + APEX + Forge)** needs none of these. The **Globe** room will look bare without its 3D models/textures — supply them locally (drop them back into `public/`) if you want it.
+To keep the repo lean, large binary media are **git-ignored** and not shipped: `*.mp4`, `*.glb`/`*.gltf`, `*.blend`, high-res textures under `public/globe-room/**`, big geojson, and everything in `design/**`. The **core app (Jarvis + APEX + Forge + HELIX)** needs none of these. The **Globe** room will look bare without its 3D models/textures — drop them back into `public/` locally if you want it.
 
 ---
 
-## Security & privacy
+## 🔒 Security & privacy
 
-- **No secrets are committed.** `.env`, `runtime/` (memory, DBs, screen captures), `*.dpapi`, and credential JSON are all git-ignored. All API keys are read from `process.env` — none are hardcoded.
+- **No secrets are committed.** `.env`, `runtime/` (memory, DBs, screen captures), `*.dpapi`, and credential JSON are all git-ignored. Every API key is read from `process.env` — none are hardcoded.
 - **Local-first.** Data lives on your machine under `runtime/`. Market data is fetched from public APIs; nothing is sent to a third party unless you configure a cloud key.
 - If you fork/deploy this, **rotate any keys** and keep them in `.env` or your platform's secret store.
 
 ---
 
-## Status & disclaimer
+## 📄 Status & disclaimer
 
-This is an ambitious personal project — some rooms/features are polished, others are experimental. **THE FORGE is not financial advice.** Backtests use public data and modeled costs; past performance says nothing about the future. Do your own research before risking real money.
+An ambitious personal project — some rooms are polished, others experimental (and demo-badged in the UI where an engine is still being built). **THE FORGE and APEX are not financial advice.** Backtests use public data and modeled costs; past performance says nothing about the future. Do your own research before risking real money.

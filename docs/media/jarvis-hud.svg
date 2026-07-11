@@ -1,0 +1,102 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 580" font-family="'Segoe UI',Roboto,Helvetica,Arial,sans-serif">
+  <defs>
+    <radialGradient id="jbg" cx="0.5" cy="0.42" r="0.75"><stop offset="0" stop-color="#0a1220"/><stop offset="1" stop-color="#04070d"/></radialGradient>
+    <linearGradient id="jw" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#0d1826"/><stop offset="1" stop-color="#0a1420"/></linearGradient>
+    <radialGradient id="corecore" cx="0.5" cy="0.5" r="0.5"><stop offset="0" stop-color="#22d3ee" stop-opacity="0.9"/><stop offset="1" stop-color="#22d3ee" stop-opacity="0"/></radialGradient>
+    <pattern id="jgrid" width="36" height="36" patternUnits="userSpaceOnUse"><path d="M36 0H0V36" fill="none" stroke="#123049" stroke-opacity="0.25" stroke-width="1"/></pattern>
+  </defs>
+  <rect width="1000" height="580" fill="url(#jbg)"/>
+  <rect width="1000" height="580" fill="url(#jgrid)"/>
+
+  <!-- top bar -->
+  <text x="28" y="38" fill="#e8fbff" font-size="17" font-weight="800" letter-spacing="1">JARVIS</text>
+  <text x="118" y="38" fill="#5f7d95" font-size="12">Home HUD</text>
+  <g font-size="10.5" fill="#6f8aa0">
+    <rect x="360" y="22" width="280" height="24" rx="12" fill="#0b1622" stroke="#22303f"/>
+    <text x="378" y="38" fill="#5f7d95">Ask Jarvis anything…  “open apex”</text>
+    <circle cx="622" cy="34" r="4" fill="#22d3ee"/>
+  </g>
+  <g font-size="10"><rect x="908" y="22" width="80" height="24" rx="12" fill="#0e2233" stroke="#22d3ee" stroke-opacity="0.4"/><text x="948" y="38" text-anchor="middle" fill="#8fe6f5">◉ online</text></g>
+
+  <!-- module matrix (left) -->
+  <rect x="20" y="64" width="228" height="220" rx="10" fill="url(#jw)" stroke="#16283c"/>
+  <text x="36" y="86" fill="#9fb4c9" font-size="11" letter-spacing="1.5" font-weight="600">MODULE MATRIX</text>
+  <g font-size="9.5">
+    <g fill="#0e1c2b" stroke="#22303f">
+      <rect x="34" y="96" width="62" height="40" rx="7"/><rect x="100" y="96" width="62" height="40" rx="7"/><rect x="166" y="96" width="62" height="40" rx="7"/>
+      <rect x="34" y="140" width="62" height="40" rx="7"/><rect x="100" y="140" width="62" height="40" rx="7"/><rect x="166" y="140" width="62" height="40" rx="7"/>
+      <rect x="34" y="184" width="62" height="40" rx="7"/><rect x="100" y="184" width="62" height="40" rx="7"/><rect x="166" y="184" width="62" height="40" rx="7"/>
+    </g>
+    <g fill="#8fb8d4" text-anchor="middle">
+      <text x="65" y="120">Brain</text><text x="131" y="120">Memory</text><text x="197" y="120">Mesh</text>
+      <text x="65" y="164">Vision</text><text x="131" y="164">Files</text><text x="197" y="164">Web</text>
+      <text x="65" y="208">Tasks</text><text x="131" y="208">Skills</text><text x="197" y="208">Voice</text>
+    </g>
+    <g fill="#22d3ee"><circle cx="42" cy="104" r="2.5"/><circle cx="108" cy="104" r="2.5"/><circle cx="174" cy="104" r="2.5"/><circle cx="42" cy="148" r="2.5"/><circle cx="108" cy="148" r="2.5"/><circle cx="42" cy="192" r="2.5"/><circle cx="108" cy="192" r="2.5"/></g>
+  </g>
+  <text x="36" y="248" fill="#5f7d95" font-size="9.5">Modules · Projects · Connections · Receipts</text>
+  <text x="36" y="268" fill="#4ade80" font-size="10">● 7 modules registered · all healthy</text>
+
+  <!-- CENTER: Jarvis core orb -->
+  <circle cx="500" cy="200" r="120" fill="url(#corecore)" opacity="0.5"/>
+  <circle cx="500" cy="200" r="92" fill="none" stroke="#173a52" stroke-width="1.5"/>
+  <circle cx="500" cy="200" r="66" fill="none" stroke="#1f5470" stroke-width="1.5" stroke-dasharray="4 8"/>
+  <circle cx="500" cy="200" r="40" fill="none" stroke="#22d3ee" stroke-width="1.5" stroke-opacity="0.8"/>
+  <circle cx="500" cy="200" r="14" fill="#22d3ee" fill-opacity="0.9"/>
+  <g stroke="#5b9dff" stroke-width="1.4" opacity="0.7"><path d="M408 200 H460 M540 200 H592 M500 108 V148 M500 252 V292"/></g>
+  <g fill="#7fe9ff"><circle cx="540" cy="200" r="3.5"/><circle cx="460" cy="200" r="3.5"/><circle cx="500" cy="160" r="3.5"/><circle cx="500" cy="240" r="3.5"/><circle cx="535" cy="165" r="2.5"/><circle cx="465" cy="235" r="2.5"/></g>
+  <text x="500" y="336" text-anchor="middle" fill="#8fe6f5" font-size="12" font-weight="600">JARVIS CORE</text>
+  <text x="500" y="354" text-anchor="middle" fill="#5f7d95" font-size="10">reasoning brain · layered memory · live tools</text>
+
+  <!-- Kalshi pulse (right) -->
+  <rect x="752" y="64" width="228" height="140" rx="10" fill="url(#jw)" stroke="#16283c"/>
+  <text x="768" y="86" fill="#9fb4c9" font-size="11" letter-spacing="1.5" font-weight="600">KALSHI PULSE</text>
+  <path d="M768 170 L 792 160 L 816 164 L 840 150 L 864 154 L 888 138 L 912 144 L 936 128 L 960 134" fill="none" stroke="#4ade80" stroke-width="2"/>
+  <g font-size="10"><text x="768" y="108" fill="#6f8aa0">Fed cut in July?</text><text x="936" y="108" fill="#4ade80" text-anchor="end">62¢</text>
+    <text x="768" y="126" fill="#6f8aa0">S&amp;P &gt; 5800 EOM?</text><text x="936" y="126" fill="#e6c88f" text-anchor="end">48¢</text></g>
+
+  <!-- Vision feed (right) -->
+  <rect x="752" y="216" width="228" height="140" rx="10" fill="url(#jw)" stroke="#16283c"/>
+  <text x="768" y="238" fill="#9fb4c9" font-size="11" letter-spacing="1.5" font-weight="600">VISION FEED</text>
+  <rect x="768" y="248" width="196" height="86" rx="6" fill="#06101a" stroke="#16283c"/>
+  <g stroke="#22d3ee" stroke-width="1.4" fill="none" opacity="0.7"><rect x="800" y="266" width="60" height="50" rx="4"/><path d="M792 258 h10 M792 258 v10 M932 258 h-10 M932 258 v10"/></g>
+  <text x="830" y="330" text-anchor="middle" fill="#5f7d95" font-size="9">screen · camera · OCR</text>
+  <circle cx="775" cy="230" r="3" fill="#f0607d"/>
+
+  <!-- Agent rail (bottom-left) -->
+  <rect x="20" y="300" width="360" height="264" rx="10" fill="url(#jw)" stroke="#16283c"/>
+  <text x="36" y="322" fill="#9fb4c9" font-size="11" letter-spacing="1.5" font-weight="600">AGENT RAIL</text>
+  <g font-size="10.5">
+    <rect x="34" y="332" width="332" height="40" rx="8" fill="#0b1826" stroke="#22303f"/>
+    <circle cx="52" cy="352" r="6" fill="#4ade80"/><text x="68" y="349" fill="#cfe0ef">Browser Control Agent</text><text x="68" y="363" fill="#5f7d95" font-size="9">Playwright · navigating finviz.com</text><text x="352" y="356" text-anchor="end" fill="#4ade80" font-size="9">running</text>
+    <rect x="34" y="378" width="332" height="40" rx="8" fill="#0b1826" stroke="#22303f"/>
+    <circle cx="52" cy="398" r="6" fill="#22d3ee"/><text x="68" y="395" fill="#cfe0ef">Device Mesh Agent</text><text x="68" y="409" fill="#5f7d95" font-size="9">2 nodes paired · relaying inbox</text><text x="352" y="402" text-anchor="end" fill="#22d3ee" font-size="9">idle</text>
+    <rect x="34" y="424" width="332" height="40" rx="8" fill="#0b1826" stroke="#22303f"/>
+    <circle cx="52" cy="444" r="6" fill="#a855f7"/><text x="68" y="441" fill="#cfe0ef">Memory Manager Agent</text><text x="68" y="455" fill="#5f7d95" font-size="9">extracting facts from last turn</text><text x="352" y="448" text-anchor="end" fill="#a855f7" font-size="9">writing</text>
+  </g>
+  <line x1="36" y1="480" x2="364" y2="480" stroke="#16283c"/>
+  <text x="36" y="502" fill="#9fb4c9" font-size="10.5" font-weight="600">Memory</text>
+  <g font-size="9.5" fill="#5f7d95"><text x="36" y="520">user · feedback · project · reference · procedural</text>
+    <text x="36" y="538" fill="#8fb8d4">238 memories · decay engine active · hybrid recall</text>
+    <text x="36" y="556" fill="#4ade80">● Neural Vault synced</text></g>
+
+  <!-- Device Mesh (bottom-center/right) -->
+  <rect x="392" y="376" width="588" height="188" rx="10" fill="url(#jw)" stroke="#16283c"/>
+  <text x="408" y="398" fill="#9fb4c9" font-size="11" letter-spacing="1.5" font-weight="600">DEVICE MESH</text>
+  <text x="500" y="398" fill="#5f7d95" font-size="10">Cloudflare tunnel · WebSocket hub · WebRTC screen-share</text>
+  <!-- mesh graph -->
+  <g stroke="#2b5378" stroke-width="1.6" opacity="0.8">
+    <line x1="686" y1="480" x2="520" y2="440"/><line x1="686" y1="480" x2="560" y2="520"/><line x1="686" y1="480" x2="820" y2="435"/><line x1="686" y1="480" x2="860" y2="510"/><line x1="686" y1="480" x2="700" y2="546"/>
+  </g>
+  <g>
+    <circle cx="686" cy="480" r="26" fill="#0e2233" stroke="#22d3ee"/><text x="686" y="478" text-anchor="middle" fill="#8fe6f5" font-size="9">laptop</text><text x="686" y="490" text-anchor="middle" fill="#5f7d95" font-size="8">hub</text>
+    <circle cx="520" cy="440" r="18" fill="#0b1826" stroke="#4ade80"/><text x="520" y="443" text-anchor="middle" fill="#9df0b8" font-size="8">phone</text>
+    <circle cx="560" cy="520" r="16" fill="#0b1826" stroke="#7f95c9"/><text x="560" y="523" text-anchor="middle" fill="#aeb8d9" font-size="8">tablet</text>
+    <circle cx="820" cy="435" r="16" fill="#0b1826" stroke="#a855f7"/><text x="820" y="438" text-anchor="middle" fill="#c9a6ff" font-size="8">pi</text>
+    <circle cx="860" cy="510" r="16" fill="#0b1826" stroke="#e6c88f"/><text x="860" y="513" text-anchor="middle" fill="#e6c88f" font-size="8">tv</text>
+    <circle cx="700" cy="546" r="15" fill="#0b1826" stroke="#4ade80"/><text x="700" y="549" text-anchor="middle" fill="#9df0b8" font-size="8">phone2</text>
+  </g>
+  <g font-size="9.5"><rect x="408" y="412" width="120" height="20" rx="10" fill="#10261c" stroke="#4ade80" stroke-opacity="0.4"/><text x="468" y="426" text-anchor="middle" fill="#9df0b8">◉ 6 nodes online</text>
+    <rect x="408" y="438" width="120" height="20" rx="10" fill="#0e2233" stroke="#22d3ee" stroke-opacity="0.4"/><text x="468" y="452" text-anchor="middle" fill="#8fe6f5">⇅ inbox: 3 items</text>
+    <rect x="408" y="464" width="120" height="20" rx="10" fill="#1a1226" stroke="#a855f7" stroke-opacity="0.4"/><text x="468" y="478" text-anchor="middle" fill="#c9a6ff">◈ 256-bit paired</text></g>
+</svg>

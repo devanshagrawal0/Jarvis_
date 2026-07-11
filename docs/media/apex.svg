@@ -1,0 +1,129 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 580" font-family="'Segoe UI',Roboto,Helvetica,Arial,sans-serif">
+  <defs>
+    <linearGradient id="abg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#050a10"/><stop offset="1" stop-color="#030609"/></linearGradient>
+    <linearGradient id="apanel" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#0b141f"/><stop offset="1" stop-color="#08111a"/></linearGradient>
+    <linearGradient id="acurvefill" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#4ade80" stop-opacity="0.28"/><stop offset="1" stop-color="#4ade80" stop-opacity="0"/></linearGradient>
+  </defs>
+  <rect width="1000" height="580" fill="url(#abg)"/>
+
+  <!-- top nav -->
+  <rect x="0" y="0" width="1000" height="40" fill="#0a1420"/>
+  <circle cx="24" cy="20" r="6" fill="#3b82f6"/>
+  <text x="40" y="25" fill="#dbe9ff" font-size="15" font-weight="700">APEX</text>
+  <g font-size="11" fill="#6f8aa0">
+    <text x="110" y="25" fill="#9db8ff">Home</text><text x="168" y="25">Forge</text><text x="220" y="25">Live Markets</text>
+    <text x="316" y="25">Portfolio</text><text x="392" y="25">Paper</text><text x="446" y="25">Backtesting</text><text x="540" y="25">Bots</text>
+  </g>
+  <g font-size="10.5"><rect x="880" y="9" width="104" height="22" rx="11" fill="#0e2233" stroke="#22d3ee" stroke-opacity="0.4"/><text x="932" y="24" text-anchor="middle" fill="#8fe6f5">◉ Analyst mode</text></g>
+
+  <!-- live ticker ribbon -->
+  <rect x="0" y="40" width="1000" height="28" fill="#070f18"/>
+  <g font-size="11" font-weight="600">
+    <text x="16" y="59" fill="#9fb4c9">AAPL</text><text x="58" y="59" fill="#4ade80">228.4 ▲0.8%</text>
+    <text x="150" y="59" fill="#9fb4c9">NVDA</text><text x="196" y="59" fill="#4ade80">142.1 ▲2.1%</text>
+    <text x="292" y="59" fill="#9fb4c9">MSFT</text><text x="338" y="59" fill="#f0607d">431.2 ▼0.3%</text>
+    <text x="432" y="59" fill="#9fb4c9">TSLA</text><text x="478" y="59" fill="#4ade80">251.9 ▲1.4%</text>
+    <text x="572" y="59" fill="#9fb4c9">SPY</text><text x="610" y="59" fill="#4ade80">571.3 ▲0.4%</text>
+    <text x="700" y="59" fill="#9fb4c9">BTC</text><text x="738" y="59" fill="#f0607d">61,204 ▼1.1%</text>
+    <text x="856" y="59" fill="#9fb4c9">VIX</text><text x="892" y="59" fill="#e6c88f">14.2</text>
+  </g>
+
+  <!-- LEFT: dossier + candlesticks -->
+  <rect x="12" y="80" width="470" height="300" rx="10" fill="url(#apanel)" stroke="#16283c"/>
+  <text x="28" y="104" fill="#dbe9ff" font-size="15" font-weight="700">NVDA</text>
+  <text x="76" y="104" fill="#6f8aa0" font-size="11">NVIDIA Corp · Semis</text>
+  <text x="360" y="100" fill="#4ade80" font-size="16" font-weight="700">142.10</text>
+  <text x="360" y="116" fill="#4ade80" font-size="10">▲ 2.94 (2.11%)</text>
+  <!-- candlesticks -->
+  <g stroke-width="6">
+    <g stroke="#4ade80"><line x1="40" y1="150" x2="40" y2="230"/><line x1="72" y1="160" x2="72" y2="240"/><line x1="168" y1="150" x2="168" y2="210"/><line x1="200" y1="140" x2="200" y2="205"/><line x1="264" y1="160" x2="264" y2="215"/><line x1="360" y1="135" x2="360" y2="195"/><line x1="392" y1="150" x2="392" y2="200"/></g>
+    <g stroke="#f0607d"><line x1="104" y1="165" x2="104" y2="250"/><line x1="136" y1="175" x2="136" y2="255"/><line x1="232" y1="150" x2="232" y2="235"/><line x1="296" y1="170" x2="296" y2="245"/><line x1="328" y1="160" x2="328" y2="230"/><line x1="424" y1="145" x2="424" y2="215"/></g>
+  </g>
+  <g stroke-width="1.4" opacity="0.6">
+    <g stroke="#4ade80"><line x1="40" y1="140" x2="40" y2="240"/><line x1="72" y1="150" x2="72" y2="252"/></g>
+    <g stroke="#f0607d"><line x1="104" y1="155" x2="104" y2="262"/></g>
+  </g>
+  <line x1="28" y1="286" x2="466" y2="286" stroke="#16283c"/>
+  <g font-size="10.5">
+    <text x="28" y="308" fill="#6f8aa0">Mkt Cap</text><text x="28" y="323" fill="#cfe0ef" font-weight="600">3.48T</text>
+    <text x="128" y="308" fill="#6f8aa0">P/E</text><text x="128" y="323" fill="#cfe0ef" font-weight="600">52.1</text>
+    <text x="210" y="308" fill="#6f8aa0">52w Range</text><text x="210" y="323" fill="#cfe0ef" font-weight="600">39 — 153</text>
+    <text x="340" y="308" fill="#6f8aa0">RVOL</text><text x="340" y="323" fill="#4ade80" font-weight="600">1.9×</text>
+    <text x="420" y="308" fill="#6f8aa0">Beta</text><text x="420" y="323" fill="#cfe0ef" font-weight="600">1.7</text>
+  </g>
+  <g font-size="10">
+    <text x="28" y="352" fill="#6f8aa0">Analyst briefing</text>
+    <text x="28" y="370" fill="#aab8c9">Momentum intact; RVOL elevated into earnings. Watch 145 resistance.</text>
+  </g>
+
+  <!-- RIGHT-TOP: correlation / RRG -->
+  <rect x="492" y="80" width="496" height="182" rx="10" fill="url(#apanel)" stroke="#16283c"/>
+  <text x="508" y="102" fill="#9fb4c9" font-size="12" letter-spacing="1" font-weight="600">RELATIVE ROTATION</text>
+  <!-- RRG quadrants -->
+  <g transform="translate(508,112)">
+    <rect x="0" y="0" width="200" height="132" rx="6" fill="#0a1420" stroke="#16283c"/>
+    <line x1="100" y1="0" x2="100" y2="132" stroke="#22303f"/><line x1="0" y1="66" x2="200" y2="66" stroke="#22303f"/>
+    <text x="6" y="14" fill="#3a5a4a" font-size="8">Improving</text><text x="150" y="14" fill="#3a5a5a" font-size="8">Leading</text>
+    <text x="6" y="128" fill="#5a3a3a" font-size="8">Lagging</text><text x="146" y="128" fill="#5a4a3a" font-size="8">Weakening</text>
+    <circle cx="150" cy="40" r="5" fill="#4ade80"/><text x="158" y="43" fill="#9df0b8" font-size="8">Semis</text>
+    <circle cx="70" cy="34" r="5" fill="#22d3ee"/><text x="40" y="30" fill="#8fe6f5" font-size="8">Tech</text>
+    <circle cx="132" cy="92" r="5" fill="#e6c88f"/><text x="140" y="95" fill="#e6c88f" font-size="8">Energy</text>
+    <circle cx="56" cy="98" r="5" fill="#f0607d"/><text x="26" y="101" fill="#f5a6b8" font-size="8">Utils</text>
+  </g>
+  <!-- corr heat -->
+  <text x="726" y="128" fill="#9fb4c9" font-size="11" letter-spacing="1" font-weight="600">CORRELATION</text>
+  <g>
+    <g transform="translate(726,138)">
+      <rect x="0" y="0" width="24" height="24" fill="#4ade80" fill-opacity="0.9"/><rect x="26" y="0" width="24" height="24" fill="#4ade80" fill-opacity="0.5"/><rect x="52" y="0" width="24" height="24" fill="#e6c88f" fill-opacity="0.4"/><rect x="78" y="0" width="24" height="24" fill="#f0607d" fill-opacity="0.5"/>
+      <rect x="0" y="26" width="24" height="24" fill="#4ade80" fill-opacity="0.5"/><rect x="26" y="26" width="24" height="24" fill="#4ade80" fill-opacity="0.9"/><rect x="52" y="26" width="24" height="24" fill="#4ade80" fill-opacity="0.3"/><rect x="78" y="26" width="24" height="24" fill="#e6c88f" fill-opacity="0.4"/>
+      <rect x="0" y="52" width="24" height="24" fill="#e6c88f" fill-opacity="0.4"/><rect x="26" y="52" width="24" height="24" fill="#4ade80" fill-opacity="0.3"/><rect x="52" y="52" width="24" height="24" fill="#4ade80" fill-opacity="0.9"/><rect x="78" y="52" width="24" height="24" fill="#4ade80" fill-opacity="0.4"/>
+      <rect x="0" y="78" width="24" height="24" fill="#f0607d" fill-opacity="0.5"/><rect x="26" y="78" width="24" height="24" fill="#e6c88f" fill-opacity="0.4"/><rect x="52" y="78" width="24" height="24" fill="#4ade80" fill-opacity="0.4"/><rect x="78" y="78" width="24" height="24" fill="#4ade80" fill-opacity="0.9"/>
+    </g>
+  </g>
+  <text x="852" y="150" fill="#6f8aa0" font-size="9.5">Cross-asset</text><text x="852" y="164" fill="#aab8c9" font-size="9.5">signals from</text><text x="852" y="178" fill="#aab8c9" font-size="9.5">public data —</text><text x="852" y="192" fill="#4ade80" font-size="9.5">no vendor feed.</text>
+
+  <!-- RIGHT-MID: news river -->
+  <rect x="492" y="272" width="496" height="108" rx="10" fill="url(#apanel)" stroke="#16283c"/>
+  <text x="508" y="294" fill="#9fb4c9" font-size="12" letter-spacing="1" font-weight="600">NEWS RIVER</text>
+  <g font-size="10">
+    <circle cx="512" cy="314" r="3" fill="#4ade80"/><text x="524" y="317" fill="#cfe0ef">NVDA: new datacenter GPU orders reported</text><text x="900" y="317" fill="#6f8aa0">+ bull</text>
+    <circle cx="512" cy="334" r="3" fill="#f0607d"/><text x="524" y="337" fill="#cfe0ef">Fed minutes: cuts stay data-dependent</text><text x="900" y="337" fill="#6f8aa0">~ mixed</text>
+    <circle cx="512" cy="354" r="3" fill="#4ade80"/><text x="524" y="357" fill="#cfe0ef">Semis index breaks to new relative high</text><text x="900" y="357" fill="#6f8aa0">+ bull</text>
+  </g>
+
+  <!-- BOTTOM-LEFT: watchlist -->
+  <rect x="12" y="392" width="470" height="176" rx="10" fill="url(#apanel)" stroke="#16283c"/>
+  <text x="28" y="414" fill="#9fb4c9" font-size="12" letter-spacing="1" font-weight="600">WATCHLIST</text>
+  <g font-size="10.5">
+    <text x="28" y="438" fill="#cfe0ef">AAPL</text><text x="120" y="438" fill="#9fb4c9">228.40</text><text x="220" y="438" fill="#4ade80">▲0.8%</text>
+    <rect x="300" y="428" width="160" height="14" rx="2" fill="#0a1420"/><path d="M300 438 L320 435 L340 437 L360 431 L380 433 L400 428 L420 432 L440 426 L460 429" fill="none" stroke="#4ade80" stroke-width="1.4"/>
+    <text x="28" y="462" fill="#cfe0ef">NVDA</text><text x="120" y="462" fill="#9fb4c9">142.10</text><text x="220" y="462" fill="#4ade80">▲2.1%</text>
+    <path d="M300 466 L320 464 L340 460 L360 458 L380 452 L400 455 L420 448 L440 450 L460 444" fill="none" stroke="#4ade80" stroke-width="1.4"/>
+    <text x="28" y="486" fill="#cfe0ef">MSFT</text><text x="120" y="486" fill="#9fb4c9">431.20</text><text x="220" y="486" fill="#f0607d">▼0.3%</text>
+    <path d="M300 486 L320 484 L340 487 L360 485 L380 489 L400 486 L420 490 L440 488 L460 491" fill="none" stroke="#f0607d" stroke-width="1.4"/>
+    <text x="28" y="510" fill="#cfe0ef">TSLA</text><text x="120" y="510" fill="#9fb4c9">251.90</text><text x="220" y="510" fill="#4ade80">▲1.4%</text>
+    <path d="M300 512 L320 514 L340 508 L360 510 L380 504 L400 507 L420 500 L440 503 L460 498" fill="none" stroke="#4ade80" stroke-width="1.4"/>
+  </g>
+  <line x1="28" y1="526" x2="466" y2="526" stroke="#16283c"/>
+  <text x="28" y="548" fill="#e6c88f" font-size="10.5">⚡ Alert: NVDA RVOL &gt; 1.8× — fired 2m ago</text>
+
+  <!-- BOTTOM-RIGHT: Jarvis assistant bar -->
+  <rect x="492" y="392" width="496" height="176" rx="10" fill="url(#apanel)" stroke="#16283c"/>
+  <text x="508" y="414" fill="#22d3ee" font-size="12" font-weight="600">◆ Jarvis Assistant</text>
+  <g font-size="10.5">
+    <rect x="612" y="404" width="60" height="18" rx="9" fill="#0e2233" stroke="#22d3ee" stroke-opacity="0.5"/><text x="642" y="417" text-anchor="middle" fill="#8fe6f5">Analyst</text>
+    <rect x="678" y="404" width="56" height="18" rx="9" fill="#0a1420"/><text x="706" y="417" text-anchor="middle" fill="#6f8aa0">Trader</text>
+    <rect x="740" y="404" width="52" height="18" rx="9" fill="#0a1420"/><text x="766" y="417" text-anchor="middle" fill="#6f8aa0">Quant</text>
+    <rect x="798" y="404" width="66" height="18" rx="9" fill="#0a1420"/><text x="831" y="417" text-anchor="middle" fill="#6f8aa0">Research</text>
+  </g>
+  <g font-size="10.5">
+    <text x="508" y="444" fill="#6f8aa0">You</text><text x="540" y="444" fill="#cfe0ef">“What’s driving NVDA today, and is the move clean?”</text>
+    <rect x="508" y="456" width="464" height="76" rx="8" fill="#0a141e" stroke="#16283c"/>
+    <text x="520" y="476" fill="#8fe6f5" font-size="10">Jarvis</text>
+    <text x="520" y="494" fill="#aab8c9" font-size="10">New datacenter GPU orders + a semis relative-strength breakout.</text>
+    <text x="520" y="510" fill="#aab8c9" font-size="10">RVOL 1.9× confirms participation; correlation to SPY is low today,</text>
+    <text x="520" y="526" fill="#aab8c9" font-size="10">so it’s idiosyncratic — a clean, name-specific move. Watch 145.</text>
+  </g>
+  <rect x="508" y="542" width="464" height="18" rx="9" fill="#0a1420" stroke="#22303f"/>
+  <text x="520" y="555" fill="#6f8aa0" font-size="10">Ask Jarvis about anything on screen…</text>
+</svg>
