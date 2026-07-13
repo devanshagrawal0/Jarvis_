@@ -197,6 +197,11 @@ function createCapabilityEngine({
     ["research_v2", "JARVIS Research Engine v2: classify a public-info request, expand multiple search angles, run Gemini grounded search plus optional Tavily/Brave/Exa providers, read top URLs, verify evidence, and return progress, citations, confidence, and a grounded answer.", "observe", false],
     ["web_research_deep", "Cortex v2 deep public research: plan a live search, use grounded search, read top public source URLs, and return evidence objects with citations.", "observe", false],
     ["url_read", "Read and extract clean text from a public HTTP/HTTPS URL with SSRF protections and metadata.", "observe", false],
+    ["ui_open_widget", "Open a real current-shell JARVIS widget by id without navigating to an external website.", "observe", false],
+    ["ui_focus_widget", "Open a real current-shell JARVIS widget in expanded focus mode.", "observe", false],
+    ["ui_close_widget", "Close the currently shown JARVIS widget or a specified widget.", "observe", false],
+    ["ui_populate", "Populate a current-shell widget with explicitly supplied response data and a freshness state.", "observe", false],
+    ["ui_render_card", "Render a safe declarative information, warning, metric, or checklist card in the JARVIS response surface.", "observe", false],
     ["compose_artifact", "Create a verified Work Composer artifact as Markdown and HTML with sources, brief metadata, and verification receipts.", "prepare", false],
     ["artifact_status", "List recent Work Composer artifacts or inspect one artifact verification record.", "observe", false],
     ["pc_graph_rebuild", "Build or refresh the Personal Reality Graph from local files, projects, downloads, screenshots, and documents.", "prepare", false],
@@ -275,7 +280,7 @@ function createCapabilityEngine({
     ["write_clipboard", "Write text to the Windows clipboard.", "execute", false],
     ["toast_notification", "Show a Windows toast notification with a title and message.", "execute", false],
     ["screen_analyze", "Capture the current screen once and analyze it with Gemini Vision. Returns what is visible and answers a specific question about the screen.", "observe", false],
-    ["computer_use", "Run a vision-grounded automation task on the current screen: Jarvis takes a screenshot, draws numbered bounding boxes on every interactive element (Set-of-Marks), sends it to Gemini Vision, and executes multi-step tasks like searching YouTube, sending Instagram DMs, scrolling to find a contact, clicking buttons, typing — on ANY website or app regardless of accessibility support. Use for tasks that require navigating modern apps visually.", "execute", false],
+    ["computer_use", "Run a vision-grounded automation task on the current screen: Jarvis takes a screenshot, draws numbered bounding boxes on every interactive element (Set-of-Marks), sends it to Gemini Vision, and executes multi-step tasks like searching YouTube, sending Instagram DMs, scrolling to find a contact, clicking buttons, typing — on ANY website or app regardless of accessibility support. Use for tasks that require navigating modern apps visually.", "execute", true],
     ["screen_locate", "Find any visible UI element on the current screen using Gemini Vision and return its pixel coordinates. Works on web apps with no accessibility labels.", "observe", false],
     ["mouse_scroll", "Scroll the mouse wheel at a screen coordinate in a specified direction and amount. Use for scrolling feeds, lists, pages, or DM threads.", "execute", false],
     ["apex_catalog_search", "Search the APEX trading-room data catalog by keyword and get matching datasets, database tables, and local files with their columns, row counts, date coverage, source, and a plain-language summary. Use this first to discover what market/news/history data APEX holds before answering data questions.", "observe", false],
@@ -377,6 +382,16 @@ function createCapabilityEngine({
       url: { type: "STRING", description: "Public HTTP/HTTPS URL to read." },
       maxChars: { type: "INTEGER", description: "Maximum extracted characters to return." },
     }, required: ["url"] } },
+    { name: "ui_open_widget", description: description("ui_open_widget"), parameters: { type: "OBJECT", properties: { id: { type: "STRING" } }, required: ["id"] } },
+    { name: "ui_focus_widget", description: description("ui_focus_widget"), parameters: { type: "OBJECT", properties: { id: { type: "STRING" } }, required: ["id"] } },
+    { name: "ui_close_widget", description: description("ui_close_widget"), parameters: { type: "OBJECT", properties: { id: { type: "STRING" } } } },
+    { name: "ui_populate", description: description("ui_populate"), parameters: { type: "OBJECT", properties: {
+      id: { type: "STRING" }, state: { type: "STRING" }, data: { type: "OBJECT" },
+    }, required: ["id", "data"] } },
+    { name: "ui_render_card", description: description("ui_render_card"), parameters: { type: "OBJECT", properties: {
+      kind: { type: "STRING" }, title: { type: "STRING" }, body: { type: "STRING" },
+      items: { type: "ARRAY", items: { type: "STRING" } }, value: { type: "STRING" }, status: { type: "STRING" },
+    }, required: ["title"] } },
     { name: "compose_artifact", description: description("compose_artifact"), parameters: { type: "OBJECT", properties: {
       title: { type: "STRING" },
       prompt: { type: "STRING" },
@@ -631,6 +646,15 @@ function createCapabilityEngine({
     return active;
   }
 
+  function confirmationSummary(args = {}) {
+    return Object.fromEntries(Object.entries(args).map(([key, value]) => {
+      if (/token|secret|password|authorization|api.?key|cookie/i.test(key)) return [key, "[redacted]"];
+      const limit = /body|message|content/i.test(key) ? 120 : 200;
+      const cleaned = cleanString(value, limit);
+      return [key, `${cleaned}${String(value || "").length > limit ? "..." : ""}`];
+    }));
+  }
+
   function requestConfirmation(tool, args, actor = {}) {
     const definition = definitionFor(tool);
     if (!actor.sessionId) throw errorWithStatus("A trusted local session is required for confirmation", 401);
@@ -644,6 +668,7 @@ function createCapabilityEngine({
         deviceId: cleanString(actor.deviceId || "local-browser", 100),
         sessionId: cleanString(actor.sessionId, 200),
       },
+      ownerChallenge: crypto.randomBytes(32).toString("base64url"),
       status: "pending",
       createdAt: new Date().toISOString(),
       expiresAt: new Date(Date.now() + 90_000).toISOString(),
@@ -652,10 +677,7 @@ function createCapabilityEngine({
     return {
       id: item.id,
       tool,
-      summary: Object.fromEntries(Object.entries(args).map(([key, value]) => [
-        key,
-        /body|message/i.test(key) ? `${cleanString(value, 80)}${String(value || "").length > 80 ? "..." : ""}` : cleanString(value, 200),
-      ])),
+      summary: confirmationSummary(args),
       risk: item.risk,
       expiresAt: item.expiresAt,
       message: `Confirmation required to run ${tool}.`,
@@ -1277,7 +1299,7 @@ function createCapabilityEngine({
     const query = cleanString(args.query, 700);
     if (!query) throw errorWithStatus("Web research query is required");
     const context = cleanString(args.context, 4000);
-    const model = settings.geminiFastModel || settings.geminiModel || "gemini-2.5-flash";
+    const model = settings.geminiFastModel || settings.geminiModel || "gemini-3.5-flash"; // Cortex v4 0.2 — registry model, not obsolete 2.5
     const apiBase = String(settings.geminiApiBaseUrl || process.env.JARVIS_GEMINI_API_BASE_URL || "https://generativelanguage.googleapis.com").replace(/\/+$/, "");
     const now = new Date();
     const response = await fetch(`${apiBase}/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(apiKey)}`, {
@@ -1623,7 +1645,7 @@ function createCapabilityEngine({
       };
     },
     web_research: webResearch,
-    research_v2: async (args) => {
+    research_v2: async (args, context = {}) => {
       if (!researchV2) researchV2 = createResearchV2({ getSettings, webResearch, urlRead: cortex.urlRead });
       return researchV2.run({
       query: cleanString(args.query, 1200),
@@ -1631,6 +1653,8 @@ function createCapabilityEngine({
       mode: cleanString(args.mode, 20),
       ...(args.maxSearches == null ? {} : { maxSearches: asNumber(args.maxSearches, 5, 1, 10) }),
       ...(args.readTopSources == null ? {} : { readTopSources: asNumber(args.readTopSources, 3, 0, 6) }),
+      // Cortex v4 P1.2 — pass the live progress emitter through to the engine.
+      ...(typeof context.onProgress === "function" ? { onProgress: context.onProgress } : {}),
     });
     },
     web_research_deep: async (args) => cortex.deepResearch({
@@ -1642,6 +1666,18 @@ function createCapabilityEngine({
       url: cleanString(args.url, 2000),
       maxChars: asNumber(args.maxChars, 18000, 500, 60000),
     }),
+    ui_open_widget: async (args) => ({ uiAction: { type: "open-widget", id: cleanString(args.id, 60), focus: false } }),
+    ui_focus_widget: async (args) => ({ uiAction: { type: "open-widget", id: cleanString(args.id, 60), focus: true } }),
+    ui_close_widget: async (args) => ({ uiAction: { type: "close-widget", id: cleanString(args.id, 60) } }),
+    ui_populate: async (args) => ({ uiAction: {
+      type: "populate-widget", id: cleanString(args.id, 60), state: cleanString(args.state || "live", 20),
+      data: args.data && typeof args.data === "object" ? args.data : {},
+    } }),
+    ui_render_card: async (args) => ({ card: {
+      kind: cleanString(args.kind || "info", 30), title: cleanString(args.title, 160),
+      body: cleanString(args.body, 4000), value: cleanString(args.value, 200), status: cleanString(args.status, 30),
+      items: Array.isArray(args.items) ? args.items.map((item) => cleanString(item, 500)).filter(Boolean).slice(0, 12) : [],
+    } }),
     compose_artifact: async (args) => composer.compose(args),
     artifact_status: async (args) => composer.status(args),
     pc_graph_rebuild: async (args) => pcGraph.rebuild({
@@ -2020,7 +2056,7 @@ function createCapabilityEngine({
       const { GoogleGenAI } = require("@google/genai");
       const ai = new GoogleGenAI({ apiKey });
       const result = await ai.models.generateContent({
-        model: "gemini-2.0-flash",
+        model: settings.geminiActionModel || settings.geminiModel || "gemini-3.5-flash", // Cortex v4 0.2 — vision-capable registry model
         contents: [{ role: "user", parts: [
           { inlineData: { data: imageBase64, mimeType: "image/png" } },
           { text: question },
@@ -2185,8 +2221,37 @@ function createCapabilityEngine({
     if (!confirmation) throw errorWithStatus("Confirmation is invalid or expired", 403);
     if (!context.sessionId || confirmation.actor.sessionId !== context.sessionId) throw errorWithStatus("Confirmation belongs to another session", 403);
     if (context.deviceId && confirmation.actor.deviceId !== context.deviceId) throw errorWithStatus("Confirmation belongs to another device", 403);
+    const expectedChallenge = Buffer.from(String(confirmation.ownerChallenge || ""));
+    const suppliedChallenge = Buffer.from(String(context.ownerChallenge || ""));
+    if (!expectedChallenge.length || expectedChallenge.length !== suppliedChallenge.length || !crypto.timingSafeEqual(expectedChallenge, suppliedChallenge)) {
+      throw errorWithStatus("Owner confirmation challenge is invalid", 403);
+    }
     writeJsonAtomic(confirmationsPath, confirmations.filter((item) => item.id !== id));
     return execute(confirmation.tool, confirmation.args, { ...context, confirmed: true, confirmationId: id });
+  }
+
+  function denyConfirmation(id, context = {}) {
+    const confirmations = loadConfirmations();
+    const confirmation = confirmations.find((item) => item.id === id);
+    if (!confirmation) throw errorWithStatus("Confirmation is invalid or expired", 403);
+    if (!context.sessionId || confirmation.actor.sessionId !== context.sessionId) throw errorWithStatus("Confirmation belongs to another session", 403);
+    const expectedChallenge = Buffer.from(String(confirmation.ownerChallenge || ""));
+    const suppliedChallenge = Buffer.from(String(context.ownerChallenge || ""));
+    if (!expectedChallenge.length || expectedChallenge.length !== suppliedChallenge.length || !crypto.timingSafeEqual(expectedChallenge, suppliedChallenge)) {
+      throw errorWithStatus("Owner confirmation challenge is invalid", 403);
+    }
+    writeJsonAtomic(confirmationsPath, confirmations.filter((item) => item.id !== id));
+    const receipt = createReceipt({
+      action: `capability.${confirmation.tool}.deny`,
+      target: confirmation.tool,
+      risk: confirmation.risk,
+      status: "denied",
+      input: confirmation.argumentHash,
+      result: "Owner denied the prepared action. No executor was called.",
+      verification: ["One-time challenge consumed", "Capability handler not executed"],
+      deviceId: context.deviceId || "local-browser",
+    });
+    return { ok: false, status: "denied", confirmationId: id, tool: confirmation.tool, message: `Denied ${confirmation.tool}. No action was executed.`, receipt };
   }
 
   return {
@@ -2200,15 +2265,18 @@ function createCapabilityEngine({
       skillAutopilot.close();
     },
     approveConfirmation,
-    pendingConfirmations: (sessionId) => loadConfirmations()
+    denyConfirmation,
+    pendingConfirmations: (sessionId, { includeOwnerChallenge = false } = {}) => loadConfirmations()
       .filter((item) => !sessionId || item.actor.sessionId === sessionId)
       .map((item) => ({
         id: item.id,
         tool: item.tool,
         risk: item.risk,
+        summary: confirmationSummary(item.args || {}),
         createdAt: item.createdAt,
         expiresAt: item.expiresAt,
         argumentHash: item.argumentHash,
+        ...(includeOwnerChallenge ? { ownerChallenge: item.ownerChallenge } : {}),
       })),
   };
 }

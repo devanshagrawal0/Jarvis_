@@ -56,6 +56,10 @@ function taskBlueprint(objective = "") {
 function createMissionEngine(runtimeDir, options = {}) {
   const dbPath = path.join(runtimeDir, "jarvis-missions.sqlite");
   const db = new Database(dbPath);
+  // Cortex v4 · P0.4 — anti-amplification: rolling record of recent mission
+  // creations so a runaway/recursive spawner can never balloon the DB again
+  // (a prior incident hit 704MB / 15,898 missions). Normal use never nears this.
+  let _recentCreates = [];
   db.exec(`
     PRAGMA journal_mode = WAL;
     CREATE TABLE IF NOT EXISTS missions (
@@ -137,6 +141,15 @@ function createMissionEngine(runtimeDir, options = {}) {
   function create(data = {}) {
     const objective = String(data.objective || data.title || "").trim().slice(0, 8000);
     if (!objective) throw Object.assign(new Error("Mission objective is required"), { statusCode: 400 });
+    // Cortex v4 · P0.4 — cap creation rate (40/min). A recursive spawner hits
+    // this and stops instead of ballooning the DB; humans never approach it.
+    const _nowMs = Date.now();
+    _recentCreates = _recentCreates.filter((t) => _nowMs - t < 60_000);
+    if (_recentCreates.length >= 40) {
+      throw Object.assign(new Error("Mission creation rate limit (40/min) hit — refusing to prevent runaway amplification."), { statusCode: 429 });
+    }
+    _recentCreates.push(_nowMs);
+
     const now = new Date().toISOString();
     const blueprint = taskBlueprint(objective);
     const mission = {

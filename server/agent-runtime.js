@@ -89,7 +89,7 @@ function createAgentRuntime({ getSettings, toolGateway, codeKnowledge, memorySto
 
   function selectModel(route) {
     const settings = getSettings();
-    const configured = settings.geminiModel || "gemini-2.5-flash";
+    const configured = settings.geminiModel || "gemini-3.5-flash";
     if (route.complexity === "deep") {
       return settings.geminiReasoningModel || "gemini-3.1-pro-preview";
     }
@@ -250,10 +250,13 @@ function createAgentRuntime({ getSettings, toolGateway, codeKnowledge, memorySto
     return {
       route,
       model: selectModel(route),
+      // Cortex v4 · 0.2 — registry-only models. gemini-2.5-flash was purged: it
+      // refuses grounded/news queries when 3.5-flash falls back to it. The fallback
+      // ladder now stays on grounding-capable 3.x models.
       fallbackModels: [
         "gemini-3.5-flash",
         getSettings().geminiModel,
-        "gemini-2.5-flash",
+        "gemini-3.1-flash-lite",
       ].filter(Boolean),
       selectedTools,
       memories,

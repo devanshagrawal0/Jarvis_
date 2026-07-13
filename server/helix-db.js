@@ -2,6 +2,7 @@ const crypto = require("crypto");
 const fs = require("fs");
 const path = require("path");
 const Database = require("better-sqlite3");
+const { createSubstrate } = require("./helix-substrate");
 
 function isoNow() {
   return new Date().toISOString();
@@ -919,9 +920,15 @@ function createHelixDb(runtimeDir) {
     return health;
   }
 
+  // H0 rebuild: the 7-layer memory substrate (evidence ledger, FTS, vectors, runs,
+  // confidence, events, sources/pointers, hypotheses, ops/artifacts/manifests).
+  // Additive — creates net-new tables with real FKs; existing tables untouched.
+  const substrate = createSubstrate(db);
+
   return {
     classifyStrand,
     STRAND_DECAY_RATES,
+    substrate,
 
     // Projects
     listProjects: () => stmts.listProjects.all(),

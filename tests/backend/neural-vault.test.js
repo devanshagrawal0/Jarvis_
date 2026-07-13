@@ -123,7 +123,10 @@ test("action macros can be created, matched, replay-recorded, and improved after
   vault.recordActionMacroRun({ macroId: macro.id, status: "success", verification: ["Calendar opened"] });
   const improved = vault.listActionMacros().find((item) => item.id === macro.id);
   assert.equal(improved.metadata.preferredFallbackAfterFailures, true);
-  assert.equal(improved.steps[0].type, "open_url");
+  // Failure history may recommend the fallback, but it must not silently
+  // rewrite the executable primary steps without a verified fallback run.
+  assert.equal(improved.steps[0].type, "browser_login_handoff");
+  assert.equal(improved.metadata.fallbackSteps[0].type, "open_url");
 });
 
 test("agents, skills, projects, artifacts, and raw events become searchable memory", () => {

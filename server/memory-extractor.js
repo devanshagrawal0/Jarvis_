@@ -60,7 +60,8 @@ function createMemoryExtractor({ memoryStore, getSettings, turnThreshold = 5 }) 
     let apiKey;
     try {
       const settings = getSettings();
-      apiKey = settings?.geminiApiKey || settings?.providers?.gemini?.apiKey;
+      // Cortex v4 fix: the real setting is `geminiKey` (was reading geminiApiKey → always empty → extraction silently disabled).
+      apiKey = settings?.geminiKey || settings?.geminiApiKey || settings?.providers?.gemini?.apiKey;
     } catch {
       return;
     }
@@ -75,7 +76,7 @@ function createMemoryExtractor({ memoryStore, getSettings, turnThreshold = 5 }) 
       const { GoogleGenAI } = require("@google/genai");
       const ai = new GoogleGenAI({ apiKey });
       const result = await ai.models.generateContent({
-        model: "gemini-2.0-flash",
+        model: require("./gemini-models").MODELS.router,
         contents: [{ role: "user", parts: [{ text: `${EXTRACT_PROMPT}\n\nConversation:\n${conversation}` }] }],
         generationConfig: { responseMimeType: "application/json", maxOutputTokens: 1200 },
       });

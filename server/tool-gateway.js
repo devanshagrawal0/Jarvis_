@@ -138,6 +138,9 @@ function createToolGateway({ capabilityEngine, moduleRegistry, codeKnowledge }) 
       || /https?:\/\/[^\s)]+/i.test(prompt)) {
       alwaysUseful.push("research_v2", "web_research_deep", "url_read", "web_research");
     }
+    if (/\b(open|show|focus|expand|close|populate|render|display)\b.*\b(widget|panel|card|hud|module)\b/i.test(prompt)) {
+      alwaysUseful.push("ui_open_widget", "ui_focus_widget", "ui_close_widget", "ui_populate", "ui_render_card");
+    }
     if (/\b(make|create|generate|write|build|compose|draft|turn .* into)\b/i.test(prompt)
       && /\b(report|brief|briefing|document|doc|pdf|deck|slides?|presentation|study sheet|one[- ]pager|artifact|write[- ]up|summary sheet|trading brief|research brief)\b/i.test(prompt)) {
       alwaysUseful.push("compose_artifact", "artifact_status", "web_research_deep", "url_read");

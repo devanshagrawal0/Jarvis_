@@ -27,8 +27,9 @@ const TYPE_SETTLE_MS   = 620;   // paste via clipboard needs a bit more
 const SCROLL_SETTLE_MS = 280;   // was 450
 const BROWSER_SETTLE_MS = 200;  // Playwright actions are near-instant, DOM updates fast
 
-const GEMINI_VISION_MODEL = "gemini-2.5-flash";
-const GEMINI_TEXT_MODEL   = "gemini-2.5-flash";
+// Cortex v4 0.2 — registry models (obsolete gemini-2.5-flash purged).
+const GEMINI_VISION_MODEL = "gemini-3.5-flash";
+const GEMINI_TEXT_MODEL   = "gemini-3.5-flash";
 const MAX_SCROLL_SAME_DIR = 8;
 
 const BROWSER_PROC_RE = /^(chrome|msedge|firefox|brave|opera|vivaldi|arc|chromium)$/i;

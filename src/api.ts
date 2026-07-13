@@ -50,7 +50,9 @@ export function post<T>(path: string, body: unknown): Promise<T> {
 export async function streamPost<T>(
   path: string,
   body: unknown,
-  onDelta: (text: string) => void
+  onDelta: (text: string) => void,
+  onProgress?: (phase: string, message: string) => void,
+  onEvent?: (event: Record<string, unknown>, envelope: Record<string, unknown>) => void
 ): Promise<T> {
   const response = await fetch(path, {
     method: "POST",
@@ -77,6 +79,8 @@ export async function streamPost<T>(
       if (!line.trim()) continue;
       const event = JSON.parse(line);
       if (event.type === "delta") onDelta(String(event.text || ""));
+      if (event.type === "progress") onProgress?.(String(event.phase || ""), String(event.message || ""));
+      if (event.type === "event" && event.event && typeof event.event === "object") onEvent?.(event.event, event);
       if (event.type === "done") result = event.result as T;
     }
     if (done) break;
@@ -84,6 +88,8 @@ export async function streamPost<T>(
   if (buffer.trim()) {
     const event = JSON.parse(buffer);
     if (event.type === "delta") onDelta(String(event.text || ""));
+    if (event.type === "progress") onProgress?.(String(event.phase || ""), String(event.message || ""));
+    if (event.type === "event" && event.event && typeof event.event === "object") onEvent?.(event.event, event);
     if (event.type === "done") result = event.result as T;
   }
   if (!result) throw new Error("JARVIS stream ended before completion.");

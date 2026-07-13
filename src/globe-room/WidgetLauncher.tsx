@@ -2,10 +2,14 @@ import { useEffect, useRef } from "react";
 
 // Same WIDGETS list as WidgetStrip — no import needed, just the labels/icons
 const WIDGETS = [
+  { id: "profile",     label: "Profile",     icon: "◐" },
+  { id: "weather",     label: "Weather",     icon: "☀" },
+  { id: "vitals",      label: "Vitals",      icon: "◍" },
   { id: "modules",     label: "Modules",     icon: "⬡" },
   { id: "projects",    label: "Projects",    icon: "◫" },
   { id: "agents",      label: "Agents",      icon: "◉" },
   { id: "connections", label: "Connections", icon: "⚡" },
+  { id: "trust",       label: "Trust",       icon: "◇" },
   { id: "kalshi",      label: "Kalshi",      icon: "▲" },
   { id: "vision",      label: "Vision",      icon: "◎" },
   { id: "memory",      label: "Memory",      icon: "◈" },
@@ -47,7 +51,7 @@ export function WidgetLauncher({ open, onClose }: { open: boolean; onClose: () =
         WebkitBackdropFilter: "blur(24px)",
         border: "1px solid rgba(0, 229, 255, 0.28)",
         borderRadius: "12px",
-        zIndex: 40,
+        zIndex: 1200,
         overflow: "hidden",
         boxShadow: "0 8px 32px rgba(0,0,0,0.7), 0 0 0 1px rgba(0,229,255,0.06)",
         color: "rgba(230, 251, 255, 0.92)",

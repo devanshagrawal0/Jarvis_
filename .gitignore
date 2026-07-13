@@ -16,6 +16,7 @@ secrets.*
 # ─────────────────────────────────────────────────────────────
 node_modules/
 dist/
+dist-cloud/
 dist-desktop/
 build/
 .vite/
@@ -84,3 +85,8 @@ Thumbs.db
 *.swp
 .idea/
 .vscode/
+
+# Eclipse generated output + stray bug-artifact dirs
+eclipse-artifacts/
+undefined/
+'+process.env.SHOTS+'/

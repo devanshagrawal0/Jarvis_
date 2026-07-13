@@ -215,8 +215,8 @@ test("Kalshi market discovery expands sports queries and filters unrelated marke
   const result = await provider.marketDiscovery({ query: "find the current mexico game world cup on kalshi" });
   assert.equal(result.markets.length, 1);
   assert.equal(result.markets[0].ticker, "KXMEXGAME-26");
-  assert.equal(result.searchPlan.fetchedOpenMarkets, 2);
-  assert.ok(result.searchPlan.expandedPhrases.includes("mex"));
+  assert.equal(result.searchPlan.fetchedMarkets, 2);
+  assert.ok(result.searchPlan.targetSeries.some((series) => series.startsWith("KXWC")));
 });
 
 test("Kalshi portfolio normalizes positions and fills into readable English", async () => {

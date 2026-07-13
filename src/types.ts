@@ -62,6 +62,63 @@ export type BrainResponse = {
   needsKey?: boolean;
   model?: string;
   error?: string;
+  strength?: "cost-guarded" | "balanced" | "full";
+  sources?: Array<{ title?: string; url: string }>;
+  artifacts?: JarvisArtifact[];
+  cards?: JarvisResponseCard[];
+  uiActions?: JarvisUiAction[];
+  receipt?: { id?: string; status?: string; action?: string; verification?: string[] };
+  usage?: { calls?: number; inputTokens?: number; outputTokens?: number; totalTokens?: number; costUsd?: number };
+  timing?: { totalMs?: number; modelMs?: number; totalModelCalls?: number; fallbackAttempts?: number };
+  pendingConfirmations?: Array<{
+    id: string;
+    tool: string;
+    risk?: string;
+    summary?: Record<string, unknown>;
+    expiresAt?: string;
+    ownerChallenge?: string;
+  }>;
+};
+
+export type JarvisActivityEvent = {
+  id: string;
+  kind: "run" | "plan" | "model" | "tool" | "source" | "artifact" | "approval" | "receipt" | "ui" | "research" | "error" | string;
+  status: "running" | "ready" | "complete" | "approval" | "error" | string;
+  label: string;
+  detail?: string;
+  timestamp?: string;
+  sequence?: number;
+  tool?: string;
+};
+
+export type JarvisArtifact = {
+  id?: string;
+  artifactId?: string;
+  kind?: string;
+  title?: string;
+  name?: string;
+  filename?: string;
+  bytes?: number;
+  mediaType?: string;
+  downloadUrl?: string;
+  status?: string;
+};
+
+export type JarvisResponseCard = {
+  kind?: string;
+  title: string;
+  body?: string;
+  value?: string;
+  status?: string;
+  items?: string[];
+};
+
+export type JarvisUiAction = {
+  type: "open-widget" | "close-widget" | "populate-widget" | string;
+  id?: string;
+  focus?: boolean;
+  state?: string;
+  data?: Record<string, unknown>;
 };
 
 export type JarvisModuleManifest = {

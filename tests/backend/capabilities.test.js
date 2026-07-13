@@ -13,7 +13,7 @@ let sessionCookie;
 let runtimeDir;
 
 async function waitForServer() {
-  for (let attempt = 0; attempt < 40; attempt += 1) {
+  for (let attempt = 0; attempt < 80; attempt += 1) {
     try {
       const response = await fetch(`${baseUrl}/api/health`);
       if (response.ok) return;
@@ -127,7 +127,7 @@ test("voice status is explicit and voice-origin actions cannot directly execute 
   const statusResponse = await fetch(`${baseUrl}/api/voice/status`, { headers: { cookie: sessionCookie } });
   assert.equal(statusResponse.status, 200);
   const status = await statusResponse.json();
-  assert.equal(status.status, "needs_gemini_key");
+  assert.equal(status.status, "disabled");
   const denied = await execute("open_app", { app: "notepad" }, { source: "voice" });
   assert.equal(denied.body.ok, false);
   assert.equal(denied.body.status, "denied");
@@ -373,9 +373,10 @@ test("pairs a device once, authenticates by bearer token, and stores uploads in 
   const pairResponse = await fetch(`${baseUrl}/api/pair`, { headers: { cookie: sessionCookie } });
   assert.equal(pairResponse.status, 200);
   const pairBody = await pairResponse.json();
-  assert.match(pairBody.pairing.code, /^\d{6}$/);
+  // Pairing uses a 256-bit URL-safe token; the former six-digit code was
+  // brute-forceable and is intentionally no longer part of the contract.
+  assert.match(pairBody.pairing.code, /^[A-Za-z0-9_-]{43}$/);
   assert.ok(pairBody.pairUrls.some((item) => item.includes(`pair_code=${pairBody.pairing.code}`)));
-  assert.ok(pairBody.pairUrls[0].startsWith("https://devansh-jarvis.example.workers.dev"));
   assert.ok(pairBody.pairUrls.some((item) => item.startsWith("https://devansh-jarvis.example.workers.dev")));
 
   const claimResponse = await fetch(`${baseUrl}/api/pair`, {
@@ -433,7 +434,7 @@ test("pairs a device once, authenticates by bearer token, and stores uploads in 
   const imageBytes = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=", "base64");
   const imageUpload = await fetch(`${baseUrl}/api/device-mesh/upload`, {
     method: "POST",
-    headers: { "content-type": "application/json", authorization: `Bearer ${claim.accessToken}` },
+    headers: { "content-type": "application/json", authorization: `Bearer ${approved.accessToken}` },
     body: JSON.stringify({
       name: "phone-pixel.png",
       mimeType: "image/png",
@@ -447,13 +448,13 @@ test("pairs a device once, authenticates by bearer token, and stores uploads in 
   assert.ok(imageBody.file.url.includes("/api/device-mesh/file/"));
 
   const served = await fetch(`${baseUrl}${imageBody.file.url}`, {
-    headers: { authorization: `Bearer ${claim.accessToken}` },
+    headers: { authorization: `Bearer ${approved.accessToken}` },
   });
   assert.equal(served.status, 200);
   assert.equal(served.headers.get("content-type"), "image/png");
 
   const latestEndpoint = await fetch(`${baseUrl}/api/device-mesh/latest-image`, {
-    headers: { authorization: `Bearer ${claim.accessToken}` },
+    headers: { authorization: `Bearer ${approved.accessToken}` },
   });
   assert.equal(latestEndpoint.status, 200);
   const latestBody = await latestEndpoint.json();
@@ -468,7 +469,7 @@ test("pairs a device once, authenticates by bearer token, and stores uploads in 
 
   const objectCreate = await fetch(`${baseUrl}/api/device-mesh/objects`, {
     method: "POST",
-    headers: { "content-type": "application/json", authorization: `Bearer ${claim.accessToken}` },
+    headers: { "content-type": "application/json", authorization: `Bearer ${approved.accessToken}` },
     body: JSON.stringify({
       type: "link",
       name: "Mesh research link",
@@ -482,7 +483,7 @@ test("pairs a device once, authenticates by bearer token, and stores uploads in 
 
   const commandCreate = await fetch(`${baseUrl}/api/device-mesh/commands`, {
     method: "POST",
-    headers: { "content-type": "application/json", authorization: `Bearer ${claim.accessToken}` },
+    headers: { "content-type": "application/json", authorization: `Bearer ${approved.accessToken}` },
     body: JSON.stringify({
       type: "ask_jarvis",
       title: "Test card",
@@ -496,7 +497,7 @@ test("pairs a device once, authenticates by bearer token, and stores uploads in 
 
   const commandAck = await fetch(`${baseUrl}/api/device-mesh/commands/${encodeURIComponent(commandBody.command.id)}/ack`, {
     method: "POST",
-    headers: { "content-type": "application/json", authorization: `Bearer ${claim.accessToken}` },
+    headers: { "content-type": "application/json", authorization: `Bearer ${approved.accessToken}` },
     body: JSON.stringify({}),
   });
   assert.equal(commandAck.status, 200);

@@ -1,7 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "../api";
 import { KalshiChip, KalshiCard, KalshiExpanded } from "./KalshiWidget";
-import type { KalshiMarket } from "./KalshiWidget";
+import { SpatialWidgetFrame, type SpatialWidgetState } from "./SpatialWidgetFrame";
+import { DeviceMeshCommandCenter } from "./DeviceMeshCommandCenter";
+import { GraphCommandCenter, VisionCommandCenter } from "./IntelligenceCommandCenters";
+import { AgentsCommandCenter, ModulesCommandCenter, ProjectsCommandCenter } from "./OperationalCommandCenters";
+import { ConnectionsCommandCenter, ReceiptsCommandCenter, TrustCommandCenter } from "./AssuranceCommandCenters";
+import { ProfileCommandCenter, VitalsCommandCenter, WeatherCommandCenter } from "./PersonalCommandCenters";
+import { MemoryCommandCenter } from "./MemoryCommandCenter";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -57,10 +63,14 @@ interface WidgetDef {
 }
 
 const WIDGETS: WidgetDef[] = [
+  { id: "profile",     label: "Profile",     icon: "◐" },
+  { id: "weather",     label: "Weather",     icon: "☀" },
+  { id: "vitals",      label: "Vitals",      icon: "◍" },
   { id: "modules",     label: "Modules",     icon: "⬡" },
   { id: "projects",    label: "Projects",    icon: "◫" },
   { id: "agents",      label: "Agents",      icon: "◉" },
   { id: "connections", label: "Connections", icon: "⚡" },
+  { id: "trust",       label: "Trust",       icon: "◇" },
   { id: "kalshi",      label: "Kalshi",      icon: "▲" },
   { id: "vision",      label: "Vision",      icon: "◎" },
   { id: "memory",      label: "Memory",      icon: "◈" },
@@ -253,6 +263,28 @@ function LoadingRows({ n = 3 }: { n?: number }) {
   );
 }
 
+type TruthState = "live" | "stale" | "disconnected" | "empty" | "sample";
+
+function truthState(data: any, hasContent: boolean): TruthState {
+  if (data?.__state === "sample") return "sample";
+  if (data?.__state === "error" || data?.__state === "disconnected") return "disconnected";
+  if (data?.__state === "stale") return "stale";
+  return hasContent ? "live" : "empty";
+}
+
+function TruthMessage({ state, empty, error }: { state: TruthState; empty: string; error?: string }) {
+  const copy = state === "disconnected" ? (error || "Data source is disconnected.")
+    : state === "stale" ? "Showing the last verified data."
+    : state === "sample" ? "Sample data — not live."
+    : empty;
+  return (
+    <div style={{ padding: "12px 10px", border: "1px dashed rgba(0,229,255,0.2)", borderRadius: 7, textAlign: "center" }}>
+      <Badge label={state} color={state === "disconnected" ? "red" : state === "stale" || state === "sample" ? "amber" : "gray"} />
+      <div style={{ marginTop: 7 }}><Muted>{copy}</Muted></div>
+    </div>
+  );
+}
+
 // ─── Modules widget ───────────────────────────────────────────────────────────
 
 export function ModulesCard({ data, loading, onClose, onExpand }: {
@@ -278,23 +310,11 @@ export function ModulesCard({ data, loading, onClose, onExpand }: {
                 </span>
               </div>
             ))}
-            {modules.length === 0 && (
-              <>
-                {["Library", "Agents", "Browser", "Workpad"].map((n, i) => (
-                  <div key={i} style={{
-                    background: "rgba(0,229,255,0.05)", border: "1px solid rgba(0,229,255,0.12)",
-                    borderRadius: 8, padding: "7px 9px", display: "flex", alignItems: "center", gap: 6,
-                  }}>
-                    <span style={{ fontSize: 14 }}>⬡</span>
-                    <span style={{ fontSize: 12, fontWeight: 500 }}>{n}</span>
-                  </div>
-                ))}
-              </>
-            )}
+            {modules.length === 0 && <TruthMessage state={truthState(data, false)} empty="No runtime modules reported." error={data?.__error} />}
           </div>
         )}
         <Divider />
-        <Muted>{loaded || 4} loaded · {active || 2} active</Muted>
+        <Muted>{loaded} loaded · {active} active</Muted>
       </div>
     </div>
   );
@@ -308,7 +328,7 @@ export function ModulesExpanded({ data, loading, onClose }: { data: any; loading
       <div style={{ padding: "14px 16px" }}>
         {loading ? <LoadingRows n={6} /> : (
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8 }}>
-            {(modules.length > 0 ? modules : ["Library", "Agents", "Browser", "Workpad", "Camera", "Memory", "Research", "Devices", "Provider Health"].map(n => ({ name: n, icon: "⬡" }))).map((m: any, i: number) => (
+            {modules.map((m: any, i: number) => (
               <div key={i} style={{
                 background: "rgba(0,229,255,0.06)", border: "1px solid rgba(0,229,255,0.14)",
                 borderRadius: 8, padding: "10px", display: "flex", flexDirection: "column", alignItems: "center", gap: 4,
@@ -318,6 +338,7 @@ export function ModulesExpanded({ data, loading, onClose }: { data: any; loading
                 <StatusDot status={(m.active || m.status === "active") ? "active" : "inactive"} />
               </div>
             ))}
+            {modules.length === 0 && <TruthMessage state={truthState(data, false)} empty="No runtime modules reported." error={data?.__error} />}
           </div>
         )}
       </div>
@@ -349,41 +370,13 @@ export function ProjectsCard({ data, loading, onClose, onExpand }: {
             <Badge label={p.status ?? "active"} color={STATUS_COLOR[p.status ?? "active"] ?? "cyan"} />
           </div>
         ))}
-        {!loading && projects.length === 0 && (
-          [{ name: "Helix Build", status: "active" }, { name: "Neural Vault", status: "active" }, { name: "UI Refactor", status: "pending" }].map((p, i) => (
-            <div key={i} style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 7 }}>
-              <span style={{ flex: 1, fontSize: 12, fontWeight: 500 }}>{p.name}</span>
-              <Badge label={p.status} color={STATUS_COLOR[p.status]} />
-            </div>
-          ))
-        )}
+        {!loading && projects.length === 0 && <TruthMessage state={truthState(data, false)} empty="No projects have been indexed yet." error={data?.__error} />}
         <Divider />
-        <Muted>Total: {total || 3} projects</Muted>
+        <Muted>Total: {total} projects</Muted>
       </div>
     </div>
   );
 }
-
-const DEMO_PROJECTS = [
-  {
-    name: "Helix Build", status: "active", goal: "AI pair programming platform",
-    lastUsed: "2 hours ago",
-    summary: "Phase 2 complete — agent runtime, tool gateway, and Helix DB wired. Phase 3 targets real-time pair cursor sync and multi-file context awareness.",
-    analysis: "On track. Core infra is solid. Biggest risk is latency on the multi-file context window — recommend scoping Phase 3 to single-file first.",
-  },
-  {
-    name: "Neural Vault", status: "active", goal: "Memory and context engine",
-    lastUsed: "Yesterday",
-    summary: "Vector store and retrieval pipeline operational. Currently integrating with JARVIS conversation history for long-term memory replay.",
-    analysis: "Retrieval quality is good at top-5. Embedding refresh cadence needs tuning — stale entries surfacing in 12% of queries.",
-  },
-  {
-    name: "UI Refactor", status: "pending", goal: "Spatial shell redesign",
-    lastUsed: "3 days ago",
-    summary: "Spec complete. New widget card system (jc-outer/jc-border/jc-inner) shipped. Draggable widget layer is next.",
-    analysis: "Low risk. CSS architecture is clean. Priority should shift here once Helix Phase 3 scope is locked.",
-  },
-];
 
 export function ProjectsExpanded({ data, loading, onClose, onAttach, onAskJarvis }: {
   data: any; loading: boolean; onClose: () => void;
@@ -394,7 +387,7 @@ export function ProjectsExpanded({ data, loading, onClose, onAttach, onAskJarvis
   const [search, setSearch] = useState("");
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [viewMode, setViewMode] = useState<"list" | "board">("list");
-  const displayList = loading ? [] : (projects.length > 0 ? projects : DEMO_PROJECTS);
+  const displayList = loading ? [] : projects;
   const filtered = displayList.filter((p: any) =>
     (p.name ?? p.title ?? "").toLowerCase().includes(search.toLowerCase())
   );
@@ -564,11 +557,7 @@ export function AgentsCard({ data, loading, onClose, onExpand }: {
     <div style={CARD_STYLE}>
       <CardHeader icon="◉" title="Agents" onClose={onClose} onExpand={onExpand} />
       <div style={CARD_BODY_STYLE}>
-        {loading ? <LoadingRows /> : (missions.length > 0 ? missions : [
-          { title: "Research: Helix Phase 3", status: "running" },
-          { title: "Code Review: api.ts", status: "complete" },
-          { title: "Web Search: Kalshi API", status: "pending" },
-        ]).slice(0, 3).map((m: any, i: number) => (
+        {loading ? <LoadingRows /> : missions.length === 0 ? <TruthMessage state={truthState(data, false)} empty="No agent missions are running." error={data?.__error} /> : missions.slice(0, 3).map((m: any, i: number) => (
           <div key={i} style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 7 }}>
             {(m.status === "running" || m.active) ? (
               <span style={{
@@ -610,11 +599,7 @@ export function AgentsExpanded({ data, loading, onClose }: { data: any; loading:
             }}>{f}</button>
           ))}
         </div>
-        {loading ? <LoadingRows n={6} /> : (missions.length > 0 ? missions : [
-          { title: "Research: Helix Phase 3", status: "running", model: "claude-sonnet-4-6" },
-          { title: "Code Review: api.ts", status: "complete", model: "claude-opus-4" },
-          { title: "Web Search: Kalshi API", status: "pending", model: "claude-haiku-3" },
-        ]).map((m: any, i: number) => (
+        {loading ? <LoadingRows n={6} /> : missions.length === 0 ? <TruthMessage state={truthState(data, false)} empty="No agent missions have been recorded." error={data?.__error} /> : missions.map((m: any, i: number) => (
           <div key={i} style={{
             display: "flex", alignItems: "center", gap: 10, marginBottom: 8,
             padding: "10px 12px", background: "rgba(0,229,255,0.05)",
@@ -641,20 +626,24 @@ export function AgentsExpanded({ data, loading, onClose }: { data: any; loading:
 // ─── Connections widget ───────────────────────────────────────────────────────
 
 const PROVIDERS = ["Claude", "Perplexity", "Gemini", "Kalshi", "Google"];
+function providerConnected(value: any): boolean {
+  return value === true || Boolean(value && typeof value === "object" && value.connected === true);
+}
 
 export function ConnectionsCard({ data, loading, onClose, onExpand }: {
   data: any; loading: boolean; onClose: () => void; onExpand: () => void;
 }) {
   const health: any = data?.providers ?? {};
-  const connected = Object.values(health).filter(Boolean).length;
+  const connected = Object.values(health).filter(providerConnected).length;
   const total = Math.max(PROVIDERS.length, Object.keys(health).length);
   return (
     <div style={CARD_STYLE}>
       <CardHeader icon="⚡" title="Connections" onClose={onClose} onExpand={onExpand} />
       <div style={CARD_BODY_STYLE}>
-        {loading ? <LoadingRows n={5} /> : PROVIDERS.map((name, i) => {
+        {loading ? <LoadingRows n={5} /> : data?.__state === "disconnected" ? <TruthMessage state="disconnected" empty="" error={data?.__error} /> : PROVIDERS.map((name) => {
           const key = name.toLowerCase();
-          const status = health[key] ?? health[name] ?? (i < 3);
+          const provider = health[key] ?? health[name];
+          const status = providerConnected(provider);
           return (
             <div key={name} style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 7 }}>
               <StatusDot status={status ? "active" : "inactive"} />
@@ -664,7 +653,7 @@ export function ConnectionsCard({ data, loading, onClose, onExpand }: {
           );
         })}
         <Divider />
-        <Muted>{connected || 3}/{total || 5} connected</Muted>
+        <Muted>{connected}/{total} connected</Muted>
       </div>
     </div>
   );
@@ -676,10 +665,12 @@ export function ConnectionsExpanded({ data, loading, onClose }: { data: any; loa
     <ExpandedWrapper>
       <ExpandedHeader icon="⚡" title="Provider Health" onClose={onClose} />
       <div style={{ padding: "14px 16px" }}>
-        {loading ? <LoadingRows n={6} /> : PROVIDERS.map((name, i) => {
+        {loading ? <LoadingRows n={6} /> : data?.__state === "disconnected" ? <TruthMessage state="disconnected" empty="" error={data?.__error} /> : PROVIDERS.map((name) => {
           const key = name.toLowerCase();
-          const status = health[key] ?? health[name] ?? (i < 3);
-          const latency = data?.latency?.[key] ?? Math.floor(Math.random() * 200 + 40);
+          const provider = health[key] ?? health[name];
+          const status = providerConnected(provider);
+          const latency = Number.isFinite(data?.latency?.[key]) ? data.latency[key]
+            : Number.isFinite(provider?.latencyMs) ? provider.latencyMs : null;
           return (
             <div key={name} style={{
               display: "flex", alignItems: "center", gap: 10, marginBottom: 8,
@@ -689,7 +680,7 @@ export function ConnectionsExpanded({ data, loading, onClose }: { data: any; loa
               <StatusDot status={status ? "active" : "inactive"} />
               <div style={{ flex: 1 }}>
                 <div style={{ fontWeight: 600, marginBottom: 2 }}>{name}</div>
-                <Muted>Latency: {latency}ms</Muted>
+                <Muted>{latency == null ? "Latency not measured" : `Latency: ${latency}ms`}</Muted>
               </div>
               <Badge label={status ? "connected" : "missing"} color={status ? "green" : "gray"} />
             </div>
@@ -700,13 +691,49 @@ export function ConnectionsExpanded({ data, loading, onClose }: { data: any; loa
   );
 }
 
-// ─── Kalshi widget — see KalshiWidget.tsx ────────────────────────────────────
+export function TrustCard({ data, loading, onClose, onExpand }: {
+  data: any; loading: boolean; onClose: () => void; onExpand: () => void;
+}) {
+  const live = data?.state === "live";
+  return (
+    <div style={CARD_STYLE}>
+      <CardHeader icon="◇" title="Trust Boundary" onClose={onClose} onExpand={onExpand} />
+      <div style={CARD_BODY_STYLE}>
+        {loading ? <LoadingRows /> : !live ? <TruthMessage state={truthState(data, false)} empty="Trust status unavailable." error={data?.__error} /> : (
+          <>
+            <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 8 }}><Muted>Principal</Muted><Badge label={data.principal?.kind || "unknown"} color={data.directOwner ? "green" : "amber"} /></div>
+            <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 8 }}><Muted>Bind host</Muted><span style={{ fontSize: 12 }}>{data.bindHost}</span></div>
+            <div style={{ display: "flex", justifyContent: "space-between" }}><Muted>Owner relay</Muted><Badge label={data.remoteRelayConfigured ? "configured" : "off"} color={data.remoteRelayConfigured ? "amber" : "gray"} /></div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
 
-const KALSHI_MOCK_MARKETS: KalshiMarket[] = [
-  { ticker: "FED-25",       title: "Fed cuts rates in 2025?",        category: "Macro",    yesBid: 62, yesAsk: 63, noBid: 37, noAsk: 38, spread: 1, volume: 412000, closeTime: "2025-12-31" },
-  { ticker: "RECESSION-25", title: "US Recession in 2025?",          category: "Economy",  yesBid: 28, yesAsk: 29, noBid: 71, noAsk: 72, spread: 1, volume: 255000, closeTime: "2025-12-31" },
-  { ticker: "BTC-100K",     title: "BTC reaches $100K by EOY?",      category: "Crypto",   yesBid: 51, yesAsk: 52, noBid: 48, noAsk: 49, spread: 1, volume: 890000, closeTime: "2025-12-31" },
-];
+export function TrustExpanded({ data, loading, onClose }: { data: any; loading: boolean; onClose: () => void }) {
+  return (
+    <ExpandedWrapper>
+      <ExpandedHeader icon="◇" title="Trust Boundary" badge={data?.directOwner ? "direct owner" : data?.principal?.kind} onClose={onClose} />
+      <div style={{ padding: 16 }}>
+        {loading ? <LoadingRows n={4} /> : data?.state !== "live" ? <TruthMessage state={truthState(data, false)} empty="Trust status unavailable." error={data?.__error} /> : (
+          <>
+            <div style={{ marginBottom: 12 }}><Badge label={data.directOwner ? "LOCAL OWNER" : String(data.principal?.kind || "UNKNOWN")} color={data.directOwner ? "green" : "amber"} /></div>
+            <div style={{ fontSize: 13, lineHeight: 1.7 }}>
+              <div>Server binding: <strong>{data.bindHost}</strong></div>
+              <div>Signed Cloudflare relay: <strong>{data.remoteRelayConfigured ? "configured" : "not configured"}</strong></div>
+              <div>Principal trust: <strong>{data.principal?.trustLevel || "none"}</strong></div>
+            </div>
+            <Divider />
+            <Muted>Remote access is controlled by JARVIS_HOST, JARVIS_ACCESS_TOKEN and JARVIS_RELAY_SECRET. Approval decisions remain restricted to the direct owner surface.</Muted>
+          </>
+        )}
+      </div>
+    </ExpandedWrapper>
+  );
+}
+
+// ─── Kalshi widget — see KalshiWidget.tsx ────────────────────────────────────
 
 // KalshiCard and KalshiExpanded are imported from KalshiWidget.tsx
 
@@ -737,11 +764,11 @@ export function VisionCard({ data, loading, onClose, onExpand }: {
         }}>
           <Muted>No snapshot</Muted>
         </div>
-        <button style={{
+        <button disabled title="Camera controls are not connected to the current JARVIS shell." style={{
           width: "100%", borderRadius: 7, padding: "7px 0", fontSize: 13, cursor: "pointer",
           background: "rgba(0,229,255,0.1)", border: "1px solid rgba(0,229,255,0.28)",
           color: "rgba(0,229,255,0.9)", fontWeight: 600, minHeight: "auto",
-        }}>Start Camera</button>
+        }}>Camera not connected</button>
       </div>
     </div>
   );
@@ -757,14 +784,14 @@ export function VisionExpanded({ data, loading, onClose }: { data: any; loading:
           border: "1px solid rgba(0,229,255,0.15)", display: "flex", alignItems: "center", justifyContent: "center",
           marginBottom: 12,
         }}>
-          <Muted>Camera feed will appear here</Muted>
+          <Muted>No live camera session is connected.</Muted>
         </div>
         <div style={{ display: "flex", gap: 8 }}>
-          <button style={{
+          <button disabled title="Live camera is not connected to this shell." style={{
             flex: 1, background: "rgba(32,247,164,0.15)", border: "1px solid rgba(32,247,164,0.35)",
             borderRadius: 8, padding: "8px 0", fontSize: 13, color: "#20f7a4", fontWeight: 600, cursor: "pointer", minHeight: "auto",
-          }}>Start Live Feed</button>
-          <button style={{
+          }}>Live feed unavailable</button>
+          <button disabled title="Snapshot requires an active live feed." style={{
             flex: 1, background: "rgba(0,229,255,0.07)", border: "1px solid rgba(0,229,255,0.2)",
             borderRadius: 8, padding: "8px 0", fontSize: 13, cursor: "pointer", minHeight: "auto",
           }}>Snapshot</button>
@@ -785,11 +812,7 @@ export function MemoryCard({ data, loading, onClose, onExpand }: {
     <div style={CARD_STYLE}>
       <CardHeader icon="◈" title="Memory" onClose={onClose} onExpand={onExpand} />
       <div style={CARD_BODY_STYLE}>
-        {loading ? <LoadingRows /> : (entries.length > 0 ? entries : [
-          { content: "Helix Phase 2 complete — build phase", created_at: "2026-06-30T10:00:00Z" },
-          { content: "Widget strip design finalized", created_at: "2026-06-30T09:45:00Z" },
-          { content: "Kalshi API integration tested", created_at: "2026-06-29T18:30:00Z" },
-        ]).slice(0, 3).map((e: any, i: number) => (
+        {loading ? <LoadingRows /> : entries.length === 0 ? <TruthMessage state={truthState(data, false)} empty="No memories are stored in this scope." error={data?.__error} /> : entries.slice(0, 3).map((e: any, i: number) => (
           <div key={i} style={{ marginBottom: 9 }}>
             <div style={{ fontSize: 12, marginBottom: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
               {e.content ?? e.text ?? e.title}
@@ -798,42 +821,334 @@ export function MemoryCard({ data, loading, onClose, onExpand }: {
           </div>
         ))}
         <Divider />
-        <Muted>{total || 3} stored</Muted>
+        <Muted>{total} stored</Muted>
       </div>
     </div>
   );
 }
 
+// Cortex v4 · 2.3 — Memory Inspector: searchable view of what Jarvis actually
+// remembers (live from the Neural Vault), not a mock timeline.
 export function MemoryExpanded({ data, loading, onClose }: { data: any; loading: boolean; onClose: () => void }) {
-  const entries: any[] = data?.entries ?? [];
+  const [query, setQuery] = useState("");
+  const [results, setResults] = useState<any[] | null>(null);
+  const [searching, setSearching] = useState(false);
+  const runSearch = useCallback((q: string) => {
+    const term = q.trim();
+    if (!term) { setResults(null); return; }
+    setSearching(true);
+    api<any>(`/api/neural-vault/entries?q=${encodeURIComponent(term)}&limit=25`)
+      .then((r) => setResults(Array.isArray(r?.entries) ? r.entries : []))
+      .catch(() => setResults([]))
+      .finally(() => setSearching(false));
+  }, []);
+  const entries: any[] = results ?? data?.entries ?? [];
+  const total = data?.total ?? entries.length;
   return (
     <ExpandedWrapper>
-      <ExpandedHeader icon="◈" title="Memory Timeline" onClose={onClose} />
-      <div style={{ padding: "14px 16px" }}>
-        {loading ? <LoadingRows n={6} /> : (entries.length > 0 ? entries : [
-          { content: "Helix Phase 2 complete — build phase", created_at: "2026-06-30T10:00:00Z", tag: "project" },
-          { content: "Widget strip design finalized", created_at: "2026-06-30T09:45:00Z", tag: "design" },
-          { content: "Kalshi API integration tested", created_at: "2026-06-29T18:30:00Z", tag: "api" },
-          { content: "Neural vault schema updated", created_at: "2026-06-29T15:00:00Z", tag: "system" },
-          { content: "Hologram map Boston overlay rendered", created_at: "2026-06-28T12:00:00Z", tag: "ui" },
-        ]).map((e: any, i: number) => (
-          <div key={i} style={{
+      <ExpandedHeader icon="◈" title="Memory Inspector" badge={results ? `${entries.length} match` : `${total} stored`} onClose={onClose} />
+      <div style={{ padding: "12px 16px 6px" }}>
+        <input
+          value={query}
+          onChange={(e) => { setQuery(e.target.value); }}
+          onKeyDown={(e) => { if (e.key === "Enter") runSearch(query); }}
+          placeholder="Search what Jarvis remembers…"
+          style={{
+            width: "100%", boxSizing: "border-box", padding: "8px 11px", fontSize: 13,
+            background: "rgba(0,229,255,0.05)", border: "1px solid rgba(0,229,255,0.22)",
+            borderRadius: 8, color: "rgba(230,251,255,0.92)", outline: "none",
+          }}
+        />
+      </div>
+      <div style={{ padding: "6px 16px 14px", maxHeight: "62vh", overflowY: "auto" }}>
+        {(loading || searching) ? <LoadingRows n={6} /> : entries.length === 0 ? (
+          <Muted>{results ? "No memories match that search." : "No memories stored yet."}</Muted>
+        ) : entries.map((e: any, i: number) => (
+          <div key={e.id ?? i} style={{
             display: "flex", gap: 10, marginBottom: 10, paddingBottom: 10,
             borderBottom: "1px solid rgba(0,229,255,0.08)",
           }}>
-            <div style={{
-              width: 2, flexShrink: 0, background: "rgba(0,229,255,0.3)",
-              borderRadius: 2, alignSelf: "stretch",
-            }} />
+            <div style={{ width: 2, flexShrink: 0, background: "rgba(0,229,255,0.3)", borderRadius: 2, alignSelf: "stretch" }} />
             <div style={{ flex: 1 }}>
               <div style={{ fontSize: 12, marginBottom: 3 }}>{e.content ?? e.text ?? e.title}</div>
               <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
                 <Muted>{e.created_at ? new Date(e.created_at).toLocaleString() : ""}</Muted>
-                {e.tag && <Badge label={e.tag} color="cyan" />}
+                {(e.topic || e.type) && <Badge label={e.topic || e.type} color="cyan" />}
+                {typeof e.importance === "number" && e.importance >= 7 && <Badge label="key" color="cyan" />}
               </div>
             </div>
           </div>
         ))}
+      </div>
+    </ExpandedWrapper>
+  );
+}
+
+// ─── Profile widget (Cortex v4 P2 — "everything about me") ────────────────────
+
+export function ProfileCard({ data, loading, onClose, onExpand }: {
+  data: any; loading: boolean; onClose: () => void; onExpand: () => void;
+}) {
+  const id = data?.identity ?? {};
+  const place = data?.location?.resolved?.placeName ?? "—";
+  const prefs: any[] = data?.preferences ?? [];
+  return (
+    <div style={CARD_STYLE}>
+      <CardHeader icon="◐" title="Profile" onClose={onClose} onExpand={onExpand} />
+      <div style={CARD_BODY_STYLE}>
+        {loading ? <LoadingRows /> : (
+          <>
+            <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 2 }}>{id.preferred_name || id.legal_name || "—"}</div>
+            {id.bio ? <Muted>{id.bio}</Muted> : null}
+            <Divider />
+            <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 5 }}>
+              <Muted>Location</Muted><span style={{ fontSize: 12 }}>{place}</span>
+            </div>
+            <div style={{ display: "flex", justifyContent: "space-between" }}>
+              <Muted>Local time</Muted><span style={{ fontSize: 12 }}>{data?.time || "—"}</span>
+            </div>
+            <Divider />
+            <Muted>{prefs.length} preferences · {(data?.goals?.length ?? 0)} goals</Muted>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+export function ProfileExpanded({ data, loading, onClose }: { data: any; loading: boolean; onClose: () => void }) {
+  const id = data?.identity ?? {};
+  const prefs: any[] = data?.preferences ?? [];
+  const goals: any[] = data?.goals ?? [];
+  const facts: string[] = data?.facts ?? [];
+  const locations: any[] = data?.locations ?? [];
+  const row = (label: string, value: any) => value ? (
+    <div style={{ display: "flex", gap: 10, marginBottom: 8 }}>
+      <div style={{ width: 110, flexShrink: 0 }}><Muted>{label}</Muted></div>
+      <div style={{ flex: 1, fontSize: 13 }}>{value}</div>
+    </div>
+  ) : null;
+  return (
+    <ExpandedWrapper>
+      <ExpandedHeader icon="◐" title="About You" badge={data?.location?.resolved?.placeName} onClose={onClose} />
+      <div style={{ padding: "14px 16px", maxHeight: "70vh", overflowY: "auto" }}>
+        {loading ? <LoadingRows n={6} /> : (
+          <>
+            <div style={{ marginBottom: 14 }}>
+              {row("Name", id.legal_name)}
+              {row("Call me", id.preferred_name)}
+              {row("Bio", id.bio)}
+              {row("Email", id.primary_email)}
+              {row("Timezone", id.home_timezone)}
+              {row("Local time", data?.time)}
+            </div>
+            {prefs.length > 0 && (
+              <>
+                <div style={{ fontSize: 12, fontWeight: 700, color: "rgba(0,229,255,0.8)", textTransform: "uppercase", letterSpacing: "0.08em", margin: "6px 0 8px" }}>Preferences</div>
+                {prefs.map((p: any, i: number) => (
+                  <div key={i} style={{ display: "flex", gap: 8, marginBottom: 6, fontSize: 12 }}>
+                    <Badge label={p.category || "pref"} color="cyan" />
+                    <span style={{ opacity: 0.7 }}>{p.subject}:</span>
+                    <span>{p.value}</span>
+                  </div>
+                ))}
+              </>
+            )}
+            {goals.length > 0 && (
+              <>
+                <div style={{ fontSize: 12, fontWeight: 700, color: "rgba(0,229,255,0.8)", textTransform: "uppercase", letterSpacing: "0.08em", margin: "12px 0 8px" }}>Goals</div>
+                {goals.map((g: any, i: number) => (
+                  <div key={i} style={{ fontSize: 12, marginBottom: 5 }}>• {g.title} {g.kind ? <Muted>({g.kind})</Muted> : null}</div>
+                ))}
+              </>
+            )}
+            {facts.length > 0 && (
+              <>
+                <div style={{ fontSize: 12, fontWeight: 700, color: "rgba(0,229,255,0.8)", textTransform: "uppercase", letterSpacing: "0.08em", margin: "12px 0 8px" }}>Facts</div>
+                {facts.map((f: string, i: number) => <div key={i} style={{ fontSize: 12, marginBottom: 4 }}>• {f}</div>)}
+              </>
+            )}
+            {locations.length > 0 && (
+              <>
+                <div style={{ fontSize: 12, fontWeight: 700, color: "rgba(0,229,255,0.8)", textTransform: "uppercase", letterSpacing: "0.08em", margin: "12px 0 8px" }}>Locations</div>
+                {locations.map((l: any, i: number) => (
+                  <div key={i} style={{ fontSize: 12, marginBottom: 4 }}>• {l.label}: {l.address} <Muted>({l.timezone})</Muted></div>
+                ))}
+              </>
+            )}
+            {data?.cost && (
+              <>
+                <div style={{ fontSize: 12, fontWeight: 700, color: "rgba(0,229,255,0.8)", textTransform: "uppercase", letterSpacing: "0.08em", margin: "12px 0 8px" }}>Usage &amp; Cost</div>
+                <div style={{ display: "flex", gap: 18, marginBottom: 8 }}>
+                  <div><div style={{ fontSize: 18, fontWeight: 700 }}>${(data.cost.today?.cost ?? 0).toFixed(2)}</div><Muted>today · {data.cost.today?.calls ?? 0} calls</Muted></div>
+                  <div><div style={{ fontSize: 18, fontWeight: 700 }}>${(data.cost.month?.cost ?? 0).toFixed(2)}</div><Muted>this month</Muted></div>
+                </div>
+                {data.cost.byModel && Object.entries(data.cost.byModel).map(([m, v]: [string, any]) => (
+                  <div key={m} style={{ display: "flex", justifyContent: "space-between", fontSize: 11.5, marginBottom: 3 }}>
+                    <span style={{ opacity: 0.75 }}>{m.replace("gemini-", "")}</span>
+                    <span><span style={{ opacity: 0.55 }}>{v.calls} calls · </span>${(v.cost ?? 0).toFixed(3)}</span>
+                  </div>
+                ))}
+              </>
+            )}
+          </>
+        )}
+      </div>
+    </ExpandedWrapper>
+  );
+}
+
+// ─── Weather widget (Cortex v4 P4 — keyless open-meteo) ───────────────────────
+
+function dayName(dateStr: string, i: number): string {
+  if (i === 0) return "Today";
+  try { return new Date(dateStr + "T12:00:00").toLocaleDateString(undefined, { weekday: "short" }); } catch { return dateStr; }
+}
+
+export function WeatherCard({ data, loading, onClose, onExpand }: {
+  data: any; loading: boolean; onClose: () => void; onExpand: () => void;
+}) {
+  const cur = data?.current;
+  const days: any[] = data?.days ?? [];
+  return (
+    <div style={CARD_STYLE}>
+      <CardHeader icon="☀" title={data?.place ? `Weather · ${data.place}` : "Weather"} onClose={onClose} onExpand={onExpand} />
+      <div style={CARD_BODY_STYLE}>
+        {loading ? <LoadingRows /> : !cur ? <Muted>Weather unavailable.</Muted> : (
+          <>
+            <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8 }}>
+              <span style={{ fontSize: 30 }}>{cur.icon}</span>
+              <div>
+                <div style={{ fontSize: 26, fontWeight: 700, lineHeight: 1 }}>{cur.temp}°</div>
+                <Muted>{cur.label} · feels {cur.feels}°</Muted>
+              </div>
+            </div>
+            <div style={{ display: "flex", gap: 12, marginBottom: 8, fontSize: 11 }}>
+              <Muted>💧 {cur.humidity ?? "—"}%</Muted><Muted>🌬 {cur.wind} mph</Muted>
+            </div>
+            <Divider />
+            <div style={{ display: "flex", justifyContent: "space-between" }}>
+              {days.slice(1, 4).map((d, i) => (
+                <div key={i} style={{ textAlign: "center", fontSize: 11 }}>
+                  <div style={{ opacity: 0.65 }}>{dayName(d.date, i + 1)}</div>
+                  <div style={{ fontSize: 16 }}>{d.icon}</div>
+                  <div>{d.hi}°<span style={{ opacity: 0.5 }}>/{d.lo}°</span></div>
+                </div>
+              ))}
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+export function WeatherExpanded({ data, loading, onClose }: { data: any; loading: boolean; onClose: () => void }) {
+  const cur = data?.current;
+  const days: any[] = data?.days ?? [];
+  return (
+    <ExpandedWrapper>
+      <ExpandedHeader icon="☀" title={`Weather${data?.place ? ` · ${data.place}` : ""}`} badge={cur ? `${cur.temp}°F` : undefined} onClose={onClose} />
+      <div style={{ padding: "16px" }}>
+        {loading ? <LoadingRows n={5} /> : !cur ? <Muted>Weather is unavailable right now.</Muted> : (
+          <>
+            <div style={{ display: "flex", alignItems: "center", gap: 16, marginBottom: 16 }}>
+              <span style={{ fontSize: 52 }}>{cur.icon}</span>
+              <div>
+                <div style={{ fontSize: 42, fontWeight: 700, lineHeight: 1 }}>{cur.temp}°F</div>
+                <div style={{ fontSize: 14 }}>{cur.label}</div>
+                <Muted>Feels like {cur.feels}° · 💧 {cur.humidity ?? "—"}% · 🌬 {cur.wind} mph</Muted>
+              </div>
+            </div>
+            <div style={{ fontSize: 12, fontWeight: 700, color: "rgba(0,229,255,0.8)", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 8 }}>4-Day Forecast</div>
+            {days.map((d, i) => (
+              <div key={i} style={{ display: "flex", alignItems: "center", gap: 12, padding: "8px 0", borderBottom: "1px solid rgba(0,229,255,0.08)" }}>
+                <div style={{ width: 54, fontSize: 13 }}>{dayName(d.date, i)}</div>
+                <span style={{ fontSize: 20, width: 28 }}>{d.icon}</span>
+                <div style={{ flex: 1, fontSize: 13 }}>{d.label}</div>
+                {d.precip != null && d.precip > 0 && <Muted>💧{d.precip}%</Muted>}
+                <div style={{ fontSize: 13, fontVariantNumeric: "tabular-nums" }}>{d.hi}° <span style={{ opacity: 0.5 }}>/ {d.lo}°</span></div>
+              </div>
+            ))}
+          </>
+        )}
+      </div>
+    </ExpandedWrapper>
+  );
+}
+
+// ─── System Vitals widget (Cortex v4 P4 — real node os stats) ─────────────────
+
+function fmtUptime(sec: number): string {
+  if (!sec || sec < 0) return "—";
+  const d = Math.floor(sec / 86400), h = Math.floor((sec % 86400) / 3600), m = Math.floor((sec % 3600) / 60);
+  return d > 0 ? `${d}d ${h}h` : h > 0 ? `${h}h ${m}m` : `${m}m`;
+}
+function Meter({ pct, warn = 80 }: { pct: number; warn?: number }) {
+  const color = pct >= warn ? "#ffbc60" : pct >= 92 ? "#ff6b6b" : "#20f7a4";
+  return (
+    <div style={{ height: 6, background: "rgba(0,229,255,0.1)", borderRadius: 4, overflow: "hidden" }}>
+      <div style={{ width: `${Math.min(100, Math.max(0, pct))}%`, height: "100%", background: color, borderRadius: 4, transition: "width .4s" }} />
+    </div>
+  );
+}
+
+export function VitalsCard({ data, loading, onClose, onExpand }: {
+  data: any; loading: boolean; onClose: () => void; onExpand: () => void;
+}) {
+  const mem = data?.memory; const cpu = data?.cpu;
+  return (
+    <div style={CARD_STYLE}>
+      <CardHeader icon="◍" title="System Vitals" onClose={onClose} onExpand={onExpand} />
+      <div style={CARD_BODY_STYLE}>
+        {loading ? <LoadingRows /> : !data?.available ? <Muted>Vitals unavailable.</Muted> : (
+          <>
+            <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, marginBottom: 4 }}>
+              <span>Memory</span><Muted>{mem?.usedGB}/{mem?.totalGB} GB · {mem?.pct}%</Muted>
+            </div>
+            <Meter pct={mem?.pct ?? 0} />
+            <div style={{ marginTop: 10, display: "flex", justifyContent: "space-between" }}>
+              <Muted>CPU</Muted><span style={{ fontSize: 12 }}>{cpu?.cores} cores</span>
+            </div>
+            <div style={{ display: "flex", justifyContent: "space-between" }}>
+              <Muted>Uptime</Muted><span style={{ fontSize: 12 }}>{fmtUptime(data?.uptimeSec)}</span>
+            </div>
+            <Divider />
+            <Muted>Jarvis: {data?.jarvis?.rssMB} MB · up {fmtUptime(data?.jarvis?.uptimeSec)}</Muted>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+export function VitalsExpanded({ data, loading, onClose }: { data: any; loading: boolean; onClose: () => void }) {
+  const mem = data?.memory; const cpu = data?.cpu; const jv = data?.jarvis;
+  const row = (label: string, value: any, meter?: number) => (
+    <div style={{ marginBottom: 12 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13, marginBottom: 4 }}>
+        <span>{label}</span><span style={{ fontVariantNumeric: "tabular-nums" }}>{value}</span>
+      </div>
+      {typeof meter === "number" ? <Meter pct={meter} /> : null}
+    </div>
+  );
+  return (
+    <ExpandedWrapper>
+      <ExpandedHeader icon="◍" title="System Vitals" badge={data?.host} onClose={onClose} />
+      <div style={{ padding: "16px" }}>
+        {loading ? <LoadingRows n={5} /> : !data?.available ? <Muted>System vitals are unavailable.</Muted> : (
+          <>
+            {row("Memory", `${mem?.usedGB} / ${mem?.totalGB} GB (${mem?.pct}%)`, mem?.pct)}
+            {row("CPU", `${cpu?.cores} cores · load ${cpu?.load1}`)}
+            {row("Platform", data?.platform)}
+            {row("System uptime", fmtUptime(data?.uptimeSec))}
+            <div style={{ fontSize: 12, fontWeight: 700, color: "rgba(0,229,255,0.8)", textTransform: "uppercase", letterSpacing: "0.08em", margin: "8px 0" }}>Jarvis Process</div>
+            {row("Resident memory", `${jv?.rssMB} MB`)}
+            {row("Heap used", `${jv?.heapMB} MB`)}
+            {row("Process uptime", fmtUptime(jv?.uptimeSec))}
+            <div style={{ fontSize: 11, opacity: 0.55, marginTop: 4 }}>{cpu?.model}</div>
+          </>
+        )}
       </div>
     </ExpandedWrapper>
   );
@@ -855,12 +1170,7 @@ export function DevicesCard({ data, loading, onClose, onExpand }: {
     <div style={CARD_STYLE}>
       <CardHeader icon="◫" title="Devices" onClose={onClose} onExpand={onExpand} />
       <div style={CARD_BODY_STYLE}>
-        {loading ? <LoadingRows n={4} /> : (devices.length > 0 ? devices : [
-          { name: "MacBook Pro", kind: "laptop", status: "online" },
-          { name: "iPhone 15 Pro", kind: "phone", status: "online" },
-          { name: "JARVIS Server", kind: "server", status: "online" },
-          { name: "Security Cam", kind: "camera", status: "offline" },
-        ]).slice(0, 4).map((d: any, i: number) => (
+        {loading ? <LoadingRows n={4} /> : devices.length === 0 ? <TruthMessage state={truthState(data, false)} empty="No devices are paired." error={data?.__error} /> : devices.slice(0, 4).map((d: any, i: number) => (
           <div key={i} style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
             <span style={{ fontSize: 14 }}>{DEVICE_ICONS[d.kind ?? "default"] ?? "◫"}</span>
             <span style={{ flex: 1, fontSize: 12, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{d.name}</span>
@@ -869,7 +1179,7 @@ export function DevicesCard({ data, loading, onClose, onExpand }: {
           </div>
         ))}
         <Divider />
-        <Muted>{online || 3} online</Muted>
+        <Muted>{online} online</Muted>
       </div>
     </div>
   );
@@ -881,13 +1191,7 @@ export function DevicesExpanded({ data, loading, onClose }: { data: any; loading
     <ExpandedWrapper>
       <ExpandedHeader icon="◫" title="Device Mesh" onClose={onClose} />
       <div style={{ padding: "14px 16px" }}>
-        {loading ? <LoadingRows n={5} /> : (devices.length > 0 ? devices : [
-          { name: "MacBook Pro", kind: "laptop", status: "online", ip: "192.168.1.10" },
-          { name: "iPhone 15 Pro", kind: "phone", status: "online", ip: "192.168.1.11" },
-          { name: "JARVIS Server", kind: "server", status: "online", ip: "192.168.1.1" },
-          { name: "Security Cam", kind: "camera", status: "offline", ip: "192.168.1.20" },
-          { name: "Smart Hub", kind: "sensor", status: "online", ip: "192.168.1.50" },
-        ]).map((d: any, i: number) => (
+        {loading ? <LoadingRows n={5} /> : devices.length === 0 ? <TruthMessage state={truthState(data, false)} empty="No devices are paired." error={data?.__error} /> : devices.map((d: any, i: number) => (
           <div key={i} style={{
             display: "flex", alignItems: "center", gap: 10, marginBottom: 8,
             padding: "9px 12px", background: "rgba(0,229,255,0.04)",
@@ -917,11 +1221,7 @@ export function ReceiptsCard({ data, loading, onClose, onExpand }: {
     <div style={CARD_STYLE}>
       <CardHeader icon="◻" title="Receipts" onClose={onClose} onExpand={onExpand} />
       <div style={CARD_BODY_STYLE}>
-        {loading ? <LoadingRows /> : (receipts.length > 0 ? receipts : [
-          { operation: "fetchContext", target: "helix.projects", timestamp: "2026-06-30T10:01:00Z" },
-          { operation: "streamPost", target: "/api/brain", timestamp: "2026-06-30T09:58:00Z" },
-          { operation: "readMemory", target: "neural-vault", timestamp: "2026-06-30T09:45:00Z" },
-        ]).slice(0, 3).map((r: any, i: number) => (
+        {loading ? <LoadingRows /> : receipts.length === 0 ? <TruthMessage state={truthState(data, false)} empty="No verified actions have been recorded." error={data?.__error} /> : receipts.slice(0, 3).map((r: any, i: number) => (
           <div key={i} style={{ marginBottom: 8 }}>
             <div style={{ display: "flex", gap: 6, alignItems: "center", marginBottom: 1 }}>
               <span style={{ fontSize: 12, fontWeight: 600 }}>{r.operation ?? r.action ?? "op"}</span>
@@ -934,7 +1234,7 @@ export function ReceiptsCard({ data, loading, onClose, onExpand }: {
           </div>
         ))}
         <Divider />
-        <Muted>{total || 3} logs</Muted>
+        <Muted>{total} logs</Muted>
       </div>
     </div>
   );
@@ -946,13 +1246,7 @@ export function ReceiptsExpanded({ data, loading, onClose }: { data: any; loadin
     <ExpandedWrapper>
       <ExpandedHeader icon="◻" title="Receipt Log" onClose={onClose} />
       <div style={{ padding: "14px 16px" }}>
-        {loading ? <LoadingRows n={6} /> : (receipts.length > 0 ? receipts : [
-          { operation: "fetchContext", target: "helix.projects", timestamp: "2026-06-30T10:01:00Z", status: "ok" },
-          { operation: "streamPost", target: "/api/brain", timestamp: "2026-06-30T09:58:00Z", status: "ok" },
-          { operation: "readMemory", target: "neural-vault", timestamp: "2026-06-30T09:45:00Z", status: "ok" },
-          { operation: "devicePing", target: "192.168.1.20", timestamp: "2026-06-30T09:30:00Z", status: "error" },
-          { operation: "kalshiFetch", target: "/api/kalshi/markets", timestamp: "2026-06-30T09:15:00Z", status: "ok" },
-        ]).map((r: any, i: number) => (
+        {loading ? <LoadingRows n={6} /> : receipts.length === 0 ? <TruthMessage state={truthState(data, false)} empty="No verified actions have been recorded." error={data?.__error} /> : receipts.map((r: any, i: number) => (
           <div key={i} style={{
             display: "flex", alignItems: "center", gap: 10, marginBottom: 7,
             padding: "8px 11px", background: "rgba(0,229,255,0.04)",
@@ -992,13 +1286,14 @@ export function GraphCard({ onClose, onExpand }: { onClose: () => void; onExpand
           </div>
         </div>
         <button
-          onClick={() => window.open("/graph.html", "_blank")}
+          disabled
+          title="Graph workspace is not connected to the current shell yet."
           style={{
             width: "100%", background: "rgba(0,229,255,0.1)", border: "1px solid rgba(0,229,255,0.28)",
             borderRadius: 7, padding: "7px 0", fontSize: 13, color: "rgba(0,229,255,0.9)",
             fontWeight: 600, cursor: "pointer", minHeight: "auto",
           }}
-        >Open Graph →</button>
+        >Graph unavailable</button>
       </div>
     </div>
   );
@@ -1012,17 +1307,13 @@ export function HelixCard({ data, loading, onClose, onExpand }: {
   data: any; loading: boolean; onClose: () => void; onExpand: () => void;
 }) {
   const projects: any[] = data?.projects ?? [];
-  const active = projects.find((p: any) => p.active || p.status === "active") ?? {
-    name: "JARVIS OS",
-    goal: "Build spatial shell with widget system",
-    phase: "Build",
-  };
-  const currentPhaseIdx = HELIX_PHASES.indexOf(active.phase ?? "Build");
+  const active = projects.find((p: any) => p.active || p.status === "active") ?? null;
+  const currentPhaseIdx = active ? HELIX_PHASES.indexOf(active.phase ?? "") : -1;
   return (
     <div style={CARD_STYLE}>
       <CardHeader icon="⬡" title="Helix" onClose={onClose} onExpand={onExpand} />
       <div style={CARD_BODY_STYLE}>
-        {loading ? <LoadingRows /> : (
+        {loading ? <LoadingRows /> : !active ? <TruthMessage state={truthState(data, false)} empty="No active HELIX project." error={data?.__error} /> : (
           <>
             <div style={{ fontSize: 14, fontWeight: 700, marginBottom: 3 }}>{active.name ?? "JARVIS OS"}</div>
             <div style={{ fontSize: 12, color: "rgba(230,251,255,0.65)", marginBottom: 10, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
@@ -1049,7 +1340,7 @@ export function HelixCard({ data, loading, onClose, onExpand }: {
           </>
         )}
         <button
-          onClick={() => window.open("/helix.html", "_blank")}
+          onClick={() => document.dispatchEvent(new CustomEvent("jarvis:open-widget", { detail: { id: "helix", focus: true } }))}
           style={{
             width: "100%", background: "rgba(0,229,255,0.08)", border: "1px solid rgba(0,229,255,0.22)",
             borderRadius: 7, padding: "6px 0", fontSize: 12, color: "rgba(0,229,255,0.85)",
@@ -1062,7 +1353,10 @@ export function HelixCard({ data, loading, onClose, onExpand }: {
 }
 
 export function HelixExpanded({ onClose }: { onClose: () => void }) {
-  useEffect(() => { window.open("/helix.html", "_blank"); onClose(); }, []);
+  useEffect(() => {
+    document.dispatchEvent(new CustomEvent("jarvis:open-widget", { detail: { id: "helix", focus: true } }));
+    onClose();
+  }, [onClose]);
   return null;
 }
 
@@ -1071,35 +1365,45 @@ export function HelixExpanded({ onClose }: { onClose: () => void }) {
 function getChipStat(id: string, data: any): string {
   if (!data) return "—";
   switch (id) {
+    case "profile":     return data.identity?.preferred_name ?? "—";
+    case "weather":     return data.current ? `${data.current.temp}°` : "—";
+    case "vitals":      return data.memory ? `${data.memory.pct}%` : "—";
     case "modules":     return `${data.modules?.length ?? "—"}`;
     case "projects":    return `${data.projects?.length ?? data.total ?? "—"}`;
-    case "agents":      return `${(data.missions ?? data.agents ?? []).filter((m: any) => m.status === "running" || m.active).length ?? 0} live`;
-    case "connections": return `${Object.values(data.providers ?? {}).filter(Boolean).length}/${Object.keys(data.providers ?? {}).length || 5}`;
+    case "agents":      return `${[...(data.durableMissions ?? []), ...(data.deployableMissions ?? [])].filter((m: any) => m.status === "running" || m.status === "executing").length} live`;
+    case "connections": return `${Object.values(data.providers ?? {}).filter(providerConnected).length}/${Object.keys(data.providers ?? {}).length || PROVIDERS.length}`;
+    case "trust":       return data.directOwner ? "owner" : data.principal?.kind ?? "locked";
     case "kalshi":      return data.markets?.[0] ? `YES ${data.markets[0].yesBid}¢` : "·";
-    case "vision":      return "Standby";
+    case "vision":      return data.mesh?.liveScreen?.active ? "LIVE" : `${(data.mesh?.objects ?? []).filter((item: any) => ["screen", "image", "photo", "camera"].includes(String(item?.type || "").toLowerCase())).length} assets`;
     case "memory":      return `${data.total ?? data.entries?.length ?? "—"}`;
-    case "devices":     return `${(data.devices ?? []).filter((d: any) => d.status === "online" || d.online).length ?? "—"}`;
+    case "devices":     return `${(data.devices ?? []).filter((d: any) => d.approved && d.status === "approved").length} paired`;
     case "receipts":    return `${data.total ?? data.receipts?.length ?? "—"}`;
-    case "graph":       return "→";
-    case "helix":       return data.projects?.find((p: any) => p.active)?.phase ?? "Build";
+    case "graph":       return `${data.stats?.active ?? data.entities?.length ?? 0} nodes`;
+    case "helix":       return `${data.projects?.length ?? 0} projects`;
     default:            return "—";
   }
 }
 
 function getChipStatus(id: string, data: any): "active" | "warning" | "inactive" {
   if (!data) return "inactive";
+  if (data.__state === "disconnected") return "inactive";
+  if (data.__state === "stale") return "warning";
   switch (id) {
     case "connections": {
       const vals = Object.values(data.providers ?? {});
-      if (vals.every(Boolean)) return "active";
-      if (vals.some(Boolean)) return "warning";
+      if (vals.length > 0 && vals.every(providerConnected)) return "active";
+      if (vals.some(providerConnected)) return "warning";
       return "inactive";
     }
-    case "agents":
-      return (data.missions ?? data.agents ?? []).some((m: any) => m.status === "running" || m.active)
-        ? "active" : "inactive";
+    case "trust":
+      return data.state === "live" && data.principal ? "active" : "inactive";
+    case "agents": {
+      const missions = [...(data.durableMissions ?? []), ...(data.deployableMissions ?? [])];
+      if (missions.some((m: any) => m.status === "running" || m.status === "executing")) return "active";
+      return missions.some((m: any) => m.status === "queued" || m.status === "paused") ? "warning" : "inactive";
+    }
     case "kalshi":
-      return "active";
+      return data.__state === "live" && Array.isArray(data.markets) && data.markets.length > 0 ? "active" : "inactive";
     default:
       return "active";
   }
@@ -1107,21 +1411,63 @@ function getChipStatus(id: string, data: any): "active" | "warning" | "inactive"
 
 // ─── Fetch logic per widget ───────────────────────────────────────────────────
 
+async function widgetApi(path: string, empty: Record<string, unknown>): Promise<any> {
+  try {
+    const value = await api<any>(path);
+    return { ...value, __state: value?.__state || "live", __fetchedAt: new Date().toISOString() };
+  } catch (error) {
+    return {
+      ...empty,
+      __state: "disconnected",
+      __error: error instanceof Error ? error.message : String(error),
+      __fetchedAt: new Date().toISOString(),
+    };
+  }
+}
+
 async function fetchWidgetData(id: string): Promise<any> {
   switch (id) {
+    case "profile":
+      return widgetApi("/api/profile", { available: false });
+    case "weather":
+      return widgetApi("/api/weather", { available: false });
+    case "vitals":
+      return widgetApi("/api/system-vitals", { available: false });
     case "modules":
-      return api<any>("/api/modules").catch(() => ({ modules: [] }));
+      return widgetApi("/api/modules", { modules: [] });
     case "projects":
-      return api<any>("/api/projects").catch(() => ({ projects: [] }));
+      return widgetApi("/api/projects", { projects: [] });
     case "agents":
-      return api<any>("/api/agents").catch(() => ({ missions: [] }));
+      return Promise.all([
+        widgetApi("/api/agents", { agents: [] }),
+        widgetApi("/api/agents/missions?limit=100", { missions: [] }),
+        widgetApi("/api/missions", { missions: [], roles: {} }),
+      ]).then(([specialists, deployable, durable]) => ({
+        agents: specialists.agents || [],
+        deployableMissions: (deployable.missions || []).map((mission: any) => ({ ...mission, _source: "deployable" })),
+        durableMissions: (durable.missions || []).map((mission: any) => ({ ...mission, _source: "durable" })),
+        roles: durable.roles || {},
+        __state: [specialists, deployable, durable].some((item) => item.__state === "live") ? "live" : "disconnected",
+        __fetchedAt: new Date().toISOString(),
+      }));
     case "connections":
-      return api<any>("/api/provider-health").catch(() => ({
-        providers: { claude: true, perplexity: true, gemini: false, kalshi: true, google: false },
+      return widgetApi("/api/provider-health", { providers: {} });
+    case "trust":
+      return Promise.all([
+        widgetApi("/api/security/trust", { state: "disconnected", principal: null }),
+        widgetApi("/api/confirmations/pending", { confirmations: [] }),
+        widgetApi("/api/devices", { devices: [] }),
+      ]).then(([trust, approvals, devices]) => ({
+        ...trust,
+        confirmations: approvals.confirmations || [],
+        devices: devices.devices || [],
+        __state: trust.__state,
+        __fetchedAt: new Date().toISOString(),
       }));
     case "kalshi": {
-      const watchlist = await api<any>("/api/kalshi/watchlist").catch(() => ({
-        balance: 0, portfolioValue: 0, markets: KALSHI_MOCK_MARKETS,
+      const watchlist = await api<any>("/api/kalshi/watchlist").catch((error) => ({
+        __state: "disconnected", __error: error instanceof Error ? error.message : String(error),
+        balance: 0, portfolioValue: 0, markets: [], positions: [],
       }));
       return {
         balance:        watchlist.balance        ?? 0,
@@ -1134,21 +1480,38 @@ async function fetchWidgetData(id: string): Promise<any> {
           positions:      watchlist.positions      ?? [],
           latestFill:     watchlist.latestFill     ?? null,
         },
-        markets: watchlist.markets?.length ? watchlist.markets : KALSHI_MOCK_MARKETS,
+        markets: Array.isArray(watchlist.markets) ? watchlist.markets : [],
+        __state: watchlist.__state || (watchlist.markets?.length ? "live" : "empty"),
+        __error: watchlist.__error,
       };
     }
     case "vision":
-      return {};
+      return widgetApi("/api/device-mesh/status", { mesh: {}, frameUrl: "", visionModel: "Gemini" });
     case "memory":
-      return api<any>("/api/neural-vault/entries").catch(() => ({ entries: [], total: 0 }));
+      return Promise.all([
+        widgetApi("/api/memory-os/v4/status", { counts: {}, agents: [], folders: {} }),
+        widgetApi("/api/memory-os/v4/objects?limit=100", { objects: [] }),
+        widgetApi("/api/neural-vault/status", { counts: {}, continuity: {} }),
+        widgetApi("/api/neural-vault/entries?limit=100", { entries: [] }),
+        widgetApi("/api/neural-vault/continuity", {}),
+      ]).then(([memoryOs, objects, vault, entries, continuity]) => ({
+        memoryOs,
+        objects: objects.objects ?? [],
+        vault,
+        entries: entries.entries ?? [],
+        continuity,
+        total: memoryOs?.counts?.objects ?? objects.objects?.length ?? 0,
+        __state: [memoryOs, objects, vault].some((item) => item.__state === "live") ? "live" : "disconnected",
+        __fetchedAt: new Date().toISOString(),
+      }));
     case "devices":
-      return api<any>("/api/devices").catch(() => ({ devices: [] }));
+      return widgetApi("/api/devices", { devices: [] });
     case "receipts":
-      return api<any>("/api/receipts").catch(() => ({ receipts: [], total: 0 }));
+      return widgetApi("/api/receipts", { receipts: [], total: 0 });
     case "graph":
-      return {};
+      return widgetApi("/api/memory/life-graph?limit=120", { stats: {}, buckets: {}, entities: [], summary: {} });
     case "helix":
-      return api<any>("/api/helix/projects").catch(() => ({ projects: [] }));
+      return widgetApi("/api/helix/projects", { projects: [] });
     default:
       return {};
   }
@@ -1156,7 +1519,7 @@ async function fetchWidgetData(id: string): Promise<any> {
 
 // ─── Main WidgetStrip component ───────────────────────────────────────────────
 
-export function WidgetStrip({ mode, showChips = true }: { mode: string; showChips?: boolean }) {
+function LegacyWidgetStrip({ mode, showChips = true }: { mode: string; showChips?: boolean }) {
   if (mode !== "main") return null;
 
   const [activeId, setActiveId] = useState<string | null>(null);
@@ -1198,14 +1561,35 @@ export function WidgetStrip({ mode, showChips = true }: { mode: string; showChip
 
   useEffect(() => {
     function handle(e: Event) {
-      const id = (e as CustomEvent).detail?.id as string | undefined;
+      const detail = (e as CustomEvent).detail || {};
+      const id = detail.id as string | undefined;
       if (!id || !WIDGETS.find(w => w.id === id)) return;
       setActiveId(id);
-      setActiveView("card");
+      // Cortex v4 P1.3 — "in focus mode" opens the widget expanded, not as a chip card.
+      setActiveView(detail.focus ? "expanded" : "card");
     }
     document.addEventListener("jarvis:open-widget", handle);
-    return () => document.removeEventListener("jarvis:open-widget", handle);
-  }, []);
+    function handleUi(e: Event) {
+      const detail = (e as CustomEvent).detail || {};
+      const id = detail.id as string | undefined;
+      if (detail.type === "close-widget" && (!id || id === activeId)) {
+        setActiveId(null);
+        setActiveView("chip");
+        return;
+      }
+      if (detail.type === "populate-widget" && id && WIDGETS.some((widget) => widget.id === id)) {
+        setWidgetData((current) => ({ ...current, [id]: { ...(detail.data || {}), __state: detail.state || "live", __fetchedAt: new Date().toISOString() } }));
+        setFetchedIds((current) => new Set(current).add(id));
+        setActiveId(id);
+        setActiveView(detail.focus ? "expanded" : "card");
+      }
+    }
+    document.addEventListener("jarvis:ui", handleUi);
+    return () => {
+      document.removeEventListener("jarvis:open-widget", handle);
+      document.removeEventListener("jarvis:ui", handleUi);
+    };
+  }, [activeId]);
 
   const handleChipClick = useCallback((id: string) => {
     if (activeId === id && activeView === "card") {
@@ -1244,10 +1628,14 @@ export function WidgetStrip({ mode, showChips = true }: { mode: string; showChip
     const loading = loadingIds.has(id);
     const props = { data, loading, onClose: handleClose, onExpand: handleExpand };
     switch (id) {
+      case "profile":     return <ProfileCard     {...props} key={id} />;
+      case "weather":     return <WeatherCard     {...props} key={id} />;
+      case "vitals":      return <VitalsCard      {...props} key={id} />;
       case "modules":     return <ModulesCard     {...props} key={id} />;
       case "projects":    return <ProjectsCard    {...props} key={id} />;
       case "agents":      return <AgentsCard      {...props} key={id} />;
       case "connections": return <ConnectionsCard {...props} key={id} />;
+      case "trust":       return <TrustCard       {...props} key={id} />;
       case "kalshi":      return <KalshiCard      {...props} key={id} />;
       case "vision":      return <VisionCard      {...props} key={id} />;
       case "memory":      return <MemoryCard      {...props} key={id} />;
@@ -1264,16 +1652,20 @@ export function WidgetStrip({ mode, showChips = true }: { mode: string; showChip
     const loading = loadingIds.has(id);
     const props = { data, loading, onClose: handleClose };
     switch (id) {
-      case "modules":     return <ModulesExpanded     {...props} />;
-      case "projects":    return <ProjectsExpanded    {...props} />;
-      case "agents":      return <AgentsExpanded      {...props} />;
-      case "connections": return <ConnectionsExpanded {...props} />;
+      case "profile":     return <ProfileCommandCenter data={data} loading={loading} />;
+      case "weather":     return <WeatherCommandCenter data={data} loading={loading} />;
+      case "vitals":      return <VitalsCommandCenter data={data} loading={loading} />;
+      case "modules":     return <ModulesCommandCenter data={data} loading={loading} />;
+      case "projects":    return <ProjectsCommandCenter data={data} loading={loading} />;
+      case "agents":      return <AgentsCommandCenter data={data} loading={loading} onRefresh={() => void handleRefresh(id)} />;
+      case "connections": return <ConnectionsCommandCenter data={data} loading={loading} />;
+      case "trust":       return <TrustCommandCenter data={data} loading={loading} />;
       case "kalshi":      return <KalshiExpanded      {...props} onRefresh={() => handleRefresh(id)} />;
-      case "vision":      return <VisionExpanded      {...props} />;
-      case "memory":      return <MemoryExpanded      {...props} />;
-      case "devices":     return <DevicesExpanded     {...props} />;
-      case "receipts":    return <ReceiptsExpanded    {...props} />;
-      case "graph":       return <ExpandedWrapper><button onClick={() => { window.open("/graph.html", "_blank"); handleClose(); }} style={{ margin: 24, fontSize: 14, cursor: "pointer" }}>Open Graph →</button></ExpandedWrapper>;
+      case "vision":      return <VisionCommandCenter data={data} loading={loading} onRefresh={() => void handleRefresh(id)} />;
+      case "memory":      return <MemoryCommandCenter data={data} loading={loading} />;
+      case "devices":     return <DeviceMeshCommandCenter />;
+      case "receipts":    return <ReceiptsCommandCenter data={data} loading={loading} />;
+      case "graph":       return <GraphCommandCenter data={data} loading={loading} />;
       case "helix":       return <HelixExpanded onClose={handleClose} />;
       default:            return null;
     }
@@ -1424,5 +1816,174 @@ export function WidgetStrip({ mode, showChips = true }: { mode: string; showChip
         </div>
       )}
     </>
+  );
+}
+
+// ─── Era III Spatial Workspace ──────────────────────────────────────────────
+
+const SPATIAL_STORAGE_KEY = "jarvis.spatial-widgets.v1";
+
+function loadSpatialWindows(): Record<string, SpatialWidgetState> {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(SPATIAL_STORAGE_KEY) || "{}");
+    if (parsed && typeof parsed === "object") return parsed;
+  } catch { /* start with a clean workspace */ }
+  return {};
+}
+
+function defaultSpatialWindow(id: string, order: number, focus = false): SpatialWidgetState {
+  const columns = Math.max(1, Math.floor((window.innerWidth - 80) / 560));
+  const column = order % columns;
+  const row = Math.floor(order / columns) % 2;
+  const w = Math.min(680, Math.max(580, window.innerWidth * .36));
+  const h = Math.min(610, Math.max(500, window.innerHeight * .56));
+  if (focus) return { id, mode: "expanded", x: Math.round(window.innerWidth * .08), y: 70, w: Math.min(1180, Math.round(window.innerWidth * .72)), h: Math.min(760, window.innerHeight - 190), z: 100 + order };
+  return { id, mode: "normal", x: 22 + column * 42, y: 68 + row * 48, w, h, z: 100 + order };
+}
+
+export function WidgetStrip({ mode }: { mode: string; showChips?: boolean }) {
+  const [windows, setWindows] = useState<Record<string, SpatialWidgetState>>(loadSpatialWindows);
+  const [widgetData, setWidgetData] = useState<Record<string, any>>({});
+  const [loadingIds, setLoadingIds] = useState<Set<string>>(new Set());
+  const windowsRef = useRef(windows);
+  const inFlightRef = useRef<Set<string>>(new Set());
+  windowsRef.current = windows;
+
+  useEffect(() => {
+    try { localStorage.setItem(SPATIAL_STORAGE_KEY, JSON.stringify(windows)); } catch { /* persistence is best effort */ }
+  }, [windows]);
+
+  const refresh = useCallback(async (id: string) => {
+    if (inFlightRef.current.has(id)) return;
+    inFlightRef.current.add(id);
+    setLoadingIds((current) => new Set(current).add(id));
+    try {
+      const next = await fetchWidgetData(id);
+      setWidgetData((current) => {
+        const prior = current[id];
+        if (next?.__state === "disconnected" && prior && prior.__state !== "disconnected") {
+          return { ...current, [id]: { ...prior, __state: "stale", __error: next.__error, __fetchedAt: new Date().toISOString() } };
+        }
+        return { ...current, [id]: next };
+      });
+    } finally {
+      inFlightRef.current.delete(id);
+      setLoadingIds((current) => { const next = new Set(current); next.delete(id); return next; });
+    }
+  }, []);
+
+  const openWidget = useCallback((id: string, focus = false) => {
+    if (!WIDGETS.some((widget) => widget.id === id)) return;
+    setWindows((current) => {
+      const nextZ = Math.max(300, ...Object.values(current).map((state) => state.z)) + 1;
+      const existing = current[id];
+      const next = existing
+        ? { ...existing, mode: focus ? "expanded" : existing.mode === "minimized" ? "normal" : existing.mode, z: nextZ }
+        : defaultSpatialWindow(id, Object.keys(current).length, focus);
+      return { ...current, [id]: next };
+    });
+    void refresh(id);
+  }, [refresh]);
+
+  useEffect(() => {
+    function handleOpen(event: Event) {
+      const detail = (event as CustomEvent).detail || {};
+      if (detail.id) openWidget(String(detail.id), Boolean(detail.focus));
+    }
+    function handleUi(event: Event) {
+      const detail = (event as CustomEvent).detail || {};
+      const id = String(detail.id || "");
+      if (detail.type === "close-widget") {
+        setWindows((current) => { const next = { ...current }; if (id) delete next[id]; else for (const key of Object.keys(next)) delete next[key]; return next; });
+      }
+      if (detail.type === "populate-widget" && id) {
+        setWidgetData((current) => ({ ...current, [id]: { ...(detail.data || {}), __state: detail.state || "live", __fetchedAt: new Date().toISOString() } }));
+        openWidget(id, Boolean(detail.focus));
+      }
+    }
+    document.addEventListener("jarvis:open-widget", handleOpen);
+    document.addEventListener("jarvis:ui", handleUi);
+    return () => {
+      document.removeEventListener("jarvis:open-widget", handleOpen);
+      document.removeEventListener("jarvis:ui", handleUi);
+    };
+  }, [openWidget]);
+
+  useEffect(() => {
+    const ids = Object.keys(windows);
+    for (const id of ids) if (!widgetData[id]) void refresh(id);
+  }, [windows, widgetData, refresh]);
+
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      if (document.visibilityState !== "visible") return;
+      for (const [id, state] of Object.entries(windowsRef.current)) if (state.mode !== "minimized") void refresh(id);
+    }, 30_000);
+    return () => window.clearInterval(timer);
+  }, [refresh]);
+
+  if (mode !== "main") return null;
+
+  const patchWindow = (id: string, patch: Partial<SpatialWidgetState>) => setWindows((current) => ({
+    ...current,
+    [id]: { ...current[id], ...patch },
+  }));
+  const closeWindow = (id: string) => setWindows((current) => { const next = { ...current }; delete next[id]; return next; });
+  const focusWindow = (id: string) => {
+    setWindows((current) => ({ ...current, [id]: { ...current[id], z: Math.max(300, ...Object.values(current).map((state) => state.z)) + 1 } }));
+  };
+
+  function renderSpatialContent(id: string) {
+    const data = widgetData[id];
+    const loading = loadingIds.has(id);
+    const onClose = () => closeWindow(id);
+    const props = { data, loading, onClose };
+    switch (id) {
+      case "profile":     return <ProfileCommandCenter data={data} loading={loading} />;
+      case "weather":     return <WeatherCommandCenter data={data} loading={loading} />;
+      case "vitals":      return <VitalsCommandCenter data={data} loading={loading} />;
+      case "modules":     return <ModulesCommandCenter data={data} loading={loading} />;
+      case "projects":    return <ProjectsCommandCenter data={data} loading={loading} />;
+      case "agents":      return <AgentsCommandCenter data={data} loading={loading} onRefresh={() => void refresh(id)} />;
+      case "connections": return <ConnectionsCommandCenter data={data} loading={loading} />;
+      case "trust":       return <TrustCommandCenter data={data} loading={loading} />;
+      case "kalshi":      return <KalshiExpanded      {...props} onRefresh={() => refresh(id)} />;
+      case "vision":      return <VisionCommandCenter data={data} loading={loading} onRefresh={() => void refresh(id)} />;
+      case "memory":      return <MemoryCommandCenter data={data} loading={loading} />;
+      case "devices":     return <DeviceMeshCommandCenter />;
+      case "receipts":    return <ReceiptsCommandCenter data={data} loading={loading} />;
+      case "graph":       return <GraphCommandCenter data={data} loading={loading} />;
+      case "helix":       return <HelixExpanded onClose={onClose} />;
+      default:              return null;
+    }
+  }
+
+  const visibleWindows = Object.values(windows).filter((state) => state.mode !== "minimized").sort((left, right) => left.z - right.z);
+  return (
+    <div className="spatial-workspace">
+      {visibleWindows.map((state) => {
+        const widget = WIDGETS.find((item) => item.id === state.id)!;
+        const data = widgetData[state.id];
+        return (
+          <SpatialWidgetFrame
+            key={state.id}
+            state={state}
+            icon={widget.icon}
+            title={widget.label}
+            stat={data ? getChipStat(state.id, data) : "syncing"}
+            status={data ? getChipStatus(state.id, data) : "inactive"}
+            fetchedAt={data?.__fetchedAt || data?.generatedAt}
+            loading={loadingIds.has(state.id)}
+            onFocus={() => focusWindow(state.id)}
+            onUpdate={(patch) => patchWindow(state.id, patch)}
+            onClose={() => closeWindow(state.id)}
+            onRefresh={() => void refresh(state.id)}
+          >
+            {renderSpatialContent(state.id)}
+          </SpatialWidgetFrame>
+        );
+      })}
+
+    </div>
   );
 }

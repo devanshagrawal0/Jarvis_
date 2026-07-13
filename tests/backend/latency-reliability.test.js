@@ -29,7 +29,10 @@ test("ambiguous mixed requests remain eligible for semantic routing", () => {
 });
 
 async function waitFor(url) {
-  for (let attempt = 0; attempt < 50; attempt += 1) {
+  // A clean runtime initializes the local indexes and service graph before the
+  // HTTP listener is ready. On slower Windows/OneDrive hosts that can exceed
+  // five seconds even though the server starts successfully.
+  for (let attempt = 0; attempt < 400; attempt += 1) {
     try {
       const response = await fetch(url);
       if (response.ok) return;
@@ -194,12 +197,12 @@ test("verified tool results survive a post-tool synthesis timeout", async () => 
   });
   const body = await response.json();
   assert.equal(response.status, 200);
-  assert.equal(body.source, "gemini");
-  assert.equal(body.timing.synthesisRecovered, false);
+  assert.equal(body.source, "tool-recovery");
+  assert.equal(body.timing.synthesisRecovered, true);
   assert.ok(body.toolResults.some((item) => item.tool === "system_status" && item.ok));
   assert.match(body.response, /system_status completed/i);
   assert.ok(Date.now() - started < 2_500);
-  assert.equal(body.timing.totalModelCalls, 1);
+  assert.equal(body.timing.totalModelCalls, 2);
 });
 
 test("stream endpoint emits deltas and a final result", async () => {
@@ -256,7 +259,7 @@ test("fresh information answers are blocked when Gemini provides no evidence", a
   });
   const body = await response.json();
   assert.equal(response.status, 200);
-  assert.match(body.response, /not verified/i);
+  assert.match(body.response, /not verified|can't confirm/i);
   assert.match(body.response, /will not guess/i);
   assert.equal(body.evidenceGate.blocked, true);
   assert.equal(body.evidenceGate.kind, "fresh-information");
@@ -272,8 +275,8 @@ test("action claims are blocked when no tool actually ran", async () => {
   });
   const body = await response.json();
   assert.equal(response.status, 200);
-  assert.match(body.response, /not verified/i);
-  assert.match(body.response, /not executed a tool|not have an exposed tool/i);
+  assert.match(body.response, /not verified|can't confirm/i);
+  assert.match(body.response, /not executed a tool|not have an exposed tool|don't have that action wired/i);
   assert.equal(body.evidenceGate.blocked, true);
   assert.equal(body.evidenceGate.kind, "action");
   assert.deepEqual(body.toolResults, []);

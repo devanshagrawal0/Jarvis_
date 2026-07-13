@@ -200,7 +200,7 @@ async function synthesizeWithGemini({ getSettings, query, intent, time, searchRu
   const settings = getSettings();
   const apiKey = settings.geminiKey || process.env.GEMINI_API_KEY;
   if (!apiKey) return "";
-  const model = settings.geminiFastModel || settings.geminiModel || "gemini-2.5-flash";
+  const model = settings.geminiFastModel || settings.geminiModel || "gemini-3.5-flash"; // Cortex v4 0.2 — registry model
   const apiBase = String(settings.geminiApiBaseUrl || process.env.JARVIS_GEMINI_API_BASE_URL || "https://generativelanguage.googleapis.com").replace(/\/+$/, "");
   const evidenceText = compactEvidenceText({ query, intent, searchRuns, readSources });
   const { signal, clear } = timeoutSignal(mode === "deep" ? 12000 : 8000);
@@ -320,8 +320,13 @@ function createResearchV2({ getSettings, webResearch, urlRead, fetchImpl = fetch
     const maxSearches = Math.max(1, Math.min(10, Number(args.maxSearches || (mode === "fast" ? 3 : mode === "deep" ? 7 : 5))));
     const readTopSources = Math.max(0, Math.min(6, Number(args.readTopSources ?? (mode === "fast" ? 1 : mode === "deep" ? 4 : 2))));
     const progress = [];
+    const onProgress = typeof args.onProgress === "function" ? args.onProgress : null;
     const tick = (phase, message, detail = {}) => {
-      progress.push({ at: new Date().toISOString(), phase, message, ...detail });
+      const event = { at: new Date().toISOString(), phase, message, ...detail };
+      progress.push(event);
+      // Cortex v4 P1.2 — live agent-activity timeline: surface each research phase
+      // to the caller so the UI can show "Searching 7 angles…" as it happens.
+      if (onProgress) { try { onProgress({ phase, message }); } catch { /* non-fatal */ } }
     };
 
     tick("plan", "Classifying request and building search angles.", { intent, mode });

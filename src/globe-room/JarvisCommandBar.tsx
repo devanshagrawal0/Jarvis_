@@ -1,16 +1,34 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 type JarvisCommandBarProps = {
-  onSubmit?: (text: string) => void;
+  onSubmit?: (text: string, files?: File[]) => void;
   onMicToggle?: (active: boolean) => void;
-  onAttach?: (files: File[]) => void;
   onModules?: () => void;
+  model?: string;               // Cortex v4 — "cortex" | "cortex-prime"
+  onSetModel?: (v: string) => void;
+  strength?: string;            // Cortex v4 P1.4 — "cost-guarded" | "balanced" | "full"
+  onCycleStrength?: () => void;
+  onSetStrength?: (v: string) => void;
+  research?: string;            // "fast" | "deep"
+  onToggleResearch?: () => void;
+  onSetResearch?: (v: string) => void;
+  voiceMode?: string;
+  onSetVoiceMode?: (v: string) => void;
+  liveVoiceActive?: boolean;
+  onLiveVoiceToggle?: () => void | Promise<void>;
 };
+
+// Cortex v4 P1.4 — Strength dial labels for the command-bar pill.
+function strengthShort(s?: string) { return s === "full" ? "Max" : s === "balanced" ? "Bal" : "Eco"; }
+function strengthTitle(s?: string) {
+  const cur = s === "full" ? "Max (full power)" : s === "balanced" ? "Balanced" : "Eco (cost-guarded)";
+  return `Strength: ${cur} — click to cycle. Eco keeps cost low (Flash only); Balanced & Max allow the strongest models when needed.`;
+}
 
 const CSS = `
 .jcb-root {
   position: fixed; left: 50%; bottom: 4.5vh; transform: translateX(-50%);
-  width: min(890px, 59vw); z-index: 30;
+  width: min(890px, 59vw); z-index: 1100;
   font-family: Inter, "Segoe UI", sans-serif;
 }
 .jcb-pill {
@@ -208,19 +226,53 @@ function IconApps() {
   );
 }
 
-declare global {
-  interface Window {
-    SpeechRecognition: typeof SpeechRecognition;
-    webkitSpeechRecognition: typeof SpeechRecognition;
-  }
-}
+// Cortex v4 — models shown in the picker. "Cortex" is the standard brain (Effort
+// picks its tier). "Cortex Prime" forces the strongest reasoning model — credit-heavy.
+const MODEL_NAME = "Cortex";
+// Descriptions state EXACTLY what each option does — Effort maps to a real model tier.
+const MODELS: { id: string; label: string; desc: string }[] = [
+  { id: "cortex", label: "Cortex", desc: "Fast everyday brain" },
+  { id: "cortex-prime", label: "Cortex Prime", desc: "Deep reasoning · higher cost" },
+];
+const EFFORTS: { id: string; label: string; desc: string }[] = [
+  { id: "cost-guarded", label: "Eco", desc: "Flash-Lite · fastest, cheapest" },
+  { id: "balanced", label: "Balanced", desc: "Flash · smarter" },
+  { id: "full", label: "Max", desc: "Pro · deepest reasoning" },
+];
+const RESEARCH_ROWS: { id: string; label: string; desc: string }[] = [
+  { id: "fast", label: "Fast", desc: "One quick grounded answer" },
+  { id: "deep", label: "Deep", desc: "Multi-source cited report" },
+];
+const VOICE_ROWS: { id: string; label: string; desc: string }[] = [
+  { id: "dictate", label: "Dictate", desc: "Free browser speech-to-text" },
+  { id: "live", label: "Talk-Live", desc: "Gemini native two-way audio" },
+];
+const pickerHdr: React.CSSProperties = { padding: "10px 13px 4px", fontSize: 9.5, fontWeight: 700, letterSpacing: "0.14em", textTransform: "uppercase", color: "rgba(0,229,255,0.5)" };
+const pickRow = (active: boolean): React.CSSProperties => ({ display: "flex", alignItems: "center", gap: 10, padding: "7px 13px", cursor: "pointer", background: active ? "rgba(0,229,255,0.1)" : "transparent" });
 
-export function JarvisCommandBar({ onSubmit, onMicToggle, onAttach, onModules }: JarvisCommandBarProps) {
+export function JarvisCommandBar({ onSubmit, onMicToggle, onModules, model, onSetModel, strength, onCycleStrength, onSetStrength, research, onToggleResearch, onSetResearch, voiceMode, onSetVoiceMode, liveVoiceActive, onLiveVoiceToggle }: JarvisCommandBarProps) {
+  const activeModel = MODELS.find((m) => m.id === (model || "cortex")) || MODELS[0];
+  const activeEffort = EFFORTS.find((e) => e.id === (strength || "cost-guarded")) || EFFORTS[0];
+  const activeResearch = RESEARCH_ROWS.find((r) => r.id === (research || "fast")) || RESEARCH_ROWS[0];
+  const activeVoice = VOICE_ROWS.find((r) => r.id === (voiceMode || "dictate")) || VOICE_ROWS[0];
+  void onCycleStrength; void onToggleResearch; // superseded by the picker panel
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const [submenu, setSubmenu] = useState<null | "model" | "effort" | "research" | "voice">(null);
+  const pickerRef = useRef<HTMLDivElement>(null);
+  const hoverTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const openMenu = () => { if (hoverTimer.current) clearTimeout(hoverTimer.current); setPickerOpen(true); };
+  const scheduleClose = () => { if (hoverTimer.current) clearTimeout(hoverTimer.current); hoverTimer.current = setTimeout(() => { setPickerOpen(false); setSubmenu(null); }, 200); };
+  useEffect(() => {
+    if (!pickerOpen) return;
+    function onDown(e: MouseEvent) { if (pickerRef.current && !pickerRef.current.contains(e.target as Node)) { setPickerOpen(false); setSubmenu(null); } }
+    document.addEventListener("mousedown", onDown);
+    return () => document.removeEventListener("mousedown", onDown);
+  }, [pickerOpen]);
   const [text, setText] = useState("");
   const [micActive, setMicActive] = useState(false);
   const [files, setFiles] = useState<File[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const recognitionRef = useRef<SpeechRecognition | null>(null);
+  const recognitionRef = useRef<any>(null);
 
   useEffect(() => {
     const id = "jcb-styles";
@@ -234,6 +286,11 @@ export function JarvisCommandBar({ onSubmit, onMicToggle, onAttach, onModules }:
   }, []);
 
   const toggleMic = useCallback(() => {
+    if (voiceMode === "live") {
+      void onLiveVoiceToggle?.();
+      onMicToggle?.(!liveVoiceActive);
+      return;
+    }
     const SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (!SpeechRec) return;
 
@@ -280,13 +337,13 @@ export function JarvisCommandBar({ onSubmit, onMicToggle, onAttach, onModules }:
     rec.start();
     setMicActive(true);
     onMicToggle?.(true);
-  }, [micActive, text, onMicToggle]);
+  }, [micActive, text, onMicToggle, voiceMode, liveVoiceActive, onLiveVoiceToggle]);
 
   const submit = useCallback(() => {
     const value = text.trim();
     if (!value) return;
-    onSubmit?.(value);
-    document.dispatchEvent(new CustomEvent("jarvis:command", { detail: { text: value, files } }));
+    if (onSubmit) onSubmit(value, files);
+    else document.dispatchEvent(new CustomEvent("jarvis:command", { detail: { text: value, files } }));
     setText("");
     setFiles([]);
     if (micActive) {
@@ -308,16 +365,15 @@ export function JarvisCommandBar({ onSubmit, onMicToggle, onAttach, onModules }:
     const selected = Array.from(e.target.files || []);
     if (!selected.length) return;
     setFiles(prev => [...prev, ...selected]);
-    onAttach?.(selected);
     e.target.value = "";
-  }, [onAttach]);
+  }, []);
 
   const removeFile = useCallback((idx: number) => {
     setFiles(prev => prev.filter((_, i) => i !== idx));
   }, []);
 
   return (
-    <div className="jcb-root">
+    <div className="jcb-root" onDragOver={(event) => { event.preventDefault(); event.dataTransfer.dropEffect = "copy"; }} onDrop={(event) => { event.preventDefault(); const dropped = Array.from(event.dataTransfer.files || []); if (dropped.length) setFiles((current) => [...current, ...dropped].slice(0, 5)); }}>
       {files.length > 0 && (
         <div className="jcb-file-chips">
           {files.map((f, i) => (
@@ -330,12 +386,98 @@ export function JarvisCommandBar({ onSubmit, onMicToggle, onAttach, onModules }:
       <div className="jcb-pill">
         <button className="jcb-apps" title="Modules" onClick={onModules}><IconApps /></button>
 
-        <div className={`jcb-mic${micActive ? " active" : ""}`} onClick={toggleMic} title={micActive ? "Stop listening" : "Start voice input"}>
+        <div className={`jcb-mic${micActive || liveVoiceActive ? " active" : ""}`} onClick={toggleMic} title={voiceMode === "live" ? (liveVoiceActive ? "Stop Talk-Live" : "Start Talk-Live") : (micActive ? "Stop dictation" : "Start dictation")}>
           <div className="jcb-mic-wrap">
             <MicRing />
             <span className="jcb-mic-bg" />
             <span className="jcb-mic-icon"><IconMic /></span>
           </div>
+        </div>
+
+        {/* Cortex v4 — Codex picker chip: bottom-RIGHT of the bar (below the attachment), hover-to-open */}
+        <div ref={pickerRef} style={{ position: "absolute", right: 193, bottom: 6, zIndex: 5 }}
+          onMouseEnter={openMenu} onMouseLeave={scheduleClose}>
+          <button
+            title="Model, effort & research"
+            onClick={() => { setPickerOpen((o) => !o); setSubmenu(null); }}
+            style={{ display: "flex", alignItems: "center", gap: 5, background: "none", border: "none",
+              cursor: "pointer", padding: "3px 6px", minHeight: "auto", whiteSpace: "nowrap" }}
+          >
+            <span style={{ fontSize: 11.5, fontWeight: 500, color: "rgba(224,236,248,0.9)" }}>{activeModel.label}</span>
+            <span style={{ fontSize: 11.5, fontWeight: 500, color: "#4da6ff" }}>{activeEffort.label}</span>
+          </button>
+          {pickerOpen && (() => {
+            const sub = submenu === "model"
+              ? { title: "Model", rows: MODELS, cur: model || "cortex", set: onSetModel }
+              : submenu === "effort"
+                ? { title: "Effort", rows: EFFORTS, cur: strength || "cost-guarded", set: onSetStrength }
+                : submenu === "research"
+                  ? { title: "Research", rows: RESEARCH_ROWS, cur: research || "fast", set: onSetResearch }
+                  : submenu === "voice"
+                    ? { title: "Voice", rows: VOICE_ROWS, cur: voiceMode || "dictate", set: onSetVoiceMode }
+                  : null;
+            const L1 = [
+              { key: "model" as const, label: "Model", value: activeModel.label },
+              { key: "effort" as const, label: "Effort", value: activeEffort.label },
+              { key: "research" as const, label: "Research", value: activeResearch.label },
+              { key: "voice" as const, label: "Voice", value: activeVoice.label },
+            ];
+            const ACCENT = "#5cb0ff";
+            const HL = "rgba(90,140,200,0.16)";
+            const panel: React.CSSProperties = {
+              position: "absolute", bottom: "calc(100% + 10px)",
+              // Reference color: dark desaturated navy-charcoal (#1a2433), translucent +
+              // heavy blur so the room glows through — holographic frosted glass, not pastel.
+              background: "rgba(26,36,51,0.72)", backdropFilter: "blur(40px)", WebkitBackdropFilter: "blur(40px)",
+              border: "1px solid rgba(120,160,205,0.2)", borderRadius: 14, zIndex: 61,
+              boxShadow: "0 16px 44px rgba(0,0,0,0.62), inset 0 1px 0 rgba(180,210,245,0.06)",
+              fontFamily: 'Inter, "Segoe UI", sans-serif', color: "rgba(234,242,252,0.94)",
+            };
+            return (
+              <>
+                {/* Level 1 — category list, right-aligned to the chip */}
+                <div style={{ ...panel, right: 0, width: 198, padding: "5px" }}
+                  onMouseEnter={openMenu} onMouseLeave={scheduleClose}>
+                  {L1.map((row) => {
+                    const open = submenu === row.key;
+                    return (
+                      <div key={row.key} role="button" tabIndex={0}
+                        onClick={() => setSubmenu((s) => (s === row.key ? null : row.key))}
+                        onMouseEnter={() => { if (hoverTimer.current) clearTimeout(hoverTimer.current); setSubmenu(row.key); }}
+                        style={{ display: "flex", alignItems: "center", gap: 7, padding: "7px 10px", borderRadius: 8, cursor: "pointer", background: open ? HL : "transparent" }}>
+                        <span style={{ fontSize: 12, fontWeight: 500 }}>{row.label}</span>
+                        <span style={{ marginLeft: "auto", fontSize: 11.5, color: open ? ACCENT : "rgba(176,196,216,0.55)" }}>{row.value}</span>
+                        <span style={{ fontSize: 11, color: open ? ACCENT : "rgba(176,196,216,0.4)" }}>›</span>
+                      </div>
+                    );
+                  })}
+                </div>
+                {/* Level 2 — flyout to the RIGHT: header + label/description + checkmark */}
+                {sub && (
+                  <div style={{ ...panel, left: "calc(100% + 8px)", width: 224, padding: "5px 5px 7px" }}
+                    onMouseEnter={openMenu} onMouseLeave={scheduleClose}>
+                    <div style={{ padding: "6px 10px 4px", fontSize: 9, fontWeight: 700, letterSpacing: "0.15em", textTransform: "uppercase", color: "rgba(150,175,205,0.5)" }}>{sub.title}</div>
+                    {sub.rows.map((r) => {
+                      const active = sub.cur === r.id;
+                      return (
+                        <div key={r.id} role="button" tabIndex={0}
+                          onClick={() => sub.set?.(r.id)}
+                          style={{ display: "flex", alignItems: "center", gap: 9, padding: "7px 10px", borderRadius: 8, cursor: "pointer", background: active ? HL : "transparent" }}
+                          onMouseEnter={(e) => { if (!active) (e.currentTarget as HTMLElement).style.background = "rgba(70,130,195,0.07)"; }}
+                          onMouseLeave={(e) => { if (!active) (e.currentTarget as HTMLElement).style.background = "transparent"; }}>
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            <div style={{ fontSize: 12.5, fontWeight: 500 }}>{r.label}</div>
+                            <div style={{ fontSize: 10, color: "rgba(158,180,202,0.58)", marginTop: 1 }}>{r.desc}</div>
+                          </div>
+                          {active ? <span style={{ color: ACCENT, fontSize: 12.5, fontWeight: 700 }}>✓</span> : null}
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </>
+            );
+          })()}
         </div>
 
         <div className="jcb-center">
@@ -351,7 +493,6 @@ export function JarvisCommandBar({ onSubmit, onMicToggle, onAttach, onModules }:
         </div>
 
         <div className="jcb-acts">
-          <button className="jcb-act-btn" title="Settings"><IconSliders /></button>
           <button
             className={`jcb-act-btn${files.length ? " has-files" : ""}`}
             title="Attach file"

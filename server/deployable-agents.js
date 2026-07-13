@@ -63,7 +63,7 @@ function createDeployableAgents({ runtimeDir }) {
     const insert = db.prepare(`
       INSERT INTO agents(id, name, slug, role, description, instructions, allowed_tools_json, blocked_tools_json,
         permission_scope, memory_scope, model_provider, model_name, status, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, '', ?, '[]', 'user', 'session', 'gemini', 'gemini-2.0-flash', 'active', ?, ?)
+      VALUES (?, ?, ?, ?, ?, '', ?, '[]', 'user', 'session', 'gemini', 'gemini-3.5-flash', 'active', ?, ?)
     `);
     const insertAll = db.transaction(() => {
       for (const s of seeds) {

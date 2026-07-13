@@ -1081,6 +1081,7 @@ export function KalshiCard({ data, loading, onClose, onExpand }: {
   const m               = markets[0] ?? null;
   const balance         = data?.portfolio?.balance        ?? data?.balance        ?? 0;
   const portfolioValue  = data?.portfolio?.portfolioValue ?? data?.portfolioValue ?? 0;
+  const disconnected    = data?.__state === "disconnected";
 
   return (
     <div style={{
@@ -1102,11 +1103,11 @@ export function KalshiCard({ data, loading, onClose, onExpand }: {
         <div style={{ display: "flex", gap: 8, marginBottom: 10 }}>
           <div style={{ flex: 1, background: "rgba(0,229,255,0.04)", border: `1px solid ${C.borderFaint}`, borderRadius: 7, padding: "6px 8px" }}>
             <div style={{ fontSize: 8, color: C.muted, letterSpacing: "0.08em" }}>BALANCE</div>
-            <div style={{ fontSize: 14, fontWeight: 800, color: C.cyan }}>{fmtUsd(balance)}</div>
+            <div style={{ fontSize: 14, fontWeight: 800, color: C.cyan }}>{disconnected ? "—" : fmtUsd(balance)}</div>
           </div>
           <div style={{ flex: 1, background: "rgba(0,229,255,0.04)", border: `1px solid ${C.borderFaint}`, borderRadius: 7, padding: "6px 8px" }}>
             <div style={{ fontSize: 8, color: C.muted, letterSpacing: "0.08em" }}>PORTFOLIO</div>
-            <div style={{ fontSize: 14, fontWeight: 800 }}>{fmtUsd(portfolioValue)}</div>
+            <div style={{ fontSize: 14, fontWeight: 800 }}>{disconnected ? "—" : fmtUsd(portfolioValue)}</div>
           </div>
         </div>
 
@@ -1151,7 +1152,7 @@ export function KalshiCard({ data, loading, onClose, onExpand }: {
           </>
         ) : (
           <div style={{ fontSize: 11, color: C.muted, padding: "8px 0" }}>
-            {loading ? "Loading markets…" : "No markets available."}
+            {loading ? "Loading markets…" : disconnected ? `Disconnected${data?.__error ? `: ${data.__error}` : ""}` : "Empty: no live markets available."}
           </div>
         )}
       </div>

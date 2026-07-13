@@ -38,7 +38,7 @@ async function createReActExecutor({ capabilityEngine, getSettings, getDeclarati
     if (!apiKey) throw new Error("Gemini API key is not configured");
 
     const GEMINI_BASE = "https://generativelanguage.googleapis.com";
-    const model = "gemini-2.0-flash";
+    const model = "gemini-3.5-flash"; // Cortex v4 0.2 — registry model (was obsolete gemini-2.0-flash)
 
     const declarations = getDeclarations(mission);
     const contents = [

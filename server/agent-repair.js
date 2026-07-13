@@ -112,6 +112,13 @@ function hasScheduleCue(lower) {
   return /\b(schedule|fixture|fixtures|games?|matches?|match times?|scores?|results?|live|today|tomorrow|next|upcoming|who plays|what .* games?)\b/.test(lower);
 }
 
+// Cortex v4 · 2.5 — STRONG schedule cue for topic INHERITANCE only: excludes bare
+// time words (today/tomorrow/next/live) that also appear in non-sports questions
+// ("is it a workday today?"). Prevents an old sports topic from hijacking unrelated turns.
+function hasStrongScheduleCue(lower) {
+  return /\b(schedule|fixture|fixtures|games?|matches?|match times?|scores?|results?|who plays|kickoff|line ?up|standings|final|semifinal|quarterfinal)\b/.test(lower);
+}
+
 function isCorrection(lower) {
   return /\b(not kalshi|we were talking about|that'?s not what i asked|thats not what i asked|today is|don'?t miss|dont miss|be thorough|wrong|no,?|actually|i meant)\b/.test(lower);
 }
@@ -140,7 +147,7 @@ function classifyIntent(prompt, topicState = defaultTopicState()) {
   const correction = isCorrection(lower);
   const explicitNotKalshi = /\bnot kalshi|not about kalshi|no kalshi\b/.test(lower);
   const inheritedFifa = topicState.activeTopic === "fifa_world_cup"
-    && hasScheduleCue(lower)
+    && hasStrongScheduleCue(lower)
     && !hasKalshiCue(lower);
 
   if (looksLikeBehaviorRules(text)) {
@@ -287,9 +294,19 @@ function createAgentRepair({ runtimeDir }) {
     const previous = loadTopic();
     const lower = lowerOf(prompt);
     const sportsPatch = inferSportsTopic(lower, previous);
+    // Cortex v4 · 2.5 — topic decay. If this turn is clearly NOT sports (no sports cue,
+    // non-sports intent) and didn't set a new sports topic, clear the sticky sports
+    // topic so an old FIFA thread stops flavoring unrelated questions.
+    const staysSports = Object.keys(sportsPatch).length > 0
+      || hasSportsCue(lower)
+      || intentResult.intent.startsWith("sports");
+    const decay = (!staysSports && previous.activeTopic)
+      ? { activeTopic: null, activeSport: null, activeCompetition: null }
+      : {};
     const next = {
       ...previous,
       ...sportsPatch,
+      ...decay,
       activeSourcePreference: intentResult.intent.startsWith("sports") ? "sports"
         : intentResult.intent.startsWith("kalshi") ? "kalshi"
           : previous.activeSourcePreference,

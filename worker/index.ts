@@ -8,6 +8,7 @@ type Env = {
   GEMINI_API_KEY?: string;
   JARVIS_ACCESS_TOKEN?: string;
   JARVIS_LOCAL_ORIGIN?: string;
+  JARVIS_RELAY_SECRET?: string;
   APP_VERSION?: string;
 };
 
@@ -26,21 +27,22 @@ function json(payload: unknown, status = 200) {
 function suppliedAccessToken(request: Request) {
   const authorization = request.headers.get("authorization") || "";
   if (authorization.toLowerCase().startsWith("bearer ")) return authorization.slice(7).trim();
-  return new URL(request.url).searchParams.get("access_token") || "";
+  return "";
 }
 
-function tokenMatches(expected: string, supplied: string) {
-  if (!expected || !supplied || expected.length !== supplied.length) return false;
-  let difference = 0;
-  for (let index = 0; index < expected.length; index += 1) {
-    difference |= expected.charCodeAt(index) ^ supplied.charCodeAt(index);
-  }
-  return difference === 0;
+async function tokenMatches(expected: string, supplied: string) {
+  if (!expected || !supplied) return false;
+  const encoder = new TextEncoder();
+  const [expectedHash, suppliedHash] = await Promise.all([
+    crypto.subtle.digest("SHA-256", encoder.encode(expected)),
+    crypto.subtle.digest("SHA-256", encoder.encode(supplied)),
+  ]);
+  return crypto.subtle.timingSafeEqual(expectedHash, suppliedHash);
 }
 
-function authorize(request: Request, env: Env) {
+async function authorize(request: Request, env: Env) {
   if (!env.JARVIS_ACCESS_TOKEN) return json({ error: "Cloud access is disabled until JARVIS_ACCESS_TOKEN is configured." }, 503);
-  if (!tokenMatches(env.JARVIS_ACCESS_TOKEN, suppliedAccessToken(request))) {
+  if (!(await tokenMatches(env.JARVIS_ACCESS_TOKEN, suppliedAccessToken(request)))) {
     return json({ error: "A valid JARVIS access token is required." }, 401);
   }
   return null;
@@ -73,7 +75,29 @@ async function serveAsset(env: Env, request: Request) {
   return env.ASSETS.fetch(new Request(`${url.origin}/index.html`, request));
 }
 
-async function proxyToLocalJarvis(request: Request, origin: string) {
+function base64Url(bytes: ArrayBuffer) {
+  let binary = "";
+  for (const byte of new Uint8Array(bytes)) binary += String.fromCharCode(byte);
+  return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
+}
+
+async function relaySignature(request: Request, secret: string) {
+  const url = new URL(request.url);
+  const timestamp = String(Date.now());
+  const nonce = crypto.randomUUID();
+  const canonical = `${request.method.toUpperCase()}\n${url.pathname}${url.search}\n${timestamp}\n${nonce}`;
+  const key = await crypto.subtle.importKey(
+    "raw",
+    new TextEncoder().encode(secret),
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["sign"],
+  );
+  const signature = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(canonical));
+  return { timestamp, nonce, signature: base64Url(signature) };
+}
+
+async function proxyToLocalJarvis(request: Request, origin: string, relaySecret: string) {
   const base = origin.replace(/\/+$/, "");
   if (!/^https:\/\/[a-z0-9-]+\.trycloudflare\.com$/i.test(base)) {
     return json({ error: "JARVIS_LOCAL_ORIGIN must be a trycloudflare HTTPS origin." }, 502);
@@ -81,9 +105,14 @@ async function proxyToLocalJarvis(request: Request, origin: string) {
   const input = new URL(request.url);
   const target = new URL(`${input.pathname}${input.search}`, base);
   const headers = new Headers(request.headers);
+  const relay = await relaySignature(request, relaySecret);
   headers.set("x-jarvis-stable-front-door", input.origin);
   headers.set("x-forwarded-host", input.host);
   headers.set("x-forwarded-proto", input.protocol.replace(":", ""));
+  headers.set("x-jarvis-relay-timestamp", relay.timestamp);
+  headers.set("x-jarvis-relay-nonce", relay.nonce);
+  headers.set("x-jarvis-relay-signature", relay.signature);
+  headers.delete("authorization");
   headers.delete("host");
   try {
     return await fetch(new Request(target, {
@@ -106,10 +135,6 @@ export default {
     if (request.method === "OPTIONS") return new Response(null, { status: 204 });
     const url = new URL(request.url);
 
-    if (env.JARVIS_LOCAL_ORIGIN) {
-      return proxyToLocalJarvis(request, env.JARVIS_LOCAL_ORIGIN);
-    }
-
     if (url.pathname === "/api/health") {
       return json({
         ok: true,
@@ -124,9 +149,18 @@ export default {
     }
 
     if (url.pathname.startsWith("/api/")) {
-      const rejected = authorize(request, env);
+      const rejected = await authorize(request, env);
       if (rejected) return rejected;
+      if (env.JARVIS_LOCAL_ORIGIN) {
+        if (!env.JARVIS_RELAY_SECRET) return json({ error: "Cloud relay is disabled until JARVIS_RELAY_SECRET is configured." }, 503);
+        return proxyToLocalJarvis(request, env.JARVIS_LOCAL_ORIGIN, env.JARVIS_RELAY_SECRET);
+      }
       return roomFetch(env, request);
+    }
+
+    if (env.JARVIS_LOCAL_ORIGIN) {
+      if (!env.JARVIS_RELAY_SECRET) return json({ error: "Cloud relay is disabled until JARVIS_RELAY_SECRET is configured." }, 503);
+      return proxyToLocalJarvis(request, env.JARVIS_LOCAL_ORIGIN, env.JARVIS_RELAY_SECRET);
     }
 
     return serveAsset(env, request);
@@ -144,7 +178,7 @@ export class UserRoom {
 
   async fetch(request: Request) {
     const url = new URL(request.url);
-    const rejected = authorize(request, this.env);
+    const rejected = await authorize(request, this.env);
     if (rejected) return rejected;
     if (request.headers.get("upgrade") === "websocket") return this.handleWebSocket();
 
@@ -268,7 +302,11 @@ export class UserRoom {
 
   async createPairing() {
     const pairings = await this.list("pairings");
-    const code = String(Math.floor(100000 + Math.random() * 900000));
+    const range = 900000;
+    const limit = Math.floor(0x100000000 / range) * range;
+    const values = new Uint32Array(1);
+    do { crypto.getRandomValues(values); } while (values[0] >= limit);
+    const code = String(100000 + (values[0] % range));
     const pairing = {
       id: crypto.randomUUID(),
       code,

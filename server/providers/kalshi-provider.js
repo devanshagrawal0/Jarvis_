@@ -478,7 +478,9 @@ function createKalshiProvider({ getSettings, fetchImpl = fetch }) {
     const scored = collected
       .map((market) => {
         const result = scoreMarket(market, expanded);
-        const score = inSeriesMode ? Math.max(result.score, 1) : result.score;
+        // Series selection narrows the fetch but does not make every provider
+        // row relevant; cross-category records still require a query match.
+        const score = result.score;
         return { market, score, reasons: result.reasons, vol: marketVolume(market) };
       })
       .filter((item) => !expanded.original || item.score > 0)
