@@ -274,7 +274,7 @@ function createCapabilityEngine({
     ["invoke_control", "Invoke a named button or control in a Windows application.", "execute", true],
     ["set_control_value", "Set text on a named editable Windows control.", "execute", true],
     ["run_command", "Execute a PowerShell command on the local Windows machine and return the output. Use for system queries, file operations, process control, and automation tasks.", "execute", false],
-    ["write_file", "Write text content to a file on the local machine at any absolute path. Creates parent directories if needed.", "commit", true],
+    ["write_file", "Create a REAL file on the local machine: text (.md .txt .json .csv .html .py .js .ts) OR a real Microsoft Word .docx. A bare filename (e.g. notes.docx) is saved to the Desktop. For .docx you may set docxFontPt (e.g. 72 = huge) and docxColor (e.g. blue or 0000FF). The file is written AND re-verified on disk before success is reported.", "commit", true],
     ["delete_file", "Delete a file or empty directory from the local machine.", "commit", true],
     ["read_clipboard", "Read the current Windows clipboard text content.", "observe", false],
     ["write_clipboard", "Write text to the Windows clipboard.", "execute", false],
@@ -602,8 +602,11 @@ function createCapabilityEngine({
       timeout_ms: { type: "INTEGER", description: "Execution timeout in milliseconds. Maximum 30000. Defaults to 15000." },
     }, required: ["command"] } },
     { name: "write_file", description: description("write_file"), parameters: { type: "OBJECT", properties: {
-      path: { type: "STRING", description: "Absolute file path to write (e.g. C:\\Users\\devan\\Desktop\\note.txt). Existing file is overwritten." },
-      content: { type: "STRING", description: "Text content to write to the file." },
+      path: { type: "STRING", description: "File path. A bare filename (e.g. absdefgh.docx) is saved to the Desktop; ~ expands to the home dir; absolute paths are honored. Existing file is overwritten." },
+      content: { type: "STRING", description: "The content. For .docx this is the document text (use newlines for separate paragraphs)." },
+      docxFontPt: { type: "INTEGER", description: "For .docx only: font size in points (e.g. 72 = huge). Default 24." },
+      docxColor: { type: "STRING", description: "For .docx only: font colour name (blue, red, green, black…) or 6-digit hex like 0000FF." },
+      docxBold: { type: "BOOLEAN", description: "For .docx only: bold the text. Defaults true when font is large." },
     }, required: ["path", "content"] } },
     { name: "delete_file", description: description("delete_file"), parameters: { type: "OBJECT", properties: {
       path: { type: "STRING", description: "Absolute path to the file or empty directory to delete." },
@@ -1468,6 +1471,23 @@ function createCapabilityEngine({
     return { sent: true, messageId: result.message_id || result.id };
   }
 
+  // Resolve the user's REAL Desktop — on OneDrive "Known Folder Move" machines the visible
+  // Desktop is %OneDrive%\Desktop, NOT ~/Desktop. Prefer OneDrive's when it exists.
+  function realDesktopDir() {
+    const od = process.env.OneDrive || process.env.OneDriveConsumer || process.env.OneDriveCommercial;
+    if (od) { const d = path.join(od, "Desktop"); try { if (fs.existsSync(d)) return d; } catch { /* fall through */ } }
+    return path.join(os.homedir(), "Desktop");
+  }
+
+  function normalizeDocxColor(v) {
+    const s = String(v || "").trim().toLowerCase().replace(/^#/, "");
+    const named = { blue: "0000FF", red: "FF0000", green: "008000", black: "000000", white: "FFFFFF", yellow: "FFFF00", orange: "FFA500", purple: "800080", pink: "FF69B4", cyan: "00FFFF", gray: "808080", grey: "808080" };
+    if (named[s]) return named[s];
+    if (/^[0-9a-f]{6}$/.test(s)) return s.toUpperCase();
+    if (/^[0-9a-f]{3}$/.test(s)) return s.split("").map((c) => c + c).join("").toUpperCase();
+    return "000000";
+  }
+
   const handlers = {
     system_status: systemStatus,
     list_processes: listProcesses,
@@ -1924,19 +1944,44 @@ function createCapabilityEngine({
       }
     },
     write_file: async (args) => {
-      const filePath = cleanString(args.path, 1000);
-      if (!filePath) throw errorWithStatus("path is required");
+      const raw = cleanString(args.path, 1000);
+      if (!raw) throw errorWithStatus("path is required");
+      // Bare filename → Desktop; ~ → home; absolute honored. (So "absdefgh.docx" lands on the Desktop.)
+      const expanded = raw.startsWith("~") ? path.join(os.homedir(), raw.slice(1)) : raw;
+      const filePath = path.isAbsolute(expanded) ? path.resolve(expanded) : path.join(realDesktopDir(), expanded);
       if (/^C:\\(Windows|Program Files|Program Files \(x86\))\\/i.test(filePath)) {
         throw errorWithStatus("Writing to system directories is not permitted", 403);
       }
       const content = String(args.content ?? "");
+      const ext = path.extname(filePath).toLowerCase();
+      fs.mkdirSync(path.dirname(filePath), { recursive: true });
+
+      if (ext === ".docx") {
+        // Generate a REAL Word document with the requested formatting (docx lib).
+        const { Document, Packer, Paragraph, TextRun } = require("docx");
+        const fontPt = Math.max(1, Math.min(400, Number(args.docxFontPt) || 24));
+        const color = normalizeDocxColor(args.docxColor);
+        const bold = args.docxBold != null ? Boolean(args.docxBold) : fontPt >= 40;
+        const paragraphs = (content || " ").split(/\r?\n/).map((line) =>
+          new Paragraph({ children: [new TextRun({ text: line, size: Math.round(fontPt * 2), color, bold })] }));
+        const doc = new Document({ sections: [{ children: paragraphs }] });
+        fs.writeFileSync(filePath, await Packer.toBuffer(doc));
+        // HONEST verification: the file must exist AND be a valid .docx (a ZIP starting with "PK").
+        const exists = fs.existsSync(filePath);
+        const head = exists ? fs.readFileSync(filePath).subarray(0, 2).toString("latin1") : "";
+        if (!exists || head !== "PK") throw errorWithStatus("docx was not written correctly (failed on-disk verification)", 500);
+        return { ok: true, path: filePath, bytesWritten: fs.statSync(filePath).size, kind: "docx", verified: true, fontPt, color, text: content.slice(0, 200) };
+      }
+
       const MAX_FILE_BYTES = 50 * 1024 * 1024; // 50 MB hard cap
       if (Buffer.byteLength(content, "utf8") > MAX_FILE_BYTES) {
         throw errorWithStatus(`File content exceeds 50 MB limit`, 413);
       }
-      fs.mkdirSync(path.dirname(filePath), { recursive: true });
       fs.writeFileSync(filePath, content, "utf8");
-      return { ok: true, path: filePath, bytesWritten: Buffer.byteLength(content, "utf8") };
+      const bytesWritten = Buffer.byteLength(content, "utf8");
+      const verified = fs.existsSync(filePath) && fs.statSync(filePath).size === bytesWritten;
+      if (!verified) throw errorWithStatus("file was not written correctly (failed on-disk verification)", 500);
+      return { ok: true, path: filePath, bytesWritten, kind: ext.replace(/^\./, "") || "txt", verified: true };
     },
     delete_file: async (args) => {
       const filePath = cleanString(args.path, 1000);
