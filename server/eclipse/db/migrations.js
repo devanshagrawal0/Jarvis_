@@ -6,7 +6,7 @@
 const path = require("path");
 const Database = require("better-sqlite3");
 
-const SCHEMA_VERSION = 2;
+const SCHEMA_VERSION = 3;
 
 const DDL = `
 CREATE TABLE IF NOT EXISTS eclipse_meta (
@@ -112,6 +112,48 @@ CREATE TABLE IF NOT EXISTS artifact_manifests (
   created_at TEXT NOT NULL, jarvis_visibility TEXT DEFAULT 'private'
 );
 CREATE INDEX IF NOT EXISTS idx_artifacts_mission ON artifact_manifests(mission_id);
+
+-- W6 Agent Foundry ---------------------------------------------------------
+-- Per-blueprint/persona reputation, updated after each mission (EWMA of quality/efficiency).
+CREATE TABLE IF NOT EXISTS eclipse_agent_reputation (
+  blueprint_id TEXT NOT NULL,
+  persona      TEXT NOT NULL DEFAULT '',
+  missions     INTEGER NOT NULL DEFAULT 0,
+  validated    INTEGER NOT NULL DEFAULT 0,
+  packets      INTEGER NOT NULL DEFAULT 0,
+  tokens       INTEGER NOT NULL DEFAULT 0,
+  cost_usd     REAL NOT NULL DEFAULT 0,
+  reputation   REAL NOT NULL DEFAULT 0.5,
+  status       TEXT NOT NULL DEFAULT 'active',   -- active|promoted|retired
+  updated_at   TEXT,
+  PRIMARY KEY (blueprint_id, persona)
+);
+
+-- Promoted persona library: generated personas that qualified + earned reputation are saved
+-- here for reuse across missions (the Foundry's memory).
+CREATE TABLE IF NOT EXISTS eclipse_personas (
+  persona_id    TEXT PRIMARY KEY,
+  base_blueprint TEXT NOT NULL,
+  spec_json     TEXT NOT NULL DEFAULT '{}',
+  status        TEXT NOT NULL DEFAULT 'draft',   -- draft|qualified|promoted|retired
+  score         REAL NOT NULL DEFAULT 0,
+  uses          INTEGER NOT NULL DEFAULT 0,
+  created_at    TEXT NOT NULL
+);
+
+-- Curated semantic memory: claims the Memory Curator promoted from episodic (validated across
+-- missions). Deduped by content hash; support_count tracks corroboration.
+CREATE TABLE IF NOT EXISTS eclipse_semantic_memory (
+  mem_id        TEXT PRIMARY KEY,
+  text          TEXT NOT NULL,
+  kind          TEXT NOT NULL DEFAULT 'fact',
+  confidence    REAL NOT NULL DEFAULT 0.5,
+  support_count INTEGER NOT NULL DEFAULT 1,
+  content_hash  TEXT NOT NULL UNIQUE,
+  first_mission TEXT, last_mission TEXT,
+  created_at    TEXT NOT NULL, updated_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_semantic_hash ON eclipse_semantic_memory(content_hash);
 `;
 
 function openEclipseDb(runtimeDir) {

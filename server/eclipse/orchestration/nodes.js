@@ -10,6 +10,7 @@ const { classify } = require("../routing/eligibility");
 const { id } = require("../contracts/validate");
 const { getBlueprint, WORKER_PERSONAS } = require("../agents/blueprints");
 const { runAgent, leaseForAgent } = require("../agents/runtime");
+const { generatePersona, synthesizeWorkerBlueprint } = require("../agents/foundry");
 const promotion = require("../evidence/promotion");
 const { composeReport } = require("../artifact/composer");
 const { z } = require("zod");
@@ -27,7 +28,7 @@ function personaFor(genome) {
 }
 
 function createNodes(deps) {
-  const { adapter, store, ledger, missionId, rootLease, gateway, toolbox = null, evidenceStore = null, artifactsDir = null, live = false, faults = {}, sideEffectSink = null, maxRepairs = 1 } = deps;
+  const { adapter, store, ledger, missionId, rootLease, gateway, toolbox = null, evidenceStore = null, artifactsDir = null, live = false, useFoundry = false, faults = {}, sideEffectSink = null, maxRepairs = 1 } = deps;
   const w5 = !!(toolbox && evidenceStore); // W5 mode: real tools + evidence + cited artifact
 
   // Gather real evidence for a Worker: lease-mediated web.search → web.fetch → EvidenceObject.
@@ -102,8 +103,18 @@ function createNodes(deps) {
         await runAgent({ blueprint: getBlueprint("architect"), subtask: { goal: s.mission?.prompt || "" }, adapter, lease: archLease, gateway, missionId, effort: s.effort });
       }
       if (!goals || !goals.length) goals = Array.from({ length: n }, (_, i) => `${s.mission?.prompt || ""} — aspect ${i + 1}`);
-      const subtasks = goals.map((goal) => ({ id: id("sub"), goal, persona, tools: WORKER_PERSONAS[persona].tools, lease: leaseForAgent(rootLease, getBlueprint("worker"), id("sess-w"), { persona }) }));
-      store.appendEvent(missionId, "plan.ready", { subtasks: subtasks.length, persona, width: subtasks.length });
+      const subtasks = goals.map((goal) => {
+        const sid = id("sub");
+        if (useFoundry) {
+          // Agent Foundry: generate an ephemeral persona + blueprint tailored to this subtask.
+          const pr = generatePersona({ id: sid, goal }, { genome: s.genome });
+          const bp = synthesizeWorkerBlueprint(pr);
+          store.appendEvent(missionId, "persona.forged", { persona: pr.label, capabilities: pr.capabilities, modelRole: pr.modelRole });
+          return { id: sid, goal, persona: pr.label, tools: pr.tools, blueprint: bp, lease: leaseForAgent(rootLease, bp, id("sess-w"), { persona: pr.label }) };
+        }
+        return { id: sid, goal, persona, tools: WORKER_PERSONAS[persona].tools, lease: leaseForAgent(rootLease, getBlueprint("worker"), id("sess-w"), { persona }) };
+      });
+      store.appendEvent(missionId, "plan.ready", { subtasks: subtasks.length, persona, width: subtasks.length, foundry: !!useFoundry });
       return { graphPlan: { subtasks, persona } };
     }),
 
@@ -111,16 +122,17 @@ function createNodes(deps) {
     worker: node("worker", "worker", async (s) => {
       const st = s.subtask || { id: id("sub"), goal: s.mission?.prompt || "", persona: "research", tools: WORKER_PERSONAS.research.tools, lease: leaseForAgent(rootLease, getBlueprint("worker"), id("sess-w"), { persona: "research" }) };
       store.onceGuard(`${missionId}:worker:${st.id}`, { missionId, node: "worker" }, () => { if (sideEffectSink) sideEffectSink.push(st.id); return { done: true }; });
+      const wbp = st.blueprint || getBlueprint("worker"); // ephemeral Foundry blueprint if present
       let packet;
       if (w5) {
         // Real tools: gather evidence under the worker's lease, then a model turn for the claim.
         const preEvidence = await gatherEvidence(st.lease, st);
-        ({ packet } = await runAgent({ blueprint: getBlueprint("worker"), persona: st.persona, subtask: { ...st, tools: [] }, adapter, lease: st.lease, gateway, missionId, effort: s.effort, preEvidence }));
+        ({ packet } = await runAgent({ blueprint: wbp, persona: st.persona, subtask: { ...st, tools: [] }, adapter, lease: st.lease, gateway, missionId, effort: s.effort, preEvidence }));
       } else {
         // Live-but-no-tools: answer from the model only, NO fabricated evidence (tools:[]).
         // Stub tests keep the persona tools (defaultToolStub supplies deterministic evidence).
         const stForRun = live ? { ...st, tools: [] } : st;
-        ({ packet } = await runAgent({ blueprint: getBlueprint("worker"), persona: st.persona, subtask: stForRun, adapter, lease: st.lease, gateway, missionId, effort: s.effort }));
+        ({ packet } = await runAgent({ blueprint: wbp, persona: st.persona, subtask: stForRun, adapter, lease: st.lease, gateway, missionId, effort: s.effort }));
       }
       return { packets: [packet] };
     }),

@@ -64,7 +64,7 @@ function makeRun(opts) {
   const wantsTools = opts.toolbox || opts.fixtures || opts.corpus || opts.toolMode === "live" || opts.search || opts.webFetch;
   const toolbox = opts.toolbox || (wantsTools ? createToolbox({ mode: opts.toolMode || "fixture", fixtures: opts.fixtures || {}, corpus: opts.corpus || [], webFetch: opts.webFetch, search: opts.search }) : null);
   const artifactsDir = opts.artifactsDir || path.join(dir, "eclipse-artifacts");
-  return { store, ledger, adapter, checkpointer, graphRunId, conn, rootLease, gateway, evidenceStore, toolbox, artifactsDir };
+  return { store, ledger, adapter, checkpointer, graphRunId, conn, rootLease, gateway, evidenceStore, toolbox, artifactsDir, useFoundry: !!opts.useFoundry, reputation: opts.reputation || null };
 }
 
 function buildNodesAndApp(run, mission, control) {
@@ -72,7 +72,7 @@ function buildNodesAndApp(run, mission, control) {
     adapter: run.adapter, store: run.store, ledger: run.ledger,
     missionId: mission.missionId, graphRunId: run.graphRunId,
     rootLease: run.rootLease, gateway: run.gateway,
-    toolbox: run.toolbox, evidenceStore: run.evidenceStore, artifactsDir: run.artifactsDir, live: run.adapter.mode === "live",
+    toolbox: run.toolbox, evidenceStore: run.evidenceStore, artifactsDir: run.artifactsDir, live: run.adapter.mode === "live", useFoundry: run.useFoundry,
     faults: control.faults || {}, sideEffectSink: control.sideEffectSink || null,
     cancelAt: control.cancelAt || null, pauseAt: control.pauseAt || null,
     maxRepairs: control.maxRepairs ?? 1,
@@ -86,6 +86,13 @@ async function execute(app, input, cfg, run, mission) {
     run.store.setStatus(run.graphRunId, "complete", state.phase);
     const snap = run.ledger.snapshot();
     run.store.mirrorCheckpoint(run.graphRunId, { phase: state.phase, tokens: snap.tokens, costUsd: snap.costUsd, revision: state.revision });
+    // Record per-blueprint reputation from the mission outcome (W6), if a store is wired.
+    if (run.reputation) {
+      const agg = {};
+      for (const p of state.packets || []) { const a = agg[p.blueprint] || (agg[p.blueprint] = { packets: 0, validated: 0 }); a.packets++; }
+      for (const p of state.validated || []) { const a = agg[p.blueprint] || (agg[p.blueprint] = { packets: 0, validated: 0 }); a.validated++; }
+      for (const [bp, a] of Object.entries(agg)) run.reputation.recordOutcome({ blueprintId: bp, persona: "", validated: a.validated, packets: a.packets, tokens: snap.tokens, costUsd: snap.costUsd });
+    }
     // Mission-lifecycle terminal event (owned by the orchestrator, not a node) → always last.
     run.store.appendEvent(mission.missionId, "mission.complete", { tokens: snap.tokens, costUsd: snap.costUsd, phase: state.phase });
     return { graphRunId: run.graphRunId, status: "complete", state, ledger: snap, run, cfg, mission };

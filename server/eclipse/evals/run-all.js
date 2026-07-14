@@ -2,7 +2,7 @@
 // All suites are local + deterministic + ZERO Gemini. Exit 1 if any suite fails.
 const { execFileSync } = require("child_process");
 const path = require("path");
-const suites = ["test-contracts.js", "test-routing.js", "test-model.js", "test-graph.js", "test-stream.js", "test-leases.js", "test-agents.js", "test-mission-e2e.js", "test-tools.js", "test-evidence.js", "test-w5-e2e.js"];
+const suites = ["test-contracts.js", "test-routing.js", "test-model.js", "test-graph.js", "test-stream.js", "test-leases.js", "test-agents.js", "test-mission-e2e.js", "test-tools.js", "test-evidence.js", "test-w5-e2e.js", "test-foundry.js", "test-lattice.js", "test-reactor.js"];
 let failed = 0;
 for (const s of suites) {
   try {

@@ -11759,10 +11759,25 @@ try {
   proactiveIntelligence.start();
 } catch (e) { console.error("[init] proactiveIntelligence failed:", e.message); }
 
+// ── ECLIPSE integration (cognitive OS) — serves /eclipse console + /api/eclipse/* ──────────
+// Isolated: if it fails to load (e.g. optional langgraph dep), the main server still boots.
+let eclipseIntegration = null;
+try {
+  const { createEclipseIntegration } = require("./server/eclipse/integration");
+  eclipseIntegration = createEclipseIntegration({ runtimeDir: RUNTIME_DIR, secretStore, loadSettings });
+  console.log("[eclipse] mounted → console at /eclipse, API at /api/eclipse/*");
+} catch (e) { console.error("[eclipse] integration failed to mount (main server unaffected):", e.message); }
+
 const server = http.createServer(async (req, res) => {
   try {
     validateHost(req);
     const url = new URL(req.url, `http://${req.headers.host || "localhost"}`);
+    // Eclipse owns /eclipse (console) + /api/eclipse/* (launch/stream/result). Handled before
+    // the generic /api dispatch so its SSE + POST bypass the standard JSON API path.
+    if (eclipseIntegration && (url.pathname === "/eclipse" || url.pathname === "/eclipse/" || url.pathname.startsWith("/api/eclipse"))) {
+      req.jarvisSession = ensureLocalSession(req, res);
+      if (await eclipseIntegration.handle(req, res, url)) return;
+    }
     if (url.pathname.startsWith("/api/")) {
       req.jarvisPrincipal = requestTrust.principalFor(req, url.pathname, url.search) || null;
     }
