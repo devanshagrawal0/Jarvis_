@@ -431,14 +431,16 @@ export function JarvisCommandBar({ onSubmit, onMicToggle, onModules, model, onSe
               : submenu === "effort"
                 ? { title: "Effort", rows: EFFORTS, cur: strength || "cost-guarded", set: onSetStrength }
                 : submenu === "research"
-                  ? { title: "Research", rows: RESEARCH_ROWS, cur: research || "fast", set: onSetResearch }
+                  ? (isEclipse ? null : { title: "Research", rows: RESEARCH_ROWS, cur: research || "fast", set: onSetResearch })
                   : submenu === "voice"
                     ? { title: "Voice", rows: VOICE_ROWS, cur: voiceMode || "dictate", set: onSetVoiceMode }
                   : null;
             const L1 = [
               { key: "model" as const, label: "Model", value: activeModel.label },
               { key: "effort" as const, label: "Effort", value: activeEffort.label },
-              { key: "research" as const, label: "Research", value: activeResearch.label },
+              // Eclipse encodes research depth in its Effort tiers (Pulse/Deep/Totality), so the
+              // separate Research dial doesn't apply — hide it when Eclipse is the model.
+              ...(isEclipse ? [] : [{ key: "research" as const, label: "Research", value: activeResearch.label }]),
               { key: "voice" as const, label: "Voice", value: activeVoice.label },
             ];
             const ACCENT = "#5cb0ff";
