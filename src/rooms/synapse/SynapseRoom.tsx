@@ -7,6 +7,7 @@ import { useSessionChoreographer, type ChoreoEvent, type Suggestion } from "./us
 import { LiveCursorLayer, type Cursor } from "./LiveCursorLayer";
 import { CallPanel } from "./CallPanel";
 import type { SynCall } from "./synCall";
+import { SharedCanvas } from "./SharedCanvas";
 import "./synapse.css";
 
 // Synapse — W1 dedicated room (P0 shell on the single-machine co-op backend).
@@ -33,8 +34,11 @@ export function SynapseRoom({ onExit }: { onExit: () => void }) {
   const [joinCode, setJoinCode] = useState("");
   const [chatDraft, setChatDraft] = useState("");
   const [taskDraft, setTaskDraft] = useState("");
-  const [view, setView] = useState<"files" | "patches" | "debate" | "screen">("files");
+  const [view, setView] = useState<"files" | "patches" | "debate" | "canvas" | "warroom" | "screen">("files");
   const [openFile, setOpenFile] = useState<{ path: string; content: string } | null>(null);
+  const [warRoom, setWarRoom] = useState<any>(null);
+  const [sharedMission, setSharedMission] = useState<{ id: string; status: string } | null>(null);
+  const [reputation, setReputation] = useState<Record<string, any>>({});
   const [channelStatus, setChannelStatus] = useState<ChannelStatus>("closed");
   const channelRef = useRef<SynChannel | null>(null);
   const [livePeers, setLivePeers] = useState<Array<{ role: string; name: string }>>([]);
@@ -84,7 +88,10 @@ export function SynapseRoom({ onExit }: { onExit: () => void }) {
         void syn.refresh();
       },
       onChat: (m) => { pushEvent({ kind: "chat", who: { name: m.name } }); void syn.refresh(); },
-      onSignal: (m) => { if (m.channel === "call") void callRef.current?.onSignal(m); }, // route media SDP/ICE to the call
+      onSignal: (m) => {
+        if (m.channel === "call") void callRef.current?.onSignal(m); // media SDP/ICE → the call
+        else if (m.channel === "mission" && m.missionId) setSharedMission({ id: m.missionId, status: m.status || "running" }); // shared Eclipse mission broadcast
+      },
       onCursor: (m) => {
         if (m.kind === "view") { // follow-mode: mirror the followed peer's active workspace tab
           if (followingRef.current && (m.name === followingRef.current || m.from === followingRef.current)) setView(m.view);
@@ -123,6 +130,41 @@ export function SynapseRoom({ onExit }: { onExit: () => void }) {
   }, [session, run, setNotice]);
 
   const selfRole = typeof window !== "undefined" && new URLSearchParams(window.location.search).get("coop_code") ? "guest" : "host";
+
+  // W9: launch a SHARED Eclipse mission (reuses the verified /api/eclipse/missions runtime) and
+  // broadcast the mission id over the channel so both collaborators watch the same run.
+  const launchSharedMission = useCallback(async (prompt: string) => {
+    if (!prompt?.trim()) return;
+    try {
+      const r = await fetch("/api/eclipse/missions", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ prompt, effort: "deep" }) });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || "Mission launch failed");
+      setSharedMission({ id: String(j.missionId), status: "running" });
+      channelRef.current?.send({ type: "signal", channel: "mission", missionId: j.missionId, status: "running" });
+      setNotice("Shared mission launched — both of you can watch it at /eclipse.");
+    } catch (e: any) { setError(e?.message || String(e)); }
+  }, [setNotice, setError]);
+
+  const fetchWarRoom = useCallback(async () => {
+    if (!session?.id) return;
+    try { setWarRoom(await post(`/api/coop-symbiote/session/${encodeURIComponent(session.id)}/war-room`, {})); }
+    catch (e: any) { setError(e?.message || String(e)); }
+  }, [session, setError]);
+
+  const savePreset = useCallback(async () => {
+    if (!session) return;
+    try { await post("/api/coop-symbiote/templates", { name: `${session.mode} preset`, mode: session.mode, abilities: session.abilities }); setNotice("Preset saved."); }
+    catch (e: any) { setError(e?.message || String(e)); }
+  }, [session, setNotice, setError]);
+
+  // W9: fetch the guest's reputation while connected.
+  useEffect(() => {
+    if (!session?.id || !session.guest) return;
+    let alive = true;
+    api<any>(`/api/coop-symbiote/session/${encodeURIComponent(session.id)}/reputation`).then((r) => { if (alive) setReputation(r.reputation || {}); }).catch(() => {});
+    return () => { alive = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [session?.id, session?.guest?.guestFingerprint, session?.patches?.length]);
 
   const exportRecap = useCallback(async () => {
     if (!session?.id) return;
@@ -200,6 +242,8 @@ export function SynapseRoom({ onExit }: { onExit: () => void }) {
             {selfRole === "host" && <button className="syn-btn ghost sm" title="Rotate the invite code (invalidates the old one)" disabled={!!busy} onClick={() => run("rotate", () => post(`/api/coop-symbiote/session/${encodeURIComponent(session.id)}/regenerate-code`, {}), "Invite code rotated.")}>↻</button>}
           </span>
         )}
+        {isActive && <button className="syn-btn ghost sm" title="Launch a shared Eclipse mission both collaborators watch" onClick={() => { const p = window.prompt("Shared mission prompt (both of you watch the run):"); if (p) void launchSharedMission(p); }}>🛰</button>}
+        {isActive && selfRole === "host" && <button className="syn-btn ghost sm" title="Save this mode + abilities as a reusable preset" onClick={savePreset}>Save preset</button>}
         {isActive && <button className="syn-btn ghost sm" title="Export the session recap (Markdown)" onClick={exportRecap}>Export</button>}
         {session && <button className="syn-btn danger sm" disabled={!!busy} onClick={() => run("end", () => post(`/api/coop-symbiote/session/${encodeURIComponent(session.id)}/end`, { reason: "Ended from Synapse room." }), "Session ended.")}>End</button>}
         <button className="syn-btn ghost sm syn-close" onClick={onExit}>Exit ✕</button>
@@ -225,6 +269,9 @@ export function SynapseRoom({ onExit }: { onExit: () => void }) {
       )}
       {session && choreo.suggestions.length > 0 && (
         <div className="syn-suggests">{choreo.suggestions.map((s) => <button key={s.id} className="syn-suggest" onClick={() => runSuggestion(s)}>✦ {s.label}</button>)}</div>
+      )}
+      {sharedMission && (
+        <div className="syn-narrate"><span className="syn-narrate-orb">🛰</span><em>Shared mission {sharedMission.status} — <a href="/eclipse" target="_blank" rel="noreferrer" style={{ color: "var(--syn-cyan)" }}>watch at /eclipse</a> ({sharedMission.id.slice(0, 8)})</em></div>
       )}
 
       {/* ---- empty state ---- */}
@@ -267,6 +314,7 @@ export function SynapseRoom({ onExit }: { onExit: () => void }) {
                   {p.kind === "human" && p.role !== selfRole && livePeers.some((lp) => lp.role === p.role)
                     ? <button className="syn-btn ghost sm" onClick={() => setFollowing(following === p.name ? null : p.name)}>{following === p.name ? "Unfollow" : "Follow"}</button>
                     : <span className="syn-role">{p.role}</span>}
+                  {p.role === "guest" && session.guest?.guestFingerprint && reputation[session.guest.guestFingerprint]?.tier && <span className="syn-role" title={`reputation ${reputation[session.guest.guestFingerprint].score}/100`}>★ {reputation[session.guest.guestFingerprint].tier}</span>}
                   {selfRole === "host" && p.role === "guest" && session.guest && <button className="syn-btn danger sm" title="Remove guest (moderation)" disabled={!!busy} onClick={() => run("kick", () => post(`/api/coop-symbiote/session/${encodeURIComponent(session.id)}/kick`, { reason: "Removed by host." }), "Guest removed.")}>Kick</button>}
                 </div>
               ))}
@@ -278,8 +326,8 @@ export function SynapseRoom({ onExit }: { onExit: () => void }) {
             <section className="syn-panel syn-workspace">
               <header>
                 <div className="syn-switch">
-                  {(["files", "patches", "debate", "screen"] as const).map((v) => (
-                    <button key={v} aria-selected={view === v} onClick={() => setView(v)}>{v[0].toUpperCase() + v.slice(1)}{v === "patches" && session.patches?.length ? ` (${session.patches.length})` : ""}</button>
+                  {([["files", "Files"], ["patches", "Patches"], ["canvas", "Canvas"], ["debate", "Debate"], ["warroom", "War-room"], ["screen", "Screen"]] as const).map(([v, label]) => (
+                    <button key={v} aria-selected={view === v} onClick={() => setView(v as any)}>{label}{v === "patches" && session.patches?.length ? ` (${session.patches.length})` : ""}</button>
                   ))}
                 </div>
                 {view === "files" && openFile && <button className="syn-btn ghost sm" onClick={() => setOpenFile(null)}>← files</button>}
@@ -334,7 +382,26 @@ export function SynapseRoom({ onExit }: { onExit: () => void }) {
                   </div>
                 )}
 
-                {view === "screen" && <div className="syn-empty" style={{ height: "auto" }}><div className="syn-soon">Screen co-pilot &amp; screen-share arrive with the call — <b>W6</b>.</div></div>}
+                {view === "canvas" && <SharedCanvas channelRef={channelRef} me={selfRole === "guest" ? "Dev (guest)" : (session.hostName || "Host")} ready={channelStatus === "open"} />}
+
+                {view === "warroom" && (
+                  <div className="syn-warroom">
+                    <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 8, flexWrap: "wrap" }}>
+                      <button className="syn-btn sm" onClick={fetchWarRoom}>Load divergence brief</button>
+                      <button className="syn-btn ghost sm" onClick={() => launchSharedMission("Kalshi/Polymarket divergence war-room: produce a verified, advisory-only brief of current divergences. No trades, no personalized advice.")}>🛰 Shared analysis mission</button>
+                    </div>
+                    {warRoom ? (
+                      <>
+                        <div className="syn-soon" style={{ fontSize: 10 }}>{warRoom.disclaimer}</div>
+                        <div style={{ fontSize: 12, margin: "8px 0", color: "var(--syn-ink)" }}>{warRoom.summary}</div>
+                        {(warRoom.divergences || []).map((dv: any, i: number) => <div key={i} className="syn-patch" style={{ padding: "6px 9px" }}><strong>{dv.ticker}</strong> · {dv.kind}<small style={{ display: "block" }}>{dv.note}</small></div>)}
+                        {!(warRoom.divergences || []).length && <div className="syn-empty" style={{ height: "auto" }}>No divergences to discuss.</div>}
+                      </>
+                    ) : <div className="syn-empty" style={{ height: "auto" }}>Kalshi/Quant war-room — <b>advisory only, never trades</b>. Load the brief.</div>}
+                  </div>
+                )}
+
+                {view === "screen" && <div className="syn-empty" style={{ height: "auto" }}><div className="syn-soon">Screen co-pilot &amp; screen-share ride the call — start a call and share your screen (<b>W6</b>).</div></div>}
               </div>
               {following && <div className="syn-follow-ribbon">Following <b>{following}</b><button onClick={() => setFollowing(null)}>✕</button></div>}
               <LiveCursorLayer channelRef={channelRef} cursors={cursors} />

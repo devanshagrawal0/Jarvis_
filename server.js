@@ -10231,6 +10231,24 @@ ${entryText}`;
   const coopRecapMatch = pathname.match(/^\/api\/coop-symbiote\/session\/([^/]+)\/recap$/);
   if (req.method === "GET" && coopRecapMatch) { sendJson(res, 200, coopSymbioteMesh.recap(coopRecapMatch[1])); return; }
 
+  // Synapse W9: advanced differentiators.
+  if (req.method === "GET" && pathname === "/api/coop-symbiote/templates") { sendJson(res, 200, { templates: coopSymbioteMesh.listTemplates() }); return; }
+  if (req.method === "POST" && pathname === "/api/coop-symbiote/templates") { sendJson(res, 201, { template: coopSymbioteMesh.saveTemplate(await parseRequestData(req)) }); return; }
+  const coopReputationMatch = pathname.match(/^\/api\/coop-symbiote\/session\/([^/]+)\/reputation$/);
+  if (req.method === "GET" && coopReputationMatch) { sendJson(res, 200, { reputation: coopSymbioteMesh.getReputation(coopReputationMatch[1]) }); return; }
+  const coopW9Match = pathname.match(/^\/api\/coop-symbiote\/session\/([^/]+)\/(skill-fusion|apply-template|pair-run|war-room)$/);
+  if (req.method === "POST" && coopW9Match) {
+    const [, sessionId, action] = coopW9Match;
+    const data = await parseRequestData(req);
+    // apply-template changes the ability envelope → host-authority only.
+    if (action === "apply-template" && req.jarvisPrincipal?.kind !== "local-owner") { sendJson(res, 403, { error: "Host authority required to apply a template." }); return; }
+    if (action === "skill-fusion") sendJson(res, 201, coopSymbioteMesh.skillFusion(sessionId, data));
+    else if (action === "apply-template") sendJson(res, 200, { session: coopSymbioteMesh.applyTemplate(sessionId, data.templateId) });
+    else if (action === "pair-run") sendJson(res, 200, coopSymbioteMesh.pairRun(sessionId, data));
+    else sendJson(res, 200, coopSymbioteMesh.warRoom(sessionId, data));
+    return;
+  }
+
   const coopSessionActionMatch = pathname.match(/^\/api\/coop-symbiote\/session\/([^/]+)\/(approve-join|reject-join|end)$/);
   if (req.method === "POST" && coopSessionActionMatch) {
     const [, sessionId, action] = coopSessionActionMatch;

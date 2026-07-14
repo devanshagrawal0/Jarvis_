@@ -8,6 +8,7 @@ const { RATE, makeCodeSalt, mintTurnCredentials, verifyCodeProof, newHostIdentit
 const { mintGuestLease, revokeLease } = require("./coop-leases");
 const { applyHunks, ciLite, redTeamReview } = require("./coop-patchcourt");
 const { exportSession: buildExport, sessionMetrics: buildMetrics, buildRecap } = require("./coop-intelligence");
+const { fuseSkills, applyReputation, pairRunCompare, warRoomBrief } = require("./coop-advanced");
 
 const DEFAULT_ABILITIES = {
   sharedSourceTree: true,
@@ -661,11 +662,13 @@ function createCoOpSymbioteMesh({ runtimeDir, rootDir, neuralVault, localUrls = 
   }
 
   function decidePatch(sessionId, patchId, decision, actor = "Devansh") {
-    return updatePatch(sessionId, patchId, (patch) => {
+    const result = updatePatch(sessionId, patchId, (patch) => {
       patch.status = decision === "approve" ? "approved" : "rejected";
       patch.decisions.unshift({ decision, actor, at: isoNow(), reason: decision === "approve" ? "Approved in Patch Court." : "Rejected in Patch Court." });
       record(sessionId, `patch_${decision}d`, { patchId, filePath: patch.filePath }, actor);
     });
+    try { recordReputation(sessionId, decision === "approve" ? "patch_approved" : "patch_rejected"); } catch { /* reputation is best-effort */ }
+    return result;
   }
 
   function ghostTest(sessionId, patchId) {
@@ -717,7 +720,7 @@ function createCoOpSymbioteMesh({ runtimeDir, rootDir, neuralVault, localUrls = 
   }
 
   function applyPatch(sessionId, patchId, actor = "Devansh") {
-    return updatePatch(sessionId, patchId, (patch) => {
+    const applyResult = updatePatch(sessionId, patchId, (patch) => {
       if (!["approved", "ghost_passed"].includes(patch.status)) {
         throw Object.assign(new Error("Patch must be approved or ghost-tested before apply."), { statusCode: 409 });
       }
@@ -744,6 +747,8 @@ function createCoOpSymbioteMesh({ runtimeDir, rootDir, neuralVault, localUrls = 
       patch.appliedBy = actor;
       record(sessionId, "patch_applied", { patchId, filePath: patch.filePath }, actor);
     });
+    try { recordReputation(sessionId, "patch_applied"); } catch { /* reputation is best-effort */ }
+    return applyResult;
   }
 
   function createTask(sessionId, data = {}) {
@@ -1006,6 +1011,78 @@ function createCoOpSymbioteMesh({ runtimeDir, rootDir, neuralVault, localUrls = 
     return buildRecap(session);
   }
 
+  // ---- W9: advanced differentiators ----
+
+  // Cross-user skill fusion: merge two offered skills into a superset with dual provenance.
+  function skillFusion(sessionId, { skillIdA, skillIdB, name } = {}) {
+    const session = getSession(sessionId);
+    if (!session) throw Object.assign(new Error("Co-op session not found."), { statusCode: 404 });
+    const find = (id) => (session.skillTransfers || []).find((t) => t.id === id || t.skillId === id)?.skillManifest;
+    const a = find(skillIdA), b = find(skillIdB);
+    if (!a || !b) throw Object.assign(new Error("Both skills must exist in this session to fuse."), { statusCode: 404 });
+    const fused = fuseSkills(a, b, { name });
+    const scan = scanSecrets(JSON.stringify(fused));
+    if (!scan.ok) throw Object.assign(new Error(`Skill fusion blocked: ${scan.reason}`), { statusCode: 403 });
+    return offerSkill(sessionId, { ...fused, offeredBy: "skill-fusion" });
+  }
+
+  // Per-peer reputation (keyed by the guest fingerprint), updated on accept/reject events.
+  function recordReputation(sessionId, event) {
+    const session = getSession(sessionId);
+    if (!session?.guest?.guestFingerprint) return null;
+    session.reputation ||= {};
+    const fp = session.guest.guestFingerprint;
+    session.reputation[fp] = applyReputation(session.reputation[fp], event);
+    session.updatedAt = isoNow();
+    saveSession(session);
+    return session.reputation[fp];
+  }
+  function getReputation(sessionId) {
+    const session = getSession(sessionId);
+    if (!session) throw Object.assign(new Error("Co-op session not found."), { statusCode: 404 });
+    return session.reputation || {};
+  }
+
+  // Session templates: save/list/apply a {mode, abilities} preset (roster of reusable setups).
+  const templatesPath = path.join(coopDir, "templates.json");
+  function listTemplates() { return readJson(templatesPath, []); }
+  function saveTemplate({ name, mode, abilities } = {}) {
+    const templates = listTemplates();
+    const tpl = { id: crypto.randomUUID(), name: name || "Untitled preset", mode: mode || "Code Review Mode", abilities: abilities || {}, createdAt: isoNow() };
+    templates.unshift(tpl);
+    writeJson(templatesPath, templates.slice(0, 50));
+    return tpl;
+  }
+  function applyTemplate(sessionId, templateId) {
+    const tpl = listTemplates().find((t) => t.id === templateId);
+    if (!tpl) throw Object.assign(new Error("Template not found."), { statusCode: 404 });
+    const session = getSession(sessionId);
+    if (!session) throw Object.assign(new Error("Co-op session not found."), { statusCode: 404 });
+    session.mode = tpl.mode;
+    session.abilities = { ...DEFAULT_ABILITIES, ...(tpl.abilities || {}) };
+    session.updatedAt = isoNow();
+    saveSession(session);
+    record(sessionId, "template_applied", { templateId, name: tpl.name }, session.hostName);
+    return publicSession(session);
+  }
+
+  // Ghost pair-run: race two candidate patches to the same file in isolated worktrees.
+  function pairRun(sessionId, { filePath, candidateA, candidateB } = {}) {
+    const file = readSharedFile(filePath); // enforces path policy + secret scan on the base
+    const sandbox = path.join(ghostDir, sessionId, `pairrun-${crypto.randomBytes(3).toString("hex")}`);
+    ensureDir(sandbox);
+    const result = pairRunCompare({ rootDir, relPath: file.path, baseContent: file.content, candidateA: String(candidateA || ""), candidateB: String(candidateB || ""), sandboxDir: sandbox });
+    record(sessionId, "ghost_pair_run", { filePath: file.path, winner: result.winner }, "Ghost Pair-Run");
+    return result;
+  }
+
+  // Kalshi/Quant war-room advisory brief (ANALYSIS ONLY — never places trades).
+  function warRoom(sessionId, data = {}) {
+    const session = getSession(sessionId);
+    if (!session) throw Object.assign(new Error("Co-op session not found."), { statusCode: 404 });
+    return warRoomBrief(data);
+  }
+
   function status() {
     const session = activeSession();
     const manifest = fileManifest({ limit: 80 });
@@ -1063,6 +1140,13 @@ function createCoOpSymbioteMesh({ runtimeDir, rootDir, neuralVault, localUrls = 
     exportSession,
     sessionMetrics,
     recap,
+    skillFusion,
+    getReputation,
+    listTemplates,
+    saveTemplate,
+    applyTemplate,
+    pairRun,
+    warRoom,
   };
 }
 

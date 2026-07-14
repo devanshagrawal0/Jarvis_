@@ -202,6 +202,24 @@
   .syn-room, .syn-avatar.live .ring, .syn-joinbanner, .syn-pill.is-live i { animation: none !important; }
 }
 
+/* ------- W9: shared whiteboard + war-room ------- */
+.syn-canvas-wrap { display: flex; flex-direction: column; height: 100%; gap: 6px; }
+.syn-canvas-bar { display: flex; align-items: center; justify-content: space-between; font-size: 11px; color: var(--syn-dim); }
+.syn-canvas { flex: 1; width: 100%; min-height: 220px; background: #060a12; border: 1px solid var(--syn-line); border-radius: 9px; touch-action: none; cursor: crosshair; }
+.syn-warroom { font-size: 12px; }
+
+/* ------- W9: light theme (room flips with the app theme toggle) ------- */
+:root[data-theme="light"] .syn-room {
+  --syn-bg: radial-gradient(circle at 12% -8%, rgba(0, 150, 220, 0.06), transparent 42%), #eef4fa;
+  --syn-glass: linear-gradient(150deg, rgba(255, 255, 255, 0.92), rgba(236, 243, 250, 0.86));
+  --syn-line: rgba(0, 120, 180, 0.16);
+  --syn-line-hot: rgba(0, 150, 210, 0.34);
+  --syn-ink: #0c2536;
+  --syn-dim: rgba(40, 70, 95, 0.72);
+  --syn-frost: rgba(255, 255, 255, 0.82);
+}
+:root[data-theme="light"] .syn-canvas, :root[data-theme="light"] .syn-code-view { background: #f6fafd; }
+
 /* ------- W6: the call ------- */
 .syn-call.is-oncall > header strong { color: var(--syn-live); }
 .syn-call-grid { display: flex; flex-direction: column; gap: 8px; width: 100%; }
