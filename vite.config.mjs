@@ -12,9 +12,12 @@ export default defineConfig({
   },
   server: {
     proxy: {
-      "/api": "http://localhost:8799",
+      // ws:true forwards WebSocket upgrades in dev — needed for /mesh/coop/ws (Synapse live
+      // channel), /mesh/ws (device mesh) and /api/kalshi/ws. In production the backend serves
+      // these directly, so this only matters for the Vite dev server.
+      "/api": { target: "http://localhost:8799", ws: true },
       "/assets": "http://localhost:8799",
-      "/mesh": "http://localhost:8799",
+      "/mesh": { target: "http://localhost:8799", ws: true },
       "/phone": "http://localhost:8799",
     }
   },

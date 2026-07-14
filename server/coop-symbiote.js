@@ -3,6 +3,11 @@ const fs = require("fs");
 const os = require("os");
 const path = require("path");
 const { execFileSync } = require("child_process");
+const { openCoopStore } = require("./coop-store");
+const { RATE, makeCodeSalt, mintTurnCredentials, verifyCodeProof, newHostIdentity, keyFingerprint, safetyNumber, issueResumeToken, verifyResumeToken } = require("./coop-transport");
+const { mintGuestLease, revokeLease } = require("./coop-leases");
+const { applyHunks, ciLite, redTeamReview } = require("./coop-patchcourt");
+const { exportSession: buildExport, sessionMetrics: buildMetrics, buildRecap } = require("./coop-intelligence");
 
 const DEFAULT_ABILITIES = {
   sharedSourceTree: true,
@@ -174,37 +179,27 @@ function createCoOpSymbioteMesh({ runtimeDir, rootDir, neuralVault, localUrls = 
   const logsDir = path.join(coopDir, "logs");
   for (const directory of [coopDir, sessionsDir, replaysDir, patchesDir, snapshotsDir, ghostDir, memoryPacketDir, skillTransferDir, tempDir, logsDir]) ensureDir(directory);
 
-  function state() {
-    const current = readJson(statePath, { sessions: [], attempts: [] });
-    current.sessions ||= [];
-    current.attempts ||= [];
-    return current;
-  }
-
-  function saveState(next) {
-    writeJson(statePath, next);
-    return next;
-  }
+  // W0: durable SQLite substrate. Per-session rows (no whole-array rewrite → no lost updates),
+  // no 20-session cap, optimistic-concurrency version, DB-backed attempts, events.jsonl rotation.
+  // Migrates any legacy state.json + sessions/*.json on first open.
+  const store = openCoopStore({
+    dbPath: path.join(coopDir, "coop.db"),
+    legacyStatePath: statePath,
+    legacySessionsDir: sessionsDir,
+    eventsPath: path.join(logsDir, "events.jsonl"),
+  });
 
   function saveSession(session) {
-    const current = state();
-    const index = current.sessions.findIndex((item) => item.id === session.id);
-    if (index >= 0) current.sessions[index] = session;
-    else current.sessions.unshift(session);
-    current.sessions = current.sessions.slice(0, 20);
-    saveState(current);
-    writeJson(path.join(sessionsDir, `${session.id}.json`), session);
-    return session;
+    return store.saveSession(session);
   }
 
   function getSession(id) {
-    const found = state().sessions.find((item) => item.id === id);
-    if (found) return found;
-    return readJson(path.join(sessionsDir, `${id}.json`), null);
+    return store.getSession(id);
   }
 
   function activeSession() {
-    return state().sessions.find((session) => session.status === "active" || session.status === "pending_guest") || state().sessions[0] || null;
+    const sessions = store.listSessions().filter((s) => s.status !== "wiped");
+    return sessions.find((session) => session.status === "active" || session.status === "pending_guest") || sessions[0] || null;
   }
 
   function record(sessionId, eventType, payload = {}, actor = "local") {
@@ -217,14 +212,13 @@ function createCoOpSymbioteMesh({ runtimeDir, rootDir, neuralVault, localUrls = 
       timestamp: isoNow(),
       payload,
     };
-    const session = getSession(sessionId);
-    if (session) {
+    // Atomic timeline append (skips silently if the session is gone); event still logged.
+    store.mutateSession(sessionId, (session) => {
       session.timeline ||= [];
       session.timeline.unshift(event);
       session.timeline = session.timeline.slice(0, 240);
-      saveSession(session);
-    }
-    fs.appendFileSync(path.join(logsDir, "events.jsonl"), `${JSON.stringify(event)}\n`, { encoding: "utf8", mode: 0o600 });
+    }, false);
+    store.appendEvent(event);
     neuralVault?.recordCoopEvent?.({ sessionId, eventType, actor, target: event.target, eventJson: payload, metadata: { source: "CoOpSymbioteMesh" } });
     return event;
   }
@@ -250,14 +244,30 @@ function createCoOpSymbioteMesh({ runtimeDir, rootDir, neuralVault, localUrls = 
     };
   }
 
-  function inviteUrls(code) {
-    return localUrls().map((base) => `${base}?tool=coop&coop_code=${encodeURIComponent(cleanCode(code))}`);
+  // W2: invite links carry the public/base URLs plus the code salt + host fingerprint so a
+  // remote guest can reach the host and (in W3) verify it out-of-band. Recomputed live in
+  // publicSession() so links always reflect the current tunnel URL.
+  function inviteUrls(code, { salt = "", fp = "" } = {}) {
+    const q = (base) => {
+      const parts = [`tool=coop`, `coop_code=${encodeURIComponent(cleanCode(code))}`];
+      if (salt) parts.push(`coop_salt=${encodeURIComponent(salt)}`);
+      if (fp) parts.push(`coop_fp=${encodeURIComponent(fp)}`);
+      return `${base}?${parts.join("&")}`;
+    };
+    return localUrls().map(q);
   }
 
   function createSession(data = {}) {
     const code = sessionCode();
     const now = isoNow();
+    const codeSalt = makeCodeSalt();
+    // W3: real X25519 host identity. The private key + resume secret live ONLY server-side
+    // (stripped in publicSession); the guest sees only the public key + fingerprint.
+    const identity = newHostIdentity();
+    const hostFp = identity.fingerprint;
     const session = {
+      _secrets: { hostPrivateKey: identity.privateKey, hostSecret: crypto.randomBytes(24).toString("hex") },
+      hostPublicKey: identity.publicKey,
       id: crypto.randomUUID(),
       title: data.title || "Jarvis Co-Op Symbiote Mesh",
       moduleName: "CoOpSymbioteMesh",
@@ -279,8 +289,10 @@ function createCoOpSymbioteMesh({ runtimeDir, rootDir, neuralVault, localUrls = 
       },
       code,
       codeHash: sha256(cleanCode(code)),
+      codeSalt,
+      hostFingerprint: hostFp,
       expiresAt: new Date(Date.now() + 10 * 60 * 1000).toISOString(),
-      inviteLinks: inviteUrls(code),
+      inviteLinks: inviteUrls(code, { salt: codeSalt, fp: hostFp }),
       repoFingerprintHost: repoFingerprint(),
       repoFingerprintGuest: null,
       repoMatch: "waiting",
@@ -327,15 +339,21 @@ function createCoOpSymbioteMesh({ runtimeDir, rootDir, neuralVault, localUrls = 
 
   function joinSession(data = {}) {
     const code = cleanCode(data.code || data.sessionCode);
-    const current = state();
-    const attempt = { id: crypto.randomUUID(), codeHash: sha256(code), at: isoNow(), peerName: data.displayName || "Trusted friend" };
-    current.attempts.unshift(attempt);
-    current.attempts = current.attempts.slice(0, 50);
-    saveState(current);
-    const recentAttempts = current.attempts.filter((item) => item.codeHash === attempt.codeHash && Date.now() - Date.parse(item.at) < 60_000);
-    if (recentAttempts.length > 8) throw Object.assign(new Error("Too many failed co-op join attempts. Wait a minute and try again."), { statusCode: 429 });
-    const session = current.sessions.find((item) => item.codeHash === sha256(code) && Date.parse(item.expiresAt) > Date.now() && item.status !== "ended");
+    const codeHash = sha256(code);
+    // W2: `ip` is the REAL client IP (from clientIp() on the route), never the spoofable body.
+    const ip = String(data.ip || "").trim();
+    store.recordAttempt({ id: crypto.randomUUID(), codeHash, at: isoNow(), peerName: data.displayName || "Trusted friend", ip });
+    // Rate limit across three dimensions so code-spraying (fresh code each try) can't bypass it.
+    const attempts = store.countAttempts({ codeHash, ip, windowMs: 60_000 });
+    if (attempts.byCode > RATE.perCodePerMin || (ip && attempts.byIp > RATE.perIpPerMin) || attempts.global > RATE.globalPerMin) {
+      throw Object.assign(new Error("Too many co-op join attempts. Wait a minute and try again."), { statusCode: 429 });
+    }
+    const session = store.listSessions().find((item) => item.codeHash === codeHash && Date.parse(item.expiresAt) > Date.now() && item.status !== "ended");
     if (!session) throw Object.assign(new Error("Invalid or expired co-op session code."), { statusCode: 404 });
+    // If the guest supplies a code proof (from the invite salt), verify it constant-time.
+    if (data.codeProof && !verifyCodeProof(session.codeSalt || "", code, data.codeProof)) {
+      throw Object.assign(new Error("Co-op code proof did not verify."), { statusCode: 403 });
+    }
     const fingerprint = data.repoFingerprint || repoFingerprint();
     session.pendingJoin = {
       id: crypto.randomUUID(),
@@ -346,6 +364,10 @@ function createCoOpSymbioteMesh({ runtimeDir, rootDir, neuralVault, localUrls = 
       capabilities: data.capabilities || ["shared_chat", "source_read", "patch_suggest"],
       requestedPermissions: data.requestedPermissions || ["view_file_tree", "read_source_files", "suggest_code_edits", "jarvis_to_jarvis_message"],
       publicSessionKey: data.publicSessionKey || crypto.randomBytes(16).toString("hex"),
+      // W3: the guest's X25519 static public key (real handshake in W4) → fingerprint for the
+      // safety number. Falls back to a fingerprint over publicSessionKey when not supplied.
+      guestPublicKey: data.guestPublicKey || "",
+      guestFingerprint: keyFingerprint(data.guestPublicKey || data.publicSessionKey || crypto.randomBytes(8).toString("hex")),
       status: "pending_host_approval",
       requestedAt: isoNow(),
     };
@@ -373,6 +395,12 @@ function createCoOpSymbioteMesh({ runtimeDir, rootDir, neuralVault, localUrls = 
       return publicSession(session);
     }
     session.guest = { ...session.pendingJoin, status: "connected", approvedAt: isoNow() };
+    // W3: approval MINTS the guest's capability lease (scoped, non-side-effecting, non-delegable),
+    // the safety number (both fingerprints), and a resume token for reconnect-without-re-approval.
+    const gfp = session.guest.guestFingerprint;
+    session.guest.lease = mintGuestLease(session.id);
+    session.guest.safetyNumber = safetyNumber(session.hostFingerprint, gfp);
+    session.guest.resumeToken = issueResumeToken({ secret: session._secrets.hostSecret, sessionId: session.id, guestFp: gfp });
     session.peerName = session.guest.displayName;
     session.pendingJoin = null;
     session.status = "active";
@@ -390,6 +418,10 @@ function createCoOpSymbioteMesh({ runtimeDir, rootDir, neuralVault, localUrls = 
     if (!session) throw Object.assign(new Error("Co-op session not found."), { statusCode: 404 });
     session.status = "ended";
     session.endedAt = isoNow();
+    // W3: ending the session REVOKES the guest lease (verify() will now fail) and burns the
+    // resume token so a dropped guest can't silently reconnect.
+    if (session.guest?.lease) session.guest.lease = revokeLease(session.guest.lease);
+    if (session.guest) session.guest.resumeToken = "";
     session.summary = summarizeSession(session);
     session.updatedAt = isoNow();
     saveSession(session);
@@ -558,9 +590,19 @@ function createCoOpSymbioteMesh({ runtimeDir, rootDir, neuralVault, localUrls = 
     const file = readSharedFile(data.filePath);
     const originalText = String(data.originalText || "");
     const replacementText = String(data.replacementText || "");
-    const nextContent = originalText && file.content.includes(originalText)
-      ? file.content.replace(originalText, replacementText)
-      : String(data.nextContent || "");
+    // W7: multi-hunk patches. `hunks:[{originalText,replacementText}]` applies in sequence; single
+    // originalText/replacementText/nextContent still works (wrapped as one hunk).
+    const hunks = Array.isArray(data.hunks) && data.hunks.length
+      ? data.hunks
+      : [{ originalText, replacementText, nextContent: data.nextContent }];
+    let nextContent;
+    if (hunks.some((h) => h.originalText || h.nextContent)) {
+      const applied = applyHunks(file.content, hunks);
+      if (!applied.ok) throw Object.assign(new Error(`Patch does not apply: ${applied.reason}`), { statusCode: 409 });
+      nextContent = applied.content;
+    } else {
+      nextContent = String(data.nextContent || "");
+    }
     const scan = scanSecrets(nextContent || replacementText || data.patchText || "");
     if (!scan.ok) throw Object.assign(new Error(`Patch blocked: ${scan.reason}`), { statusCode: 403 });
     const patch = {
@@ -569,9 +611,11 @@ function createCoOpSymbioteMesh({ runtimeDir, rootDir, neuralVault, localUrls = 
       filePath: file.path,
       author: data.author || session.peerName || "Trusted friend",
       baseHash: file.hash,
-      patchText: data.patchText || `Replace ${originalText.length} chars with ${replacementText.length} chars in ${file.path}`,
+      baseLength: file.content.length,
+      patchText: data.patchText || `${hunks.length} hunk(s) in ${file.path}`,
       originalText,
       replacementText,
+      hunks,
       nextContent,
       summary: data.summary || `Suggested change to ${file.path}`,
       riskLevel: data.riskLevel || (nextContent ? "medium" : "low"),
@@ -581,6 +625,7 @@ function createCoOpSymbioteMesh({ runtimeDir, rootDir, neuralVault, localUrls = 
       createdAt: isoNow(),
       decisions: [],
       ghostResult: null,
+      review: null,
       testResult: null,
     };
     writeJson(path.join(patchesDir, `${patch.id}.json`), patch);
@@ -631,47 +676,43 @@ function createCoOpSymbioteMesh({ runtimeDir, rootDir, neuralVault, localUrls = 
         patch.status = "needs_rebase";
         return;
       }
-      let content = fs.readFileSync(fullPath, "utf8");
-      if (patch.nextContent) content = patch.nextContent;
-      else if (patch.originalText && content.includes(patch.originalText)) content = content.replace(patch.originalText, patch.replacementText);
-      else {
-        patch.ghostResult = { status: "blocked", build: "not-run", tests: "not-run", risk: "medium", summary: "Patch original text was not found in the base file." };
-        patch.status = "blocked";
-        return;
-      }
-      const scan = scanSecrets(content);
-      if (!scan.ok) {
-        patch.ghostResult = { status: "blocked", build: "not-run", tests: "not-run", risk: "high", summary: scan.reason };
-        patch.status = "blocked";
-        return;
-      }
+      const base = fs.readFileSync(fullPath, "utf8");
+      // Build the patched content from hunks (W7) or legacy single-hunk fields.
+      let content;
+      if (Array.isArray(patch.hunks) && patch.hunks.some((h) => h.originalText || h.nextContent)) {
+        const applied = applyHunks(base, patch.hunks);
+        if (!applied.ok) { patch.ghostResult = { status: "blocked", risk: "medium", summary: applied.reason }; patch.status = "blocked"; return; }
+        content = applied.content;
+      } else if (patch.nextContent) content = patch.nextContent;
+      else if (patch.originalText && base.includes(patch.originalText)) content = base.replace(patch.originalText, patch.replacementText);
+      else { patch.ghostResult = { status: "blocked", risk: "medium", summary: "Patch original text was not found in the base file." }; patch.status = "blocked"; return; }
+
+      // Real CI-lite (isolated git worktree: syntax + risky scan) + deterministic adversarial review.
+      const secret = scanSecrets(content);
       const sandbox = path.join(ghostDir, sessionId, patchId);
       ensureDir(sandbox);
-      const ghostFile = path.join(sandbox, path.basename(patch.filePath));
-      fs.writeFileSync(ghostFile, content, "utf8");
-      let syntax = "not-applicable";
-      const ext = path.extname(patch.filePath).toLowerCase();
-      if ([".js", ".mjs", ".cjs"].includes(ext)) {
-        try {
-          execFileSync(process.execPath, ["--check", ghostFile], { encoding: "utf8", timeout: 5000 });
-          syntax = "passed";
-        } catch (error) {
-          syntax = `failed: ${String(error.stderr || error.message).slice(0, 220)}`;
-        }
-      }
+      const ciResult = ciLite({ rootDir, relPath: patch.filePath, content, sandboxDir: sandbox });
+      const review = redTeamReview({ patch, content, hasSecret: !secret.ok, ciResult });
+      patch.ciResult = ciResult;
+      patch.review = review;
       patch.ghostResult = {
-        status: syntax.startsWith("failed") ? "failed" : "passed",
-        build: syntax.startsWith("failed") ? "failed" : "passed",
-        tests: "not-run-by-default",
-        risk: patch.riskLevel,
+        status: (secret.ok && ciResult.status === "passed") ? "passed" : "failed",
+        build: ciResult.status,
+        tests: "syntax + red-team (CI-lite in git worktree)",
+        risk: review.verdict === "block" ? "high" : review.verdict === "warn" ? "medium" : "low",
+        checks: ciResult.checks,
+        verdict: review.verdict,
+        objections: review.objections,
         sandboxPath: sandbox,
-        summary: syntax.startsWith("failed")
-          ? "Ghost sandbox found a syntax problem."
-          : "Ghost sandbox applied the patch to an isolated copy and found no immediate secret/hash blocker.",
+        summary: !secret.ok ? "Secret-like content blocked."
+          : ciResult.status === "failed" ? "CI-lite found a syntax problem."
+          : review.verdict === "block" ? "Adversarial review BLOCKED the patch."
+          : review.objections.length ? `Passed CI-lite with ${review.objections.length} review objection(s).`
+          : "Passed CI-lite + adversarial review cleanly.",
         checkedAt: isoNow(),
       };
       patch.status = patch.ghostResult.status === "passed" ? "ghost_passed" : "ghost_failed";
-      record(sessionId, "ghost_test_result", { patchId, result: patch.ghostResult }, "Ghost Sandbox");
+      record(sessionId, "ghost_test_result", { patchId, result: patch.ghostResult, verdict: review.verdict }, "Patch Court");
     });
   }
 
@@ -680,10 +721,21 @@ function createCoOpSymbioteMesh({ runtimeDir, rootDir, neuralVault, localUrls = 
       if (!["approved", "ghost_passed"].includes(patch.status)) {
         throw Object.assign(new Error("Patch must be approved or ghost-tested before apply."), { statusCode: 409 });
       }
+      // W7: a patch the adversarial review BLOCKED cannot be applied to the host's disk.
+      if (patch.review?.verdict === "block") {
+        throw Object.assign(new Error("Adversarial review blocked this patch — resolve the objections before applying."), { statusCode: 409 });
+      }
       const { fullPath } = safeResolve(rootDir, patch.filePath);
       if (hashFile(fullPath) !== patch.baseHash) throw Object.assign(new Error("Patch base hash no longer matches the file."), { statusCode: 409 });
-      let content = fs.readFileSync(fullPath, "utf8");
-      const next = patch.nextContent || content.replace(patch.originalText, patch.replacementText);
+      const base = fs.readFileSync(fullPath, "utf8");
+      let next;
+      if (Array.isArray(patch.hunks) && patch.hunks.some((h) => h.originalText || h.nextContent)) {
+        const applied = applyHunks(base, patch.hunks);
+        if (!applied.ok) throw Object.assign(new Error(`Patch does not apply: ${applied.reason}`), { statusCode: 409 });
+        next = applied.content;
+      } else {
+        next = patch.nextContent || base.replace(patch.originalText, patch.replacementText);
+      }
       const scan = scanSecrets(next);
       if (!scan.ok) throw Object.assign(new Error(`Patch blocked: ${scan.reason}`), { statusCode: 403 });
       fs.writeFileSync(fullPath, next, "utf8");
@@ -824,13 +876,134 @@ function createCoOpSymbioteMesh({ runtimeDir, rootDir, neuralVault, localUrls = 
 
   function publicSession(session) {
     if (!session) return null;
-    const { codeHash, ...safe } = session;
+    // W3: strip server-only secrets (host private key + resume HMAC secret) — never sent to any client.
+    const { codeHash, _secrets, ...safe } = session;
+    const ended = session.status === "ended";
     return {
       ...safe,
-      code: session.status === "ended" ? "" : session.code,
+      code: ended ? "" : session.code,
+      // Recompute invites live so they always carry the current tunnel URL (W2).
+      inviteLinks: ended ? [] : inviteUrls(session.code, { salt: session.codeSalt, fp: session.hostFingerprint }),
       memory: neuralVault?.coopMemorySummary?.(session.id) || null,
       deviceMesh: meshStatus ? meshStatus() : null,
     };
+  }
+
+  // W2: mint ephemeral TURN credentials for an active session (real relay config is W4; the
+  // credential shape is already correct so W4 only swaps in the TURN server URLs/secret).
+  function turnCredentials(sessionId) {
+    const session = getSession(sessionId);
+    if (!session) throw Object.assign(new Error("Co-op session not found."), { statusCode: 404 });
+    if (session.status === "ended") throw Object.assign(new Error("Co-op session has ended."), { statusCode: 409 });
+    return { sessionId, ...mintTurnCredentials({ sessionId }) };
+  }
+
+  // W4/W5: resolve a code → minimal live-session descriptor for the WS signaling room. NOTE: unlike
+  // join (which enforces the 10-min code window to bound the invite), the CHANNEL auth only requires
+  // a non-ended session — otherwise a live collaboration would lose its relay after 10 minutes.
+  function resolveCode(code) {
+    const codeHash = sha256(cleanCode(code));
+    const session = store.listSessions().find((s) => s.codeHash === codeHash && s.status !== "ended" && s.status !== "wiped");
+    return session ? { id: session.id, status: session.status } : null;
+  }
+
+  // W3 (§2.5): a dropped guest reconnects with the host-signed resume token — re-establishing the
+  // channel WITHOUT a second human approval, within the token window. Rejected if session ended.
+  function resumeSession(sessionId, data = {}) {
+    const session = getSession(sessionId);
+    if (!session) throw Object.assign(new Error("Co-op session not found."), { statusCode: 404 });
+    if (session.status !== "active" || !session.guest) throw Object.assign(new Error("No active co-op session to resume."), { statusCode: 409 });
+    const check = verifyResumeToken(data.resumeToken, { secret: session._secrets?.hostSecret || "", sessionId, guestFp: session.guest.guestFingerprint });
+    if (!check.ok) throw Object.assign(new Error(`Resume rejected: ${check.reason}.`), { statusCode: 401 });
+    session.transport.lastHeartbeat = isoNow();
+    session.updatedAt = isoNow();
+    saveSession(session);
+    record(sessionId, "guest_resumed", { peerName: session.guest.displayName }, "resume");
+    return { session: publicSession(session) };
+  }
+
+  // ---- W8: required-features hardening + Session Intelligence ----
+
+  // Rotate the invite code (invalidates the old one) — invite management / revoke a leaked code.
+  function regenerateCode(sessionId) {
+    const session = getSession(sessionId);
+    if (!session) throw Object.assign(new Error("Co-op session not found."), { statusCode: 404 });
+    if (session.status === "ended") throw Object.assign(new Error("Co-op session has ended."), { statusCode: 409 });
+    const code = sessionCode();
+    session.code = code;
+    session.codeHash = sha256(cleanCode(code));
+    session.codeSalt = makeCodeSalt();
+    session.expiresAt = new Date(Date.now() + 10 * 60 * 1000).toISOString();
+    session.updatedAt = isoNow();
+    saveSession(session);
+    record(sessionId, "code_rotated", {}, session.hostName);
+    return publicSession(session);
+  }
+
+  // Moderation: eject the guest, revoke their lease + resume token, return to hosting.
+  function kickGuest(sessionId, reason = "Removed by host.") {
+    const session = getSession(sessionId);
+    if (!session) throw Object.assign(new Error("Co-op session not found."), { statusCode: 404 });
+    if (session.guest?.lease) session.guest.lease = revokeLease(session.guest.lease);
+    const peer = session.guest?.displayName || session.pendingJoin?.displayName || "guest";
+    session.guest = null;
+    session.pendingJoin = null;
+    session.peerName = "";
+    session.status = "active";
+    session.repoMatch = "waiting";
+    session.updatedAt = isoNow();
+    saveSession(session);
+    record(sessionId, "guest_kicked", { peerName: peer, reason }, session.hostName);
+    return publicSession(session);
+  }
+
+  // Update the ability envelope (roles/permissions / granular toggles).
+  function setAbilities(sessionId, abilities = {}) {
+    const session = getSession(sessionId);
+    if (!session) throw Object.assign(new Error("Co-op session not found."), { statusCode: 404 });
+    const allowed = Object.keys(DEFAULT_ABILITIES);
+    for (const [k, v] of Object.entries(abilities)) if (allowed.includes(k)) session.abilities[k] = !!v;
+    session.updatedAt = isoNow();
+    saveSession(session);
+    record(sessionId, "abilities_updated", { abilities: session.abilities }, session.hostName);
+    return publicSession(session);
+  }
+
+  // Data retention: SOFT-delete (no hard delete) — clears content, keeps a tombstone + audit.
+  function wipeSession(sessionId) {
+    const session = getSession(sessionId);
+    if (!session) throw Object.assign(new Error("Co-op session not found."), { statusCode: 404 });
+    const metrics = buildMetrics(session);
+    session.status = "wiped";
+    session.wipedAt = isoNow();
+    session.chat = []; session.patches = []; session.jarvisMessages = []; session.tasks = [];
+    session.memoryPackets = []; session.skillTransfers = []; session.replays = [];
+    session.timeline = (session.timeline || []).slice(0, 1); // keep the tombstone event only
+    session.guest = null; session.pendingJoin = null;
+    session._secrets = undefined;
+    session.summary = `Session wiped (retention). Pre-wipe: ${metrics.messages} msgs, ${metrics.patchesApplied}/${metrics.patches} patches applied.`;
+    session.updatedAt = isoNow();
+    saveSession(session);
+    record(sessionId, "session_wiped", { metrics }, session.hostName);
+    return publicSession(session);
+  }
+
+  function exportSession(sessionId, format = "json") {
+    const session = getSession(sessionId);
+    if (!session) throw Object.assign(new Error("Co-op session not found."), { statusCode: 404 });
+    return buildExport(session, format);
+  }
+
+  function sessionMetrics(sessionId) {
+    const session = getSession(sessionId);
+    if (!session) throw Object.assign(new Error("Co-op session not found."), { statusCode: 404 });
+    return buildMetrics(session);
+  }
+
+  function recap(sessionId) {
+    const session = getSession(sessionId);
+    if (!session) throw Object.assign(new Error("Co-op session not found."), { statusCode: 404 });
+    return buildRecap(session);
   }
 
   function status() {
@@ -842,7 +1015,7 @@ function createCoOpSymbioteMesh({ runtimeDir, rootDir, neuralVault, localUrls = 
       label: "Jarvis Co-Op Symbiote Mesh",
       runtimeVersion: "2.0.0-symbiote-workspace",
       activeSession: publicSession(session),
-      sessions: state().sessions.map(publicSession),
+      sessions: store.listSessions(50).map(publicSession),
       repoFingerprint: repoFingerprint(),
       manifestSummary: {
         total: manifest.length,
@@ -880,6 +1053,16 @@ function createCoOpSymbioteMesh({ runtimeDir, rootDir, neuralVault, localUrls = 
     createReplay,
     replayToSkill,
     repoFingerprint,
+    turnCredentials,
+    resumeSession,
+    resolveCode,
+    regenerateCode,
+    kickGuest,
+    setAbilities,
+    wipeSession,
+    exportSession,
+    sessionMetrics,
+    recap,
   };
 }
 

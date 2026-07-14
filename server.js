@@ -25,6 +25,7 @@ const { createGeminiCache } = require("./server/gemini-cache");
 const { matchWorkflow, workflowToContextHint, saveWorkflow, deleteWorkflow, loadWorkflows } = require("./server/browser-workflows");
 const { createDeployableAgents } = require("./server/deployable-agents");
 const { createCoOpSymbioteMesh } = require("./server/coop-symbiote");
+const { clientIp: coopClientIp } = require("./server/coop-transport");
 const { createMissionEngine } = require("./server/mission-engine");
 const { createCodeKnowledge } = require("./server/code-knowledge");
 const { createToolGateway } = require("./server/tool-gateway");
@@ -899,6 +900,11 @@ function validateMutationRequest(req, pathname, session) {
   if (!isMutation) return;
   if (pathname === "/api/pair") return;
   if (pathname.startsWith("/mesh/api/")) return;
+  // Synapse W2: a REMOTE co-op guest has no local session — these paths are gated instead by a
+  // code proof + real-client-IP rate limit inside the handler, not by the local-session cookie.
+  if (pathname === "/api/coop-symbiote/session/join-remote") return;
+  if (/^\/api\/coop-symbiote\/session\/[^/]+\/turn-credentials$/.test(pathname)) return;
+  if (/^\/api\/coop-symbiote\/session\/[^/]+\/resume$/.test(pathname)) return;
   if (session?.isNew && req.jarvisPrincipal?.kind === "local-owner") {
     throw Object.assign(new Error("Establish a local session before sending mutation requests"), { statusCode: 401 });
   }
@@ -10183,10 +10189,58 @@ ${entryText}`;
     return;
   }
 
+  // Synapse W2: cross-machine join. A remote guest (no local session) reaches the host over its
+  // public tunnel URL; authenticated by code proof + real client IP rate limit (see gate exemption).
+  if (req.method === "POST" && pathname === "/api/coop-symbiote/session/join-remote") {
+    const data = await parseRequestData(req);
+    sendJson(res, 200, coopSymbioteMesh.joinSession({ ...data, ip: coopClientIp(req), remote: true }));
+    return;
+  }
+
+  const coopTurnMatch = pathname.match(/^\/api\/coop-symbiote\/session\/([^/]+)\/turn-credentials$/);
+  if (req.method === "POST" && coopTurnMatch) {
+    sendJson(res, 200, coopSymbioteMesh.turnCredentials(coopTurnMatch[1]));
+    return;
+  }
+
+  // Synapse W3: a dropped remote guest reconnects with the host-signed resume token (no re-approval).
+  const coopResumeMatch = pathname.match(/^\/api\/coop-symbiote\/session\/([^/]+)\/resume$/);
+  if (req.method === "POST" && coopResumeMatch) {
+    sendJson(res, 200, coopSymbioteMesh.resumeSession(coopResumeMatch[1], await parseRequestData(req)));
+    return;
+  }
+
+  // Synapse W8: host-authority management/moderation (rotate code, kick guest, set abilities, wipe).
+  const coopAdminMatch = pathname.match(/^\/api\/coop-symbiote\/session\/([^/]+)\/(regenerate-code|kick|abilities|wipe)$/);
+  if (req.method === "POST" && coopAdminMatch) {
+    const [, sessionId, action] = coopAdminMatch;
+    if (req.jarvisPrincipal?.kind !== "local-owner") { sendJson(res, 403, { error: "Host authority required for co-op management." }); return; }
+    const data = await parseRequestData(req);
+    if (action === "regenerate-code") sendJson(res, 200, { session: coopSymbioteMesh.regenerateCode(sessionId) });
+    else if (action === "kick") sendJson(res, 200, { session: coopSymbioteMesh.kickGuest(sessionId, data.reason) });
+    else if (action === "abilities") sendJson(res, 200, { session: coopSymbioteMesh.setAbilities(sessionId, data.abilities || {}) });
+    else sendJson(res, 200, { session: coopSymbioteMesh.wipeSession(sessionId) });
+    return;
+  }
+
+  // W8: Session Intelligence read surfaces (export / metrics / recap).
+  const coopExportMatch = pathname.match(/^\/api\/coop-symbiote\/session\/([^/]+)\/export$/);
+  if (req.method === "GET" && coopExportMatch) { sendJson(res, 200, coopSymbioteMesh.exportSession(coopExportMatch[1], url.searchParams.get("format") || "json")); return; }
+  const coopMetricsMatch = pathname.match(/^\/api\/coop-symbiote\/session\/([^/]+)\/metrics$/);
+  if (req.method === "GET" && coopMetricsMatch) { sendJson(res, 200, coopSymbioteMesh.sessionMetrics(coopMetricsMatch[1])); return; }
+  const coopRecapMatch = pathname.match(/^\/api\/coop-symbiote\/session\/([^/]+)\/recap$/);
+  if (req.method === "GET" && coopRecapMatch) { sendJson(res, 200, coopSymbioteMesh.recap(coopRecapMatch[1])); return; }
+
   const coopSessionActionMatch = pathname.match(/^\/api\/coop-symbiote\/session\/([^/]+)\/(approve-join|reject-join|end)$/);
   if (req.method === "POST" && coopSessionActionMatch) {
     const [, sessionId, action] = coopSessionActionMatch;
     const data = await parseRequestData(req);
+    // Synapse W3: approving/rejecting a co-op guest is host-authority only — a remote guest must
+    // never be able to self-approve (they are not the local-owner principal).
+    if ((action === "approve-join" || action === "reject-join") && req.jarvisPrincipal?.kind !== "local-owner") {
+      sendJson(res, 403, { error: "Only the host operator can approve or reject co-op join requests." });
+      return;
+    }
     if (action === "approve-join") sendJson(res, 200, { session: coopSymbioteMesh.approveJoin(sessionId, true) });
     else if (action === "reject-join") sendJson(res, 200, { session: coopSymbioteMesh.approveJoin(sessionId, false) });
     else sendJson(res, 200, { session: coopSymbioteMesh.endSession(sessionId, data.reason || "User ended co-op session.") });
@@ -10231,6 +10285,12 @@ ${entryText}`;
   if (req.method === "POST" && coopPatchActionMatch) {
     const [, patchId, action] = coopPatchActionMatch;
     const data = await parseRequestData(req);
+    // Synapse W3 (§1.4): applying a patch writes the host's real filesystem — host-authority only.
+    // A remote guest can PROPOSE and ghost-test, but only the local-owner operator can apply.
+    if (action === "apply" && req.jarvisPrincipal?.kind !== "local-owner") {
+      sendJson(res, 403, { error: "Patch apply is host-authority only; a remote co-op guest cannot write to the host's disk." });
+      return;
+    }
     if (action === "approve") sendJson(res, 200, coopSymbioteMesh.decidePatch(data.sessionId, patchId, "approve", data.actor || "Devansh"));
     else if (action === "reject") sendJson(res, 200, coopSymbioteMesh.decidePatch(data.sessionId, patchId, "reject", data.actor || "Devansh"));
     else if (action === "ghost-test") sendJson(res, 200, coopSymbioteMesh.ghostTest(data.sessionId, patchId));
@@ -11603,11 +11663,18 @@ localFileAccess = createLocalFileAccess({
   rootDir: ROOT,
   neuralVault,
 });
+// Synapse W2: co-op invite links must carry the PUBLIC (tunnel) URL first so a remote guest can
+// actually reach the host — localUrls() alone only has LAN/localhost. Recomputed live per invite.
+const coopInviteBaseUrls = () => {
+  const arr = localUrls();
+  const base = preferredMeshBaseUrl()?.baseUrl;
+  return base && !arr.includes(base) ? [base, ...arr] : arr;
+};
 coopSymbioteMesh = createCoOpSymbioteMesh({
   runtimeDir: RUNTIME_DIR,
   rootDir: ROOT,
   neuralVault,
-  localUrls,
+  localUrls: coopInviteBaseUrls,
   meshStatus: () => meshStatusPayload(null),
 });
 codeKnowledge = createCodeKnowledge({
@@ -11848,11 +11915,17 @@ server.listen(PORT, HOST, () => {
     upstream.on("error",   (e)   => { console.error("[kalshi-ws] upstream error:", e.message); try { clientWs.close(); } catch {} });
     clientWs.on("error",   (e)   => { console.error("[kalshi-ws] client error:", e.message); });
   });
+  // Synapse W4: the co-op signaling/relay room (isolated from device-mesh auth; code-gated).
+  const { createCoopSignal } = require("./server/coop-signal");
+  const coopSignal = createCoopSignal({ getSessionByCode: (code) => coopSymbioteMesh.resolveCode(code) });
+
   server.on("upgrade", (req, socket, head) => {
     try {
       const pn = new URL(req.url, "ws://localhost").pathname;
       if (pn === "/api/kalshi/ws") {
         kalshiProxyWss.handleUpgrade(req, socket, head, (ws) => kalshiProxyWss.emit("connection", ws, req));
+      } else if (pn === "/mesh/coop/ws") {
+        coopSignal.handleUpgrade(req, socket, head);
       }
     } catch { socket.destroy(); }
   });

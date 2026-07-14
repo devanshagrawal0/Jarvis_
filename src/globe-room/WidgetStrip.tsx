@@ -3,6 +3,7 @@ import { api } from "../api";
 import { KalshiChip, KalshiCard, KalshiExpanded } from "./KalshiWidget";
 import { SpatialWidgetFrame, type SpatialWidgetState } from "./SpatialWidgetFrame";
 import { DeviceMeshCommandCenter } from "./DeviceMeshCommandCenter";
+import { SynapseWidget } from "../rooms/synapse/SynapseWidget";
 import { GraphCommandCenter, VisionCommandCenter } from "./IntelligenceCommandCenters";
 import { AgentsCommandCenter, ModulesCommandCenter, ProjectsCommandCenter } from "./OperationalCommandCenters";
 import { ConnectionsCommandCenter, ReceiptsCommandCenter, TrustCommandCenter } from "./AssuranceCommandCenters";
@@ -78,6 +79,7 @@ const WIDGETS: WidgetDef[] = [
   { id: "receipts",    label: "Receipts",    icon: "◻" },
   { id: "graph",       label: "Graph",       icon: "❖" },
   { id: "helix",       label: "Helix",       icon: "⬡" },
+  { id: "synapse",     label: "Synapse",     icon: "⬢" },
 ];
 
 // ─── Inline style constants ───────────────────────────────────────────────────
@@ -1380,6 +1382,7 @@ function getChipStat(id: string, data: any): string {
     case "receipts":    return `${data.total ?? data.receipts?.length ?? "—"}`;
     case "graph":       return `${data.stats?.active ?? data.entities?.length ?? 0} nodes`;
     case "helix":       return `${data.projects?.length ?? 0} projects`;
+    case "synapse":     return data.activeSession ? (data.activeSession.status === "active" ? "live" : String(data.activeSession.status)) : "idle";
     default:            return "—";
   }
 }
@@ -1404,6 +1407,8 @@ function getChipStatus(id: string, data: any): "active" | "warning" | "inactive"
     }
     case "kalshi":
       return data.__state === "live" && Array.isArray(data.markets) && data.markets.length > 0 ? "active" : "inactive";
+    case "synapse":
+      return data.activeSession?.status === "active" ? "active" : data.activeSession?.pendingJoin ? "warning" : "inactive";
     default:
       return "active";
   }
@@ -1512,6 +1517,8 @@ async function fetchWidgetData(id: string): Promise<any> {
       return widgetApi("/api/memory/life-graph?limit=120", { stats: {}, buckets: {}, entities: [], summary: {} });
     case "helix":
       return widgetApi("/api/helix/projects", { projects: [] });
+    case "synapse":
+      return widgetApi("/api/coop-symbiote/status", { activeSession: null });
     default:
       return {};
   }
@@ -1643,6 +1650,7 @@ function LegacyWidgetStrip({ mode, showChips = true }: { mode: string; showChips
       case "receipts":    return <ReceiptsCard    {...props} key={id} />;
       case "graph":       return <GraphCard onClose={handleClose} onExpand={handleExpand} key={id} />;
       case "helix":       return <HelixCard       {...props} key={id} />;
+      case "synapse":     return <SynapseWidget   key={id} />;
       default:            return null;
     }
   }
@@ -1667,6 +1675,7 @@ function LegacyWidgetStrip({ mode, showChips = true }: { mode: string; showChips
       case "receipts":    return <ReceiptsCommandCenter data={data} loading={loading} />;
       case "graph":       return <GraphCommandCenter data={data} loading={loading} />;
       case "helix":       return <HelixExpanded onClose={handleClose} />;
+      case "synapse":     return <SynapseWidget />;
       default:            return null;
     }
   }
@@ -1954,6 +1963,7 @@ export function WidgetStrip({ mode }: { mode: string; showChips?: boolean }) {
       case "receipts":    return <ReceiptsCommandCenter data={data} loading={loading} />;
       case "graph":       return <GraphCommandCenter data={data} loading={loading} />;
       case "helix":       return <HelixExpanded onClose={onClose} />;
+      case "synapse":     return <SynapseWidget />;
       default:              return null;
     }
   }

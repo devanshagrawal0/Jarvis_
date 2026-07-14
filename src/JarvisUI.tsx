@@ -8,6 +8,7 @@ import { HelixRoom } from "./rooms/HelixRoom";
 import { HelixV2 } from "./rooms/helix/v2/HelixV2";
 import { ApexRoom } from "./rooms/ApexRoom";
 import { ArbiterRoom } from "./rooms/ArbiterRoom";
+import { SynapseRoom } from "./rooms/synapse/SynapseRoom";
 import { api, post, streamPost } from "./api";
 import { LiveVoiceController } from "./liveVoice";
 import type { BrainResponse, JarvisActivityEvent, JarvisArtifact, JarvisUiAction } from "./types";
@@ -158,6 +159,7 @@ export function JarvisUI() {
   const [helixOpen, setHelixOpen] = useState(false);
   const [apexOpen, setApexOpen] = useState(false);
   const [arbiterOpen, setArbiterOpen] = useState(false);
+  const [synapseOpen, setSynapseOpen] = useState(false);
   const [voiceMode, setVoiceMode] = useState<"dictate" | "live">("dictate");
   const [liveVoiceState, setLiveVoiceState] = useState<"idle" | "connecting" | "listening" | "speaking" | "error">("idle");
   const liveVoiceRef = useRef<LiveVoiceController | null>(null);
@@ -199,6 +201,18 @@ export function JarvisUI() {
     return () => document.removeEventListener("jarvis:open-widget", handle);
   }, []);
 
+  // Synapse — the board widget tile expands to the full-screen room via this event.
+  useEffect(() => {
+    function openSynapse() { setSynapseOpen(true); setLauncherOpen(false); }
+    document.addEventListener("jarvis:open-synapse-room", openSynapse);
+    return () => document.removeEventListener("jarvis:open-synapse-room", openSynapse);
+  }, []);
+
+  // Arriving via a Synapse invite link (`?tool=coop&coop_code=…`) opens the room straight away.
+  useEffect(() => {
+    if (new URLSearchParams(window.location.search).get("coop_code")) setSynapseOpen(true);
+  }, []);
+
   const toggleLiveVoice = useCallback(async () => {
     if (liveVoiceRef.current?.active) {
       await liveVoiceRef.current.stop();
@@ -237,6 +251,10 @@ export function JarvisUI() {
     // Arbiter — accept "arbiter"/"arbitrer" (common spelling) with the same prefixes.
     if (/^(?:(?:go to|open|launch|enter|show|take me to)\s+)?arbit(?:er|re)?r?(?:\s+room)?$/.test(norm)) {
       setArbiterOpen(true);
+      return;
+    }
+    if (/^(?:(?:go to|open|launch|enter|show|take me to)\s+)?synapse(?:\s+room)?$/.test(norm)) {
+      setSynapseOpen(true);
       return;
     }
     abortRef.current?.abort();
@@ -401,6 +419,12 @@ export function JarvisUI() {
       {arbiterOpen && (
         <div style={{ position: "fixed", inset: 0, zIndex: 9999 }}>
           <ArbiterRoom onExit={() => setArbiterOpen(false)} />
+        </div>
+      )}
+
+      {synapseOpen && (
+        <div style={{ position: "fixed", inset: 0, zIndex: 9999 }}>
+          <SynapseRoom onExit={() => setSynapseOpen(false)} />
         </div>
       )}
 

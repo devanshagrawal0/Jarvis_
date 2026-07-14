@@ -17,6 +17,7 @@ const WIDGETS = [
   { id: "receipts",    label: "Receipts",    icon: "◻" },
   { id: "graph",       label: "Graph",       icon: "❖" },
   { id: "helix",       label: "Helix",       icon: "⬡" },
+  { id: "synapse",     label: "Synapse",     icon: "⬢" },
 ];
 
 export function WidgetLauncher({ open, onClose }: { open: boolean; onClose: () => void }) {
