@@ -7,9 +7,11 @@
 // mounts GET /api/eclipse/missions/:id/stream. sseFrame() is pure and unit-tested.
 
 // Serialize one event to an SSE frame. `id:` carries the sequence so reconnects resume exactly.
+// NOTE: no `event:` line on purpose — every frame is the default "message" type so a single
+// EventSource.onmessage handler receives them all (the event type lives in the JSON `type`).
 function sseFrame(evt) {
   const data = JSON.stringify({ type: evt.type || evt.event_type, sequence: evt.sequence, payload: evt.payload, occurredAt: evt.occurredAt || evt.occurred_at });
-  return `id: ${evt.sequence}\nevent: ${evt.type || evt.event_type}\ndata: ${data}\n\n`;
+  return `id: ${evt.sequence}\ndata: ${data}\n\n`;
 }
 
 function cursorFrom(req) {

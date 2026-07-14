@@ -162,8 +162,8 @@ export function JarvisUI() {
   const [liveVoiceState, setLiveVoiceState] = useState<"idle" | "connecting" | "listening" | "speaking" | "error">("idle");
   const liveVoiceRef = useRef<LiveVoiceController | null>(null);
   // Cortex v4 P1.4 — Strength dial (cost-guarded default). Cycles on click; sent with each request.
-  const [model, setModel] = useState<"cortex" | "cortex-prime">("cortex"); // Cortex v4 — model selector
-  const [strength, setStrength] = useState<"cost-guarded" | "balanced" | "full">("cost-guarded");
+  const [model, setModel] = useState<"cortex" | "cortex-prime" | "eclipse">("cortex"); // Cortex v4 — model selector (+ Eclipse mission runtime)
+  const [strength, setStrength] = useState<"cost-guarded" | "balanced" | "full" | "pulse" | "deep" | "totality">("cost-guarded");
   const cycleStrength = useCallback(() => {
     setStrength((s) => (s === "cost-guarded" ? "balanced" : s === "balanced" ? "full" : "cost-guarded"));
   }, []);
@@ -253,6 +253,43 @@ export function JarvisUI() {
 
     try {
       setMeta({});
+      // Eclipse — route to the durable multi-agent mission runtime instead of Cortex chat.
+      if (model === "eclipse") {
+        const launchRes = await fetch("/api/eclipse/missions", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ prompt: text, effort: strength }), signal: abortRef.current?.signal });
+        const launch = await launchRes.json();
+        if (!launchRes.ok) throw new Error(launch.error || "Eclipse launch failed");
+        const missionId = String(launch.missionId);
+        setActivity("Eclipse mission launched…");
+        const detailOf = (p: any) => (p ? String(p.node || p.tool || p.persona || p.uri || p.claimId || "") || undefined : undefined);
+        await new Promise<void>((resolve) => {
+          let done = false;
+          const es = new EventSource(`/api/eclipse/missions/${missionId}/stream`);
+          const finish = (r?: any) => {
+            if (done) return; done = true;
+            clearInterval(poll); es.close();
+            const res = (r && r.result) || {};
+            if (typeof res.answer === "string" && res.answer.trim()) setResponse(res.answer);
+            else { setResponse(r?.error || "Eclipse mission ended without a synthesis."); if (r?.status === "failed") setHasError(true); }
+            setMeta({ model: "eclipse" } as BrainResponse);
+            resolve();
+          };
+          es.onmessage = (ev) => {
+            try {
+              const d = JSON.parse(ev.data);
+              setActivity(String(d.type || "Eclipse"));
+              setActivityEvents((items) => [...items, { id: `ecl-${d.sequence}`, kind: "run", status: /complete|failed/.test(String(d.type)) ? "done" : "running", label: String(d.type), detail: detailOf(d.payload) }].slice(-18));
+            } catch { /* ignore malformed frame */ }
+          };
+          es.onerror = () => { /* polling below drives completion */ };
+          const poll = setInterval(async () => {
+            try {
+              const r = await (await fetch(`/api/eclipse/missions/${missionId}`)).json();
+              if (r.status && r.status !== "running") finish(r);
+            } catch { /* keep polling */ }
+          }, 2000);
+        });
+        return;
+      }
       const preparedFiles = await prepareAttachments(files);
       if (preparedFiles.length) setActivity(`Prepared ${preparedFiles.length} attachment${preparedFiles.length === 1 ? "" : "s"}`);
       const primaryInline = preparedFiles.find((file) => file.dataUrl);
@@ -497,10 +534,10 @@ export function JarvisUI() {
         onLiveVoiceToggle={toggleLiveVoice}
         onModules={() => setLauncherOpen(o => !o)}
         model={model}
-        onSetModel={(v) => setModel(v as "cortex" | "cortex-prime")}
+        onSetModel={(v) => setModel(v as "cortex" | "cortex-prime" | "eclipse")}
         strength={strength}
         onCycleStrength={cycleStrength}
-        onSetStrength={(v) => setStrength(v as "cost-guarded" | "balanced" | "full")}
+        onSetStrength={(v) => setStrength(v as "cost-guarded" | "balanced" | "full" | "pulse" | "deep" | "totality")}
         research={research}
         onToggleResearch={toggleResearch}
         onSetResearch={(v) => setResearch(v as "fast" | "deep")}

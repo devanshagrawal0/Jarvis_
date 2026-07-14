@@ -48,9 +48,7 @@ $("#go").onclick=async()=>{
   $("#status").textContent="running";
   if(es)es.close();
   es=new EventSource("/api/eclipse/missions/"+missionId+"/stream");
-  es.onmessage=ev=>{ try{const d=JSON.parse(ev.data); addEvent(d);}catch{} };
-  es.addEventListener("mission.complete",()=>finish(missionId));
-  es.addEventListener("mission.failed",()=>finish(missionId));
+  es.onmessage=ev=>{ try{const d=JSON.parse(ev.data); addEvent(d); if(d.type==="mission.complete"||d.type==="mission.failed") finish(missionId); }catch{} };
   es.onerror=()=>{};
 };
 function addEvent(d){ const row=el("div","ev "+kind(d.type)); row.append(el("span","s",d.sequence), el("span","t",d.type)); const meta=d.payload&&(d.payload.node||d.payload.tool||d.payload.persona||d.payload.uri||d.payload.claimId||d.payload.subtasks||""); if(meta)row.append(el("span","m",String(meta).slice(0,60))); const tl=$("#timeline"); tl.append(row); tl.scrollTop=tl.scrollHeight; }

@@ -233,12 +233,22 @@ const MODEL_NAME = "Cortex";
 const MODELS: { id: string; label: string; desc: string }[] = [
   { id: "cortex", label: "Cortex", desc: "Fast everyday brain" },
   { id: "cortex-prime", label: "Cortex Prime", desc: "Deep reasoning · higher cost" },
+  { id: "eclipse", label: "Eclipse", desc: "Durable multi-agent research mission" },
 ];
-const EFFORTS: { id: string; label: string; desc: string }[] = [
+// Standard effort tiers (Cortex / Cortex Prime) — each maps to a real model tier.
+const STD_EFFORTS: { id: string; label: string; desc: string }[] = [
   { id: "cost-guarded", label: "Eco", desc: "Flash-Lite · fastest, cheapest" },
   { id: "balanced", label: "Balanced", desc: "Flash · smarter" },
   { id: "full", label: "Max", desc: "Pro · deepest reasoning" },
 ];
+// Eclipse mission tiers — the effort names swap to these when Eclipse is the model.
+const ECLIPSE_EFFORTS: { id: string; label: string; desc: string }[] = [
+  { id: "pulse", label: "Pulse", desc: "1 worker · quick pass" },
+  { id: "deep", label: "Deep", desc: "2 workers · bounded mission" },
+  { id: "totality", label: "Totality", desc: "3 workers · full research mission" },
+];
+const STD_EFFORT_IDS = new Set(STD_EFFORTS.map((e) => e.id));
+const ECLIPSE_EFFORT_IDS = new Set(ECLIPSE_EFFORTS.map((e) => e.id));
 const RESEARCH_ROWS: { id: string; label: string; desc: string }[] = [
   { id: "fast", label: "Fast", desc: "One quick grounded answer" },
   { id: "deep", label: "Deep", desc: "Multi-source cited report" },
@@ -251,8 +261,17 @@ const pickerHdr: React.CSSProperties = { padding: "10px 13px 4px", fontSize: 9.5
 const pickRow = (active: boolean): React.CSSProperties => ({ display: "flex", alignItems: "center", gap: 10, padding: "7px 13px", cursor: "pointer", background: active ? "rgba(0,229,255,0.1)" : "transparent" });
 
 export function JarvisCommandBar({ onSubmit, onMicToggle, onModules, model, onSetModel, strength, onCycleStrength, onSetStrength, research, onToggleResearch, onSetResearch, voiceMode, onSetVoiceMode, liveVoiceActive, onLiveVoiceToggle }: JarvisCommandBarProps) {
-  const activeModel = MODELS.find((m) => m.id === (model || "cortex")) || MODELS[0];
-  const activeEffort = EFFORTS.find((e) => e.id === (strength || "cost-guarded")) || EFFORTS[0];
+  const modelId = model || "cortex";
+  const isEclipse = modelId === "eclipse";
+  const EFFORTS = isEclipse ? ECLIPSE_EFFORTS : STD_EFFORTS;
+  const activeModel = MODELS.find((m) => m.id === modelId) || MODELS[0];
+  const activeEffort = EFFORTS.find((e) => e.id === strength) || EFFORTS[isEclipse ? 1 : 0];
+  // Selecting a model swaps the effort vocabulary; keep the effort valid for the chosen model.
+  const handleSetModel = (id: string) => {
+    onSetModel?.(id);
+    if (id === "eclipse") { if (!ECLIPSE_EFFORT_IDS.has(strength || "")) onSetStrength?.("deep"); }
+    else if (!STD_EFFORT_IDS.has(strength || "")) onSetStrength?.("cost-guarded");
+  };
   const activeResearch = RESEARCH_ROWS.find((r) => r.id === (research || "fast")) || RESEARCH_ROWS[0];
   const activeVoice = VOICE_ROWS.find((r) => r.id === (voiceMode || "dictate")) || VOICE_ROWS[0];
   void onCycleStrength; void onToggleResearch; // superseded by the picker panel
@@ -408,7 +427,7 @@ export function JarvisCommandBar({ onSubmit, onMicToggle, onModules, model, onSe
           </button>
           {pickerOpen && (() => {
             const sub = submenu === "model"
-              ? { title: "Model", rows: MODELS, cur: model || "cortex", set: onSetModel }
+              ? { title: "Model", rows: MODELS, cur: model || "cortex", set: handleSetModel }
               : submenu === "effort"
                 ? { title: "Effort", rows: EFFORTS, cur: strength || "cost-guarded", set: onSetStrength }
                 : submenu === "research"

@@ -26,7 +26,8 @@ function mockReq({ headers = {}, query = {} } = {}) {
   await okA("sseFrame emits id/event/data", () => {
     const f = sseFrame({ sequence: 3, type: "node.start", payload: { node: "plan" }, occurredAt: "T" });
     assert.ok(f.includes("id: 3\n"));
-    assert.ok(f.includes("event: node.start\n"));
+    assert.ok(f.includes('"type":"node.start"'));
+    assert.ok(!/^event:/m.test(f), "no event: line (single onmessage handler)");
     assert.ok(f.includes('"payload":{"node":"plan"}'));
     assert.ok(f.endsWith("\n\n"));
   });
@@ -50,7 +51,7 @@ function mockReq({ headers = {}, query = {} } = {}) {
     // live event after subscription is tailed
     store.appendEvent(mid, "mission.complete", { done: true });
     assert.ok(res.body().includes("id: 2\n"));
-    assert.ok(res.body().includes("event: mission.complete\n"));
+    assert.ok(res.body().includes('"type":"mission.complete"'));
     req.fire("close"); // cleanup unsubscribes without throwing
     // after close, further events are not written
     const before = res.chunks.length;
