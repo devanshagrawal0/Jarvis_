@@ -506,9 +506,9 @@ function KeyLevels({ levels, last }: { levels: Record<string, number | null>; la
 
 function NewsCatalysts({ news, impact, symbol }: { news: Story[]; impact: { title: string; dir: string; magnitude: number }[]; symbol: string }) {
   const tk = isCrypto(symbol) ? symbol.replace("USDT", "") : symbol;
-  const related = news.filter((s) => (s.tickers || []).some((t) => t.t === tk) || s.title.toUpperCase().includes(tk)).slice(0, 4);
-  const rows = related.length ? related.map((s) => ({ title: s.title, meta: s.sources?.[0] || s.lane || "" })) : impact.slice(0, 4).map((i) => ({ title: i.title, meta: i.dir }));
-  const fallback = news.slice(0, 5);
+  const related = news.filter((s) => (s.tickers || []).some((t) => t.t === tk) || s.title.toUpperCase().includes(tk)).slice(0, 3);
+  const rows = related.length ? related.map((s) => ({ title: s.title, meta: s.sources?.[0] || s.lane || "" })) : impact.slice(0, 3).map((i) => ({ title: i.title, meta: i.dir }));
+  const fallback = news.slice(0, 4);
   return (
     <div className="axt-panel axt-news">
       <div className="axt-ph">NEWS & CATALYSTS</div>
@@ -704,7 +704,10 @@ const TERM_CSS = `
 .axt-main { flex:1; min-height:0; display:grid; grid-template-columns:236px 1fr 268px; gap:8px; }
 .axt-left, .axt-center, .axt-right { min-height:0; display:flex; flex-direction:column; gap:8px; }
 .axt-left { background:var(--ax-panel); border:1px solid var(--ax-bd); border-radius:11px; padding:9px; overflow:hidden; }
-.axt-right { overflow-y:auto; padding-right:2px; }
+.axt-right { overflow-y:auto; padding-right:3px; gap:7px; scrollbar-width:thin; scrollbar-color:var(--ax-bd) transparent; }
+.axt-right::-webkit-scrollbar { width:5px; } .axt-right::-webkit-scrollbar-thumb { background:var(--ax-bd); border-radius:3px; }
+.axt-right .axt-panel { padding:9px 11px; }
+.axt-right .axt-ph { margin-bottom:7px; }
 
 /* Left */
 .axt-lefttabs { display:flex; gap:4px; }
@@ -811,17 +814,17 @@ const TERM_CSS = `
 .axt-ai-bar { flex:1; height:6px; background:var(--ax-surface); border-radius:4px; overflow:hidden; }
 .axt-ai-bar div { height:100%; border-radius:4px; }
 .axt-ai-conf b { font-family:var(--ax-mono); font-size:12px; }
-.axt-ai-sec { font-size:8.5px; font-weight:700; letter-spacing:.05em; color:var(--ax-mut); margin:8px 0 4px; }
-.axt-ai-txt { font-size:11px; line-height:1.5; color:var(--ax-tx); margin:0; }
+.axt-ai-sec { font-size:8.5px; font-weight:700; letter-spacing:.05em; color:var(--ax-mut); margin:7px 0 3px; }
+.axt-ai-txt { font-size:11px; line-height:1.45; color:var(--ax-tx); margin:0; }
 .axt-ai-txt.dim { color:var(--ax-mut); font-size:10px; }
-.axt-ai-sigs { display:flex; flex-direction:column; gap:3px; }
+.axt-ai-sigs { display:grid; grid-template-columns:1fr 1fr; gap:3px 10px; }
 .axt-sig { font-size:9.5px; color:var(--ax-mut); font-family:var(--ax-mono); }
 .axt-sig.on { color:${POS}; }
 .axt-ai-foot { font-size:8px; color:var(--ax-dim); margin-top:8px; line-height:1.4; }
 .axt-gauges { display:grid; grid-template-columns:1fr 1fr 1fr; gap:6px; }
 .axt-gauge { display:flex; flex-direction:column; align-items:center; }
-.axt-gsvg { width:100%; height:38px; }
-.axt-gval { font-family:var(--ax-mono); font-size:16px; font-weight:800; margin-top:-8px; }
+.axt-gsvg { width:100%; height:34px; }
+.axt-gval { font-family:var(--ax-mono); font-size:15px; font-weight:800; margin-top:-9px; }
 .axt-glbl { font-size:7.5px; letter-spacing:.05em; color:var(--ax-dim); margin-top:2px; }
 .axt-levels { display:flex; flex-direction:column; gap:2px; }
 .axt-lvl { display:grid; grid-template-columns:8px 1fr auto; gap:8px; align-items:center; padding:4px 0; border-bottom:1px solid var(--ax-hair); font-size:11px; }
