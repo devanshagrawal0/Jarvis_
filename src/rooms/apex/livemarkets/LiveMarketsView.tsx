@@ -418,19 +418,27 @@ function hud(l: string, v: string, color: string) { return <div className="axt-h
 
 /* ═══════════════ Right column ═══════════════ */
 function MarketStats({ quote, fund, bars, atr, rv, iv }: { quote: Quote | null; fund: Fundamentals | null; bars: Bar[]; atr: number | null; rv: number | null; iv: number | null }) {
-  const last = bars[bars.length - 1];
+  const last = quote?.last ?? bars[bars.length - 1]?.c ?? null;
+  const day = bars[bars.length - 1];
   const rows: [string, string, string?][] = [
-    ["Open", num(quote?.open ?? last?.o)], ["High", num(quote?.high ?? last?.h)], ["Low", num(quote?.low ?? last?.l)],
-    ["Prev Close", num(quote?.prev)], ["Volume", compact(last?.v)], ["Market Cap", compact(fund?.marketCap)],
+    ["Open", num(quote?.open ?? day?.o)], ["High", num(quote?.high ?? day?.h)], ["Low", num(quote?.low ?? day?.l)],
+    ["Prev Close", num(quote?.prev)], ["Volume", compact(day?.v)], ["Market Cap", compact(fund?.marketCap)],
     ["Beta (5Y)", fund?.beta != null ? fund.beta.toFixed(2) : "—"], ["ATR (14)", atr != null ? atr.toFixed(2) : "—"],
-    ["IV Rank (est)", iv != null ? `${(iv).toFixed(0)}` : "—"], ["Relative Volume", rv != null ? rv.toFixed(2) : "—"],
+    ["IV Rank (est)", iv != null ? `${(iv).toFixed(0)}` : "—"], ["Rel Volume", rv != null ? `${rv.toFixed(2)}×` : "—"],
     ["P/E (TTM)", fund?.pe != null ? fund.pe.toFixed(2) : "—"], ["EPS (TTM)", fund?.eps != null ? fund.eps.toFixed(2) : "—"],
-    ["52W High", num(fund?.high52)], ["52W Low", num(fund?.low52)],
   ];
+  // 52-week range position — context beside the bare 52W hi/lo values (NN/g: never a number without its comparator).
+  const lo = fund?.low52, hi = fund?.high52;
+  const posPct = last != null && lo != null && hi != null && hi > lo ? Math.max(0, Math.min(100, ((last - lo) / (hi - lo)) * 100)) : null;
   return (
     <div className="axt-panel">
       <div className="axt-ph">MARKET STATS</div>
       <div className="axt-stats">{rows.map(([k, v]) => <div key={k} className="axt-statrow"><span>{k}</span><b>{v}</b></div>)}</div>
+      <div className="axt-52w">
+        <div className="axt-52w-h"><span>52-WEEK RANGE</span>{posPct != null && <em>{posPct.toFixed(0)}% of range</em>}</div>
+        <div className="axt-52w-bar">{posPct != null && <span className="axt-52w-mark" style={{ left: `${posPct}%` }} />}</div>
+        <div className="axt-52w-ends"><b>{num(lo)}</b><b>{num(hi)}</b></div>
+      </div>
     </div>
   );
 }
@@ -746,7 +754,8 @@ const TERM_CSS = `
 
 .axt-chartbar { display:flex; align-items:center; gap:10px; background:var(--ax-panel); border:1px solid var(--ax-bd); border-radius:9px; padding:5px 9px; flex-shrink:0; }
 .axt-tfs, .axt-indtoggles { display:flex; gap:2px; }
-.axt-tfs button, .axt-indtoggles button { background:none; border:1px solid transparent; color:var(--ax-dim); border-radius:5px; padding:4px 7px; font-size:10px; font-weight:700; font-family:var(--ax-mono); }
+.axt-tfs button, .axt-indtoggles button { background:none; border:1px solid transparent; color:var(--ax-dim); border-radius:5px; min-width:26px; min-height:26px; padding:4px 8px; font-size:10.5px; font-weight:700; font-family:var(--ax-mono); }
+.axt-tfs button:hover, .axt-indtoggles button:hover { color:var(--ax-tx); background:var(--ax-surface); }
 .axt-tfs button.on { color:var(--ax-acc); background:var(--ax-panelhi); border-color:var(--ax-bdglow); }
 .axt-indtoggles { margin-left:6px; padding-left:8px; border-left:1px solid var(--ax-bdsoft); }
 .axt-indtoggles button.on { color:${CY}; border-color:color-mix(in srgb, ${CY} 40%, transparent); background:color-mix(in srgb, ${CY} 10%, transparent); }
@@ -789,6 +798,13 @@ const TERM_CSS = `
 .axt-stats { display:grid; grid-template-columns:1fr 1fr; gap:3px 14px; }
 .axt-statrow { display:flex; justify-content:space-between; align-items:baseline; padding:3px 0; border-bottom:1px solid var(--ax-hair); font-size:10.5px; }
 .axt-statrow span { color:var(--ax-mut); } .axt-statrow b { font-family:var(--ax-mono); font-weight:600; }
+.axt-52w { margin-top:9px; }
+.axt-52w-h { display:flex; justify-content:space-between; align-items:baseline; font-size:8px; letter-spacing:.06em; color:var(--ax-dim); margin-bottom:5px; }
+.axt-52w-h em { font-style:normal; color:var(--ax-cydim); font-family:var(--ax-mono); }
+.axt-52w-bar { position:relative; height:6px; border-radius:4px; background:linear-gradient(90deg, color-mix(in srgb, ${NEG} 55%, transparent), ${WARN}, color-mix(in srgb, ${POS} 55%, transparent)); }
+.axt-52w-mark { position:absolute; top:50%; width:9px; height:9px; border-radius:50%; background:var(--ax-tx); border:2px solid var(--ax-panel); transform:translate(-50%,-50%); box-shadow:0 0 6px rgba(255,255,255,.5); }
+.axt-52w-ends { display:flex; justify-content:space-between; margin-top:4px; font-family:var(--ax-mono); font-size:9px; }
+.axt-52w-ends b { color:var(--ax-mut); font-weight:600; }
 .axt-ai-badge { font-size:9px; font-weight:800; letter-spacing:.06em; border:1px solid; border-radius:5px; padding:2px 7px; }
 .axt-ai-conf { display:flex; align-items:center; gap:8px; margin-bottom:9px; }
 .axt-ai-conf span { font-size:8px; letter-spacing:.06em; color:var(--ax-dim); }
