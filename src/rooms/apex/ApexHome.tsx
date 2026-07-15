@@ -1428,8 +1428,8 @@ export function ApexHome({ onExit }: Props) {
         </div></div>
       )}
 
-      {/* Jarvis bar */}
-      <div className="aibar">
+      {/* Jarvis bar — hidden on the full-bleed Live Markets terminal so it gets the whole viewport */}
+      {activeTab !== "Live Markets" && <div className="aibar">
         <div className="aibar-h"><span className="pi" style={{ color: "var(--ax-acc)" }}>✦</span><span className="t">Jarvis Assistant</span><span className="jv-on">● Online</span>
           <div className="modes">{(Object.keys(MODE_CFG) as (keyof typeof MODE_CFG)[]).map(m => <div key={m} className={`mode${mode === m ? " on" : ""}`} onClick={() => setMode(m)}>{m[0].toUpperCase() + m.slice(1)}</div>)}</div>
           <button className="jbtn-log" title="Full chat transcript" onClick={() => { setChatVer(v => v); setTranscriptOpen(true); }}>⧉ Transcript{chatRef.current.length ? ` (${Math.ceil(chatRef.current.length / 2)})` : ""}</button>
@@ -1437,7 +1437,7 @@ export function ApexHome({ onExit }: Props) {
         <div className="aibar-in"><input ref={jinputRef} placeholder={cfg.ph} onKeyDown={e => { if (e.key === "Enter") { jStream((e.target as HTMLInputElement).value); (e.target as HTMLInputElement).value = ""; } }} /><span className="mic">🎙</span><span className="send" onClick={() => { jStream(jinputRef.current?.value); if (jinputRef.current) jinputRef.current.value = ""; }}>➤</span></div>
         <div className="chips">{cfg.chips.map((ch, i) => <div key={i} className="ac" onClick={() => jStream(ch.replace(/^\S+\s/, ""))}>{ch}</div>)}</div>
         {jresp && <div className="jresp"><div className="rt"><b>{jresp.trace}</b> · {jresp.text ? "streaming…" : "thinking…"}{jresp.text && <span className="jresp-exp" onClick={() => setJrespBig(true)}>⤢ expand</span>}</div><div className="jresp-body">{cleanJarvis(jresp.text)}</div></div>}
-      </div>
+      </div>}
 
       {transcriptOpen && <div className="tray-back" onClick={e => { if ((e.target as HTMLElement).classList.contains("tray-back")) setTranscriptOpen(false); }}>
         <div className="jtrans" data-ver={chatVer}>

@@ -109,7 +109,7 @@ export function LiveMarketsView() {
   const optionsSnap = useMemo(() => optionsFromVol(bars), [bars]);
 
   const up = (quote?.changePct ?? 0) >= 0;
-  const rv = useMemo(() => { const r = relVol(bars, 20); return r.length ? r[r.length - 1] : null; }, [bars]);
+  const rv = useMemo(() => { const r = relVol(bars, 20); for (let i = r.length - 1; i >= 0; i--) if (Number.isFinite(r[i]) && bars[i] && (bars[i].v || 0) > 0) return r[i]; return null; }, [bars]);
   const atrNow = useMemo(() => { const a = calcAtr(bars, 14); return a.length ? a[a.length - 1] : null; }, [bars]);
 
   const searchGo = (e: React.FormEvent) => { e.preventDefault(); if (search.trim()) { changeSym(search); setSearch(""); } };
@@ -352,10 +352,17 @@ function HeatMap({ live, onPick }: { live: ReturnType<typeof useApexLive>; onPic
 
 /* ═══════════════ Center ═══════════════ */
 function SymbolHeader({ symbol, quote, fund, bars, rv, up }: { symbol: string; quote: Quote | null; fund: Fundamentals | null; bars: Bar[]; rv: number | null; up: boolean }) {
-  const last = bars[bars.length - 1];
   const c = up ? POS : NEG;
   const chg = quote?.last != null && quote?.prev != null ? quote.last - quote.prev : null;
-  const avgVol = useMemo(() => { const v = bars.slice(-20).map((b) => b.v || 0); return v.length ? v.reduce((a, b) => a + b, 0) / v.length : null; }, [bars]);
+  // Real session stats: take the most recent trading day's bars (ignores flat after-hours padding).
+  const sess = useMemo(() => {
+    if (!bars.length) return { open: null as number | null, high: null as number | null, low: null as number | null, vol: null as number | null };
+    const lastDay = String(bars[bars.length - 1].t).slice(0, 10);
+    let day = bars.filter((b) => String(b.t).slice(0, 10) === lastDay && (b.v || 0) > 0);
+    if (day.length < 2) day = bars.slice(-Math.min(bars.length, 78)); // fallback: last ~session of bars
+    return { open: day[0]?.o ?? null, high: Math.max(...day.map((b) => b.h)), low: Math.min(...day.map((b) => b.l)), vol: day.reduce((a, b) => a + (b.v || 0), 0) };
+  }, [bars]);
+  const avgVol = useMemo(() => { const v = bars.slice(-20).map((b) => b.v || 0).filter((x) => x > 0); return v.length ? v.reduce((a, b) => a + b, 0) / v.length : null; }, [bars]);
   return (
     <div className="axt-symhead">
       <div className="axt-sh-id">
@@ -369,11 +376,11 @@ function SymbolHeader({ symbol, quote, fund, bars, rv, up }: { symbol: string; q
         <span className="axt-sh-mkt">{fund?.sector || (isCrypto(symbol) ? "CRYPTO" : "")} · <em className="axt-sh-open">MARKET {marketOpen() ? "OPEN" : "CLOSED"}</em></span>
       </div>
       <div className="axt-sh-stats">
-        {shStat("OPEN", num(quote?.open ?? last?.o))}
-        {shStat("HIGH", num(quote?.high ?? last?.h))}
-        {shStat("LOW", num(quote?.low ?? last?.l))}
+        {shStat("OPEN", num(quote?.open || sess.open))}
+        {shStat("HIGH", num(quote?.high || sess.high))}
+        {shStat("LOW", num(quote?.low || sess.low))}
         {shStat("PREV CLOSE", num(quote?.prev))}
-        {shStat("VOLUME", compact(last?.v))}
+        {shStat("VOLUME", compact(sess.vol))}
         {shStat("MKT CAP", compact(fund?.marketCap))}
         {shStat("AVG VOL", compact(avgVol))}
         {shStat("R VOL", rv != null ? rv.toFixed(2) : "—", rv != null && rv > 1.5 ? WARN : undefined)}
@@ -653,7 +660,10 @@ function StatusStrip({ live }: { live: ReturnType<typeof useApexLive> }) {
 }
 
 const TERM_CSS = `
-.ax-term { position:absolute; inset:0; display:flex; flex-direction:column; gap:8px; padding:2px; font-family:var(--ax-sans); color:var(--ax-tx); overflow:hidden; }
+.ax-term { position:relative; flex:1 1 auto; min-height:0; display:flex; flex-direction:column; gap:7px; padding:8px; font-family:var(--ax-sans); color:var(--ax-tx); overflow:hidden;
+  background:#070b11;
+  /* solid, opaque terminal surfaces — override the room's translucent tokens so the 3D city can't bleed through */
+  --ax-panel:#0c121c; --ax-panelhi:#111a27; --ax-surface:#0a0f18; --ax-elev:#0e141f; --ax-bd:#1c2836; --ax-bdsoft:#161f2b; --ax-hair:rgba(120,160,200,.08); --ax-bdglow:#2a4257; }
 .ax-term button { font-family:var(--ax-sans); cursor:pointer; }
 .ax-term .r { text-align:right; }
 .ax-term .dim { color:var(--ax-mut); }
