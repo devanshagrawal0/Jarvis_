@@ -8,7 +8,7 @@ import { api } from "../../api";
    fail-soft so the UI degrades to its last snapshot, never crashes.
    ───────────────────────────────────────────────────────────── */
 
-export interface Quote { ticker: string; last: number | null; prev?: number | null; changePct?: number | null; name?: string }
+export interface Quote { ticker: string; last: number | null; prev?: number | null; changePct?: number | null; name?: string; open?: number | null; high?: number | null; low?: number | null }
 export interface Gainer { ticker: string; last: number | null; changePct: number | null; vol?: number; mktcap?: number; rating?: string }
 export interface Story { title: string; rank: number; verified?: number; corroboration?: number; lane?: string; tickers?: { t?: string; s?: string; dir: number; mag: number }[]; sources?: string[]; pinned?: boolean; firstSeen?: string }
 export interface Depth { bids: { p: number; q: number }[]; asks: { p: number; q: number }[] }

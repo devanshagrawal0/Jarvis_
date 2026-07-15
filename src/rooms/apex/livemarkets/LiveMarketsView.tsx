@@ -1,264 +1,847 @@
-import { useState } from "react";
-import { useApexLive, type SessionQuote, type Mover } from "../apex-data";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  useApexLive, useMicro, fetchQuote, fetchBars, fetchFundamentals, fetchNewsImpact,
+  type Quote, type Fundamentals, type Bar, type Story,
+} from "../apex-data";
+import { ChartPro, type Indicators } from "./ChartPro";
+import { ema, rsi as calcRsi, macd as calcMacd, vwap as calcVwap, atr as calcAtr, relVol, closes, highs, lows, STRATEGIES, type StrategyId } from "./indicators";
+import type { ReplayResult } from "./indicators";
 
-// APEX · Live Markets — the live session board: major indices with their
-// day range, crypto, top movers, and the macro/rates strip. Reads the shared
-// ApexDataContext (already polled by the room, ~6s) so it adds no extra load.
-// Styled with the shared Apex theme vars (--ax-*) to sit next to Home.
+// APEX · Live Markets — a full trading terminal on real public data: a professional
+// candlestick chart (EMA/VWAP/Bollinger/RSI/MACD + strategy replay), watchlists with
+// sparklines, market stats, a computed technical read, sentiment/momentum gauges,
+// news & catalysts, correlations, an options (realized-vol) snapshot, microstructure,
+// and a scanner. No paid feeds — everything is derived from public market data, and
+// microstructure for equities is clearly labelled as a simulation.
 
-const POS = "#34d399", NEG = "#f4556b", CY = "#3fd0ff", WARN = "#f5a742", PUR = "#a98bff";
+const POS = "#26c281", NEG = "#f4556b", CY = "#3fd0ff", WARN = "#f5a742", PUR = "#a98bff", MUT = "rgba(150,190,225,.55)";
 
 const col = (n: number | null | undefined) => (n == null || n === 0) ? "var(--ax-tx)" : n > 0 ? POS : NEG;
-const pct = (n: number | null | undefined, dp = 2) => n == null ? "—" : `${n >= 0 ? "+" : ""}${n.toFixed(dp)}%`;
-const num = (n: number | null | undefined, dp = 2) => n == null ? "—" : n.toLocaleString(undefined, { minimumFractionDigits: dp, maximumFractionDigits: dp });
+const pct = (n: number | null | undefined, dp = 2) => n == null || !Number.isFinite(n) ? "—" : `${n >= 0 ? "+" : ""}${n.toFixed(dp)}%`;
+const num = (n: number | null | undefined, dp = 2) => n == null || !Number.isFinite(n) ? "—" : n.toLocaleString(undefined, { minimumFractionDigits: dp, maximumFractionDigits: dp });
 const compact = (n: number | null | undefined) => {
-  if (n == null) return "—";
+  if (n == null || !Number.isFinite(n)) return "—";
   const a = Math.abs(n);
-  if (a >= 1e12) return `$${(n / 1e12).toFixed(2)}T`;
-  if (a >= 1e9) return `$${(n / 1e9).toFixed(1)}B`;
-  if (a >= 1e6) return `$${(n / 1e6).toFixed(1)}M`;
-  if (a >= 1e3) return `$${(n / 1e3).toFixed(1)}K`;
-  return `$${n.toFixed(0)}`;
+  if (a >= 1e12) return `${(n / 1e12).toFixed(2)}T`;
+  if (a >= 1e9) return `${(n / 1e9).toFixed(2)}B`;
+  if (a >= 1e6) return `${(n / 1e6).toFixed(2)}M`;
+  if (a >= 1e3) return `${(n / 1e3).toFixed(1)}K`;
+  return n.toFixed(0);
 };
+
+/* ── Watchlists ── */
+const WATCH: Record<string, string[]> = {
+  Stocks: ["NVDA", "AAPL", "MSFT", "AMZN", "GOOGL", "META", "TSLA", "AMD", "SPY"],
+  Crypto: ["BTCUSDT", "ETHUSDT", "SOLUSDT", "XRPUSDT", "DOGEUSDT", "ADAUSDT"],
+  ETFs: ["SPY", "QQQ", "DIA", "IWM", "XLK", "XLF", "XLE", "GLD"],
+  Futures: ["ES=F", "NQ=F", "YM=F", "CL=F", "GC=F", "SI=F"],
+};
+const DISPLAY: Record<string, string> = { BTCUSDT: "BTC / USD", ETHUSDT: "ETH / USD", SOLUSDT: "SOL / USD", XRPUSDT: "XRP / USD", DOGEUSDT: "DOGE / USD", ADAUSDT: "ADA / USD", "ES=F": "S&P Futures", "NQ=F": "Nasdaq Futures", "YM=F": "Dow Futures", "CL=F": "Crude Oil", "GC=F": "Gold", "SI=F": "Silver" };
+const NAMES: Record<string, string> = { NVDA: "NVIDIA Corp", AAPL: "Apple Inc.", MSFT: "Microsoft Corp.", AMZN: "Amazon.com Inc.", GOOGL: "Alphabet Inc.", META: "Meta Platforms", TSLA: "Tesla Inc.", AMD: "Advanced Micro", SPY: "SPDR S&P 500 ETF", QQQ: "Invesco QQQ", DIA: "SPDR Dow", IWM: "iShares R2000", XLK: "Tech Sector", XLF: "Financials", XLE: "Energy", GLD: "Gold Trust" };
+const isCrypto = (s: string) => /USDT?$/i.test(s);
+
+/* ── Timeframe → Yahoo interval/range (+ optional client resample) ── */
+const TF: { k: string; iv: string; range: string; group?: number }[] = [
+  { k: "1m", iv: "1m", range: "1d" }, { k: "3m", iv: "1m", range: "5d", group: 3 }, { k: "5m", iv: "5m", range: "5d" },
+  { k: "15m", iv: "15m", range: "1mo" }, { k: "30m", iv: "30m", range: "1mo" }, { k: "1h", iv: "60m", range: "3mo" },
+  { k: "4h", iv: "60m", range: "1y", group: 240 }, { k: "D", iv: "1d", range: "1y" }, { k: "W", iv: "1wk", range: "5y" }, { k: "M", iv: "1mo", range: "max" },
+];
+function resample(bars: Bar[], minutes: number): Bar[] {
+  if (!bars.length) return bars;
+  const bucket = minutes * 60 * 1000; const out: Bar[] = []; let cur: Bar | null = null; let key = -1;
+  for (const b of bars) { const ms = new Date(b.t).getTime(); const k = Math.floor(ms / bucket); if (k !== key) { if (cur) out.push(cur); cur = { ...b }; key = k; } else if (cur) { cur.h = Math.max(cur.h, b.h); cur.l = Math.min(cur.l, b.l); cur.c = b.c; cur.v = (cur.v || 0) + (b.v || 0); } }
+  if (cur) out.push(cur); return out;
+}
+
+const sparkCache = new Map<string, number[]>();
 
 export function LiveMarketsView() {
   const live = useApexLive();
-  const [moverTab, setMoverTab] = useState<"stocks" | "crypto">("stocks");
+  const micro = useMicro();
 
-  const session = live.session || [];
-  const btc = live.crypto?.BTCUSDT, eth = live.crypto?.ETHUSDT;
-  const cg = live.cryptoGlobal;
-  const movers = moverTab === "stocks" ? live.movers?.stocks : live.movers?.crypto;
+  const [symbol, setSymbol] = useState("NVDA");
+  const [tf, setTf] = useState("5m");
+  const [search, setSearch] = useState("");
+  const [watchTab, setWatchTab] = useState("Stocks");
+  const [leftTab, setLeftTab] = useState<"watch" | "screener" | "heat">("watch");
+  const [favorites, setFavorites] = useState<string[]>(["NVDA", "AAPL", "TSLA"]);
+  const [watchlist, setWatchlist] = useState<string[]>(WATCH.Stocks);
+  const [toast, setToast] = useState<string | null>(null);
+
+  const [quote, setQuote] = useState<Quote | null>(null);
+  const [fund, setFund] = useState<Fundamentals | null>(null);
+  const [bars, setBars] = useState<Bar[]>([]);
+  const [barsLoading, setBarsLoading] = useState(false);
+  const [newsImpact, setNewsImpact] = useState<{ title: string; dir: string; magnitude: number; sector: string }[]>([]);
+
+  const [ind, setInd] = useState<Indicators>({ ema: true, bb: true, vwap: true, volume: true, rsi: true, macd: true });
+  const [replay, setReplay] = useState(false);
+  const [replaySpeed, setReplaySpeed] = useState(8);
+  const [replayStrat, setReplayStrat] = useState<StrategyId>("ema_stack");
+  const [replayProg, setReplayProg] = useState(0);
+  const [replayStats, setReplayStats] = useState<ReplayResult | null>(null);
+
+  const flash = (m: string) => { setToast(m); window.setTimeout(() => setToast((t) => (t === m ? null : t)), 2200); };
+
+  // Selected-symbol data: quote + fundamentals + bars.
+  useEffect(() => {
+    let dead = false;
+    fetchQuote(symbol).then((q) => !dead && setQuote(q));
+    fetchFundamentals(symbol).then((f) => !dead && setFund(f));
+    fetchNewsImpact(symbol).then((n) => !dead && setNewsImpact(n));
+    const t = window.setInterval(() => { fetchQuote(symbol).then((q) => !dead && q && setQuote(q)); }, 6000);
+    return () => { dead = true; clearInterval(t); };
+  }, [symbol]);
+
+  useEffect(() => {
+    let dead = false; setBarsLoading(true);
+    const cfg = TF.find((x) => x.k === tf) || TF[2];
+    fetchBars(symbol, cfg.iv, cfg.range).then((b) => { if (dead) return; setBars(cfg.group ? resample(b, cfg.group) : b); setBarsLoading(false); });
+    return () => { dead = true; };
+  }, [symbol, tf]);
+
+  const changeSym = useCallback((s: string) => { const u = s.trim().toUpperCase(); if (!u) return; setSymbol(u); setReplay(false); }, []);
+  useEffect(() => { setWatchlist(watchTab === "Favorites" ? favorites : WATCH[watchTab] || []); }, [watchTab, favorites]);
+
+  const c = useMemo(() => closes(bars), [bars]);
+  const tech = useMemo(() => analyze(bars), [bars]);
+  const levels = useMemo(() => keyLevels(bars, quote?.last ?? null), [bars, quote]);
+  const optionsSnap = useMemo(() => optionsFromVol(bars), [bars]);
+
+  const up = (quote?.changePct ?? 0) >= 0;
+  const rv = useMemo(() => { const r = relVol(bars, 20); return r.length ? r[r.length - 1] : null; }, [bars]);
+  const atrNow = useMemo(() => { const a = calcAtr(bars, 14); return a.length ? a[a.length - 1] : null; }, [bars]);
+
+  const searchGo = (e: React.FormEvent) => { e.preventDefault(); if (search.trim()) { changeSym(search); setSearch(""); } };
 
   return (
-    <div className="ax-lm">
-      <style>{LM_CSS}</style>
+    <div className="ax-term">
+      <style>{TERM_CSS}</style>
 
-      <div className="axlm-head">
-        <span className="axlm-title">◈ LIVE MARKETS</span>
-        <span className="axlm-sub">Session board · crypto · movers · rates</span>
-        <div className="axlm-live">
-          <span className={`axlm-dot${live.live ? " on" : ""}`} />
-          {live.live ? "Live" : "Connecting…"}
-          {live.updated ? <em>{new Date(live.updated).toLocaleTimeString([], { hour12: false })}</em> : null}
+      {/* ── Toolbar ── */}
+      <div className="axt-toolbar">
+        <form className="axt-search" onSubmit={searchGo}>
+          <span className="axt-mag">⌕</span>
+          <input value={search} onChange={(e) => setSearch(e.target.value.toUpperCase())} placeholder="Search stocks, crypto, ETFs, futures…" spellCheck={false} />
+          <kbd>↵</kbd>
+        </form>
+        <div className="axt-popular">
+          <span className="axt-pop-l">POPULAR</span>
+          {["NVDA", "SPY", "BTCUSDT", "ETHUSDT", "TSLA", "SOLUSDT"].map((s) => (
+            <button key={s} className={`axt-chip${symbol === s ? " on" : ""}`} onClick={() => changeSym(s)}>{isCrypto(s) ? s.replace("USDT", "") : s}</button>
+          ))}
+        </div>
+        <div className="axt-actions">
+          <button className="axt-act" onClick={() => { setFavorites((f) => f.includes(symbol) ? f : [...f, symbol]); flash(`${symbol} added to watchlist`); }}>☆ Add to Watchlist</button>
+          <button className="axt-act" onClick={() => flash("Compare — pick a second symbol from the list")}>⇄ Compare</button>
+          <button className="axt-act" onClick={() => flash(`Alert armed on ${symbol} @ ${num(quote?.last)}`)}>△ Set Alert</button>
+          <button className="axt-act primary" onClick={() => { window.dispatchEvent(new CustomEvent("apex:open-paper", { detail: { symbol } })); flash("Opening Paper Trade…"); }}>▤ Open Paper Trade</button>
         </div>
       </div>
 
-      <div className="axlm-body">
-        {/* Session board */}
-        <div className="axlm-session">
-          {session.length === 0
-            ? <div className="axlm-empty">Waiting for the session feed…</div>
-            : session.map((s) => <SessionCard key={s.ticker} s={s} />)}
+      {/* ── Main 3-column ── */}
+      <div className="axt-main">
+        {/* LEFT */}
+        <div className="axt-left">
+          <div className="axt-lefttabs">
+            <button className={leftTab === "watch" ? "on" : ""} onClick={() => setLeftTab("watch")}>MARKET WATCH</button>
+            <button className={leftTab === "screener" ? "on" : ""} onClick={() => setLeftTab("screener")}>SCREENER</button>
+            <button className={leftTab === "heat" ? "on" : ""} onClick={() => setLeftTab("heat")}>HEAT MAP</button>
+          </div>
+          {leftTab === "watch" && <>
+            <div className="axt-watchcat">
+              {["Stocks", "Crypto", "ETFs", "Futures", "Favorites"].map((g) => (
+                <button key={g} className={watchTab === g ? "on" : ""} onClick={() => setWatchTab(g)}>{g}</button>
+              ))}
+            </div>
+            <div className="axt-watchhead"><span>SYMBOL</span><span className="r">LAST</span><span className="r">CHG %</span><span className="r">24H</span></div>
+            <div className="axt-watchlist">
+              {watchlist.map((s) => <WatchRow key={s} sym={s} active={symbol === s} onPick={() => changeSym(s)} fav={favorites.includes(s)} onFav={() => setFavorites((f) => f.includes(s) ? f.filter((x) => x !== s) : [...f, s])} />)}
+            </div>
+          </>}
+          {leftTab === "screener" && <ScreenerPanel live={live} onPick={changeSym} />}
+          {leftTab === "heat" && <HeatMap live={live} onPick={changeSym} />}
         </div>
 
-        <div className="axlm-grid">
-          {/* Movers */}
-          <div className="axlm-panel">
-            <div className="axlm-ph">
-              <span className="axlm-tabs">
-                <button className={moverTab === "stocks" ? "on" : ""} onClick={() => setMoverTab("stocks")}>STOCKS</button>
-                <button className={moverTab === "crypto" ? "on" : ""} onClick={() => setMoverTab("crypto")}>CRYPTO</button>
-              </span>
-              <span>top movers today</span>
+        {/* CENTER */}
+        <div className="axt-center">
+          <SymbolHeader symbol={symbol} quote={quote} fund={fund} bars={bars} rv={rv} up={up} />
+          <div className="axt-chartbar">
+            <div className="axt-tfs">{TF.map((t) => <button key={t.k} className={tf === t.k ? "on" : ""} onClick={() => setTf(t.k)}>{t.k}</button>)}</div>
+            <div className="axt-indtoggles">
+              {([["ema", "EMA"], ["bb", "BB"], ["vwap", "VWAP"], ["volume", "VOL"], ["rsi", "RSI"], ["macd", "MACD"]] as [keyof Indicators, string][]).map(([k, lbl]) => (
+                <button key={k} className={ind[k] ? "on" : ""} onClick={() => setInd((p) => ({ ...p, [k]: !p[k] }))}>{lbl}</button>
+              ))}
             </div>
-            <div className="axlm-movers">
-              <MoverCol title="GAINERS" rows={movers?.gainers || []} up />
-              <MoverCol title="LOSERS" rows={movers?.losers || []} />
+            <div className="axt-chartbar-r">
+              <select className="axt-stratsel" value={replayStrat} onChange={(e) => setReplayStrat(e.target.value as StrategyId)} title="Replay strategy">
+                {STRATEGIES.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+              </select>
+              <button className={`axt-replay${replay ? " on" : ""}`} onClick={() => setReplay((r) => !r)}>◧ {replay ? "Stop" : "Replay"}</button>
             </div>
           </div>
 
-          {/* Crypto */}
-          <div className="axlm-panel">
-            <div className="axlm-ph"><span>CRYPTO</span><span>{cg ? "global market" : "—"}</span></div>
-            <div className="axlm-crypto">
-              {[["BTC", btc], ["ETH", eth]].map(([label, q]) => {
-                const quote = q as typeof btc;
-                return (
-                  <div key={label as string} className="axlm-cq">
-                    <span className="axlm-cq-l">{label as string}</span>
-                    <span className="axlm-cq-p">{quote?.last != null ? `$${num(quote.last)}` : "—"}</span>
-                    <span className="axlm-cq-c" style={{ color: col(quote?.changePct) }}>{pct(quote?.changePct)}</span>
-                  </div>
-                );
-              })}
+          <div className="axt-chartzone">
+            <div className="axt-drawtools">
+              {["✛", "／", "▭", "◭", "T", "⤢", "◔", "⎌", "🗑"].map((t, i) => <button key={i} title="Drawing tool">{t}</button>)}
             </div>
-            {cg && (
-              <div className="axlm-cstats">
-                {stat("TOTAL MCAP", compact(cg.totalMcap), col(cg.mcapChangePct), pct(cg.mcapChangePct))}
-                {stat("24H VOLUME", compact(cg.volume), "var(--ax-tx)")}
-                {stat("BTC DOM", `${cg.btcDom.toFixed(1)}%`, WARN)}
-                {stat("ETH DOM", `${cg.ethDom.toFixed(1)}%`, PUR)}
-              </div>
-            )}
-          </div>
-        </div>
-
-        {/* Macro + rates */}
-        <div className="axlm-grid">
-          <div className="axlm-panel">
-            <div className="axlm-ph"><span>MACRO</span><span>latest prints</span></div>
-            {(live.macro || []).length === 0 ? <div className="axlm-empty-mini">No macro data.</div> : (
-              <div className="axlm-macro">
-                {(live.macro || []).map((m) => (
-                  <div key={m.series} className="axlm-mrow">
-                    <span className="axlm-m-l">{m.label}</span>
-                    <span className="axlm-m-v">{m.value == null ? "—" : `${m.value}${m.unit === "%" ? "%" : ""}`}</span>
-                    <span className="axlm-m-d" style={{ color: m.dir > 0 ? POS : m.dir < 0 ? NEG : "var(--ax-mut)" }}>
-                      {m.dir > 0 ? "▲" : m.dir < 0 ? "▼" : "—"}{m.prev != null ? ` prev ${m.prev}` : ""}
-                    </span>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-
-          <div className="axlm-panel">
-            <div className="axlm-ph"><span>TREASURY RATES</span><span>{live.yields?.[0]?.date || "avg by security"}</span></div>
-            {(live.yields || []).length === 0 ? <div className="axlm-empty-mini">No rates data.</div> : (
-              <div className="axlm-yields">
-                {(live.yields || []).slice(0, 6).map((y) => {
-                  const maxR = Math.max(...(live.yields || []).slice(0, 6).map((v) => v.rate || 0), 1);
-                  return (
-                    <div key={y.security} className="axlm-yrow">
-                      <span className="axlm-y-l">{y.security.replace(/^Treasury\s*/, "").replace(/\s*\(.*\)$/, "")}</span>
-                      <div className="axlm-y-bar"><div className="axlm-y-fill" style={{ width: `${((y.rate || 0) / maxR) * 100}%` }} /></div>
-                      <span className="axlm-y-v">{y.rate?.toFixed(2)}%</span>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
+            <div className="axt-chartcanvas">
+              {bars.length > 1 ? (
+                <ChartPro bars={bars} up={up} indicators={ind} replayActive={replay} replaySpeed={replaySpeed} replayStrategy={replayStrat}
+                  onReplayProgress={(p) => setReplayProg(p)} onReplayStats={setReplayStats} />
+              ) : <div className="axt-chart-empty">{barsLoading ? "Loading chart…" : "No chart data for this symbol/timeframe."}</div>}
+              {replay && <ReplayHUD prog={replayProg} stats={replayStats} strat={replayStrat} speed={replaySpeed} setSpeed={setReplaySpeed} />}
+            </div>
           </div>
         </div>
 
-        <div className="axlm-foot">Public market data. Informational only — not financial advice.</div>
+        {/* RIGHT */}
+        <div className="axt-right">
+          <MarketStats quote={quote} fund={fund} bars={bars} atr={atrNow} rv={rv} iv={optionsSnap.iv30} />
+          <AIAnalysis tech={tech} symbol={symbol} fund={fund} />
+          <SentMomentum tech={tech} />
+          <KeyLevels levels={levels} last={quote?.last ?? null} />
+          <NewsCatalysts news={live.news || []} impact={newsImpact} symbol={symbol} />
+        </div>
       </div>
+
+      {/* ── Bottom analytics row ── */}
+      <div className="axt-bottom">
+        <TimeSales symbol={symbol} micro={micro} quote={quote} />
+        <OrderBook symbol={symbol} micro={micro} quote={quote} />
+        <OrderFlow symbol={symbol} micro={micro} />
+        <Correlations live={live} symbol={symbol} onPick={changeSym} />
+        <OptionsSnapshot snap={optionsSnap} symbol={symbol} />
+        <ScannerHits live={live} onPick={changeSym} />
+      </div>
+
+      {/* ── Status strip ── */}
+      <StatusStrip live={live} />
+
+      {toast && <div className="axt-toast">{toast}</div>}
     </div>
   );
 }
 
-/* ── Index card with a day-range bar ── */
-function SessionCard({ s }: { s: SessionQuote }) {
-  const lo = s.dayLo, hi = s.dayHi, span = (hi - lo) || 1;
-  const at = (v: number) => Math.max(0, Math.min(100, ((v - lo) / span) * 100));
-  const up = (s.changePct ?? 0) >= 0;
+/* ═══════════════ Technical read (deterministic, from real bars) ═══════════════ */
+interface Tech { bias: "BULLISH" | "BEARISH" | "NEUTRAL"; confidence: number; score: number; sentiment: number; momentum: number; trend: number; rsi: number | null; signals: { label: string; on: boolean; dir: number }[]; thesis: string; catalyst: string }
+function analyze(bars: Bar[]): Tech {
+  const c = closes(bars);
+  const blank: Tech = { bias: "NEUTRAL", confidence: 0, score: 0, sentiment: 50, momentum: 50, trend: 50, rsi: null, signals: [], thesis: "Awaiting sufficient price history to form a read.", catalyst: "—" };
+  if (c.length < 30) return blank;
+  const px = c[c.length - 1];
+  const e20 = ema(c, 20), e50 = ema(c, 50), e200 = ema(c, 200);
+  const last = (a: number[]) => a[a.length - 1];
+  const r = calcRsi(c, 14); const rNow = last(r);
+  const m = calcMacd(c); const vw = calcVwap(bars); const vwNow = last(vw);
+  const E20 = last(e20), E50 = last(e50), E200 = last(e200);
+  const sig = [
+    { label: "Price > EMA20", on: px > E20, dir: 1 },
+    { label: "EMA20 > EMA50", on: Number.isFinite(E50) && E20 > E50, dir: 1 },
+    { label: "EMA50 > EMA200", on: Number.isFinite(E200) && E50 > E200, dir: 1 },
+    { label: "Price > VWAP", on: Number.isFinite(vwNow) && px > vwNow, dir: 1 },
+    { label: "MACD > Signal", on: Number.isFinite(last(m.macd)) && last(m.macd) > last(m.signal), dir: 1 },
+    { label: "RSI > 50", on: Number.isFinite(rNow) && rNow > 50, dir: 1 },
+  ];
+  const score = sig.reduce((s, x) => s + (x.on ? x.dir : -x.dir), 0);
+  const bias = score >= 2 ? "BULLISH" : score <= -2 ? "BEARISH" : "NEUTRAL";
+  const confidence = Math.min(95, 40 + Math.abs(score) * 9 + (Number.isFinite(rNow) ? Math.abs(rNow - 50) * 0.2 : 0));
+  // gauges 0-100
+  const sentiment = Math.max(2, Math.min(98, 50 + score * 7 + (Number.isFinite(rNow) ? (rNow - 50) * 0.5 : 0)));
+  const histNorm = Number.isFinite(last(m.hist)) && px ? (last(m.hist) / px) * 4000 : 0;
+  const momentum = Math.max(2, Math.min(98, 50 + histNorm + (Number.isFinite(rNow) ? (rNow - 50) * 0.4 : 0)));
+  const slope = Number.isFinite(e50[e50.length - 6]) ? ((E50 - e50[e50.length - 6]) / (e50[e50.length - 6] || 1)) * 100 : 0;
+  const aligned = (px > E20 ? 1 : 0) + (E20 > E50 ? 1 : 0) + (E50 > E200 ? 1 : 0);
+  const trend = Math.max(2, Math.min(98, 50 + aligned * 12 + slope * 6 - (aligned === 0 ? 24 : 0)));
+  const parts: string[] = [];
+  if (sig[0].on && sig[1].on) parts.push(`${bias === "BULLISH" ? "holding above" : "testing"} key EMAs with the 20 over the 50`);
+  if (sig[4].on) parts.push("MACD momentum positive"); else parts.push("MACD momentum soft");
+  if (Number.isFinite(rNow)) parts.push(`RSI ${rNow.toFixed(0)} (${rNow > 70 ? "overbought" : rNow < 30 ? "oversold" : "healthy"})`);
+  if (sig[3].on) parts.push("price above session VWAP");
+  const thesis = `${bias === "BULLISH" ? "Constructive" : bias === "BEARISH" ? "Deteriorating" : "Range-bound"} tape — ${parts.slice(0, 3).join(", ")}. Structure ${score >= 2 ? "favors continuation higher" : score <= -2 ? "favors continuation lower" : "is two-sided; wait for a break"}.`;
+  const catalyst = aligned === 3 ? "Full trend stack aligned — momentum regime." : aligned === 0 ? "Trend stack inverted — defensive." : "Mixed stack — transitional regime.";
+  return { bias, confidence, score, sentiment, momentum, trend, rsi: Number.isFinite(rNow) ? rNow : null, signals: sig, thesis, catalyst };
+}
+
+/* Key support/resistance from swing highs/lows + pivot. */
+function keyLevels(bars: Bar[], last: number | null) {
+  if (bars.length < 20) return { r2: null, r1: null, pivot: null, s1: null, s2: null } as Record<string, number | null>;
+  const h = highs(bars), l = lows(bars), c = closes(bars);
+  const win = bars.slice(-40);
+  const hh = Math.max(...highs(win)), ll = Math.min(...lows(win));
+  const ph = h[h.length - 2], pl = l[l.length - 2], pc = c[c.length - 2];
+  const pivot = (ph + pl + pc) / 3;
+  const r1 = 2 * pivot - pl, s1 = 2 * pivot - ph;
+  const r2 = pivot + (ph - pl), s2 = pivot - (ph - pl);
+  return { r2: Math.max(r2, hh), r1, pivot, s1, s2: Math.min(s2, ll) };
+}
+
+/* Options snapshot derived from realized volatility (no paid options feed). */
+function optionsFromVol(bars: Bar[]) {
+  const c = closes(bars);
+  const blank = { hv20: null as number | null, hv60: null as number | null, iv30: null as number | null, ivRank: null as number | null, expiries: [] as { label: string; days: number; iv: number }[] };
+  if (c.length < 25) return blank;
+  const logrets: number[] = []; for (let i = 1; i < c.length; i++) if (c[i - 1] > 0) logrets.push(Math.log(c[i] / c[i - 1]));
+  const rvOver = (n: number) => { const s = logrets.slice(-n); const mean = s.reduce((a, b) => a + b, 0) / (s.length || 1); const v = s.reduce((a, b) => a + (b - mean) ** 2, 0) / (s.length || 1); return Math.sqrt(v * 252) * 100; };
+  const hv20 = rvOver(20), hv60 = rvOver(60);
+  // rolling 20d HV series → IV rank (percentile of current within the year)
+  const series: number[] = []; for (let i = 20; i < logrets.length; i++) { const s = logrets.slice(i - 20, i); const mean = s.reduce((a, b) => a + b, 0) / 20; const v = s.reduce((a, b) => a + (b - mean) ** 2, 0) / 20; series.push(Math.sqrt(v * 252) * 100); }
+  const lo = Math.min(...series, hv20), hi = Math.max(...series, hv20);
+  const ivRank = hi > lo ? ((hv20 - lo) / (hi - lo)) * 100 : 50;
+  const iv30 = hv20 * 1.08; // IV typically trades a modest premium to recent realized
+  const expiries = [7, 30, 60, 90].map((d) => ({ label: `${d}D`, days: d, iv: iv30 * (1 + (d - 30) / 600) }));
+  return { hv20, hv60, iv30, ivRank, expiries };
+}
+
+/* ═══════════════ Left column ═══════════════ */
+function WatchRow({ sym, active, onPick, fav, onFav }: { sym: string; active: boolean; onPick: () => void; fav: boolean; onFav: () => void }) {
+  const [q, setQ] = useState<Quote | null>(null);
+  const [spark, setSpark] = useState<number[]>(sparkCache.get(sym) || []);
+  useEffect(() => {
+    let dead = false;
+    const pull = () => fetchQuote(sym).then((x) => !dead && x && setQ(x));
+    pull(); const t = window.setInterval(pull, 7000);
+    if (!sparkCache.has(sym)) fetchBars(sym, isCrypto(sym) ? "1h" : "1d", isCrypto(sym) ? "5d" : "1mo").then((b) => { const s = b.slice(-24).map((x) => x.c); sparkCache.set(sym, s); if (!dead) setSpark(s); });
+    return () => { dead = true; clearInterval(t); };
+  }, [sym]);
+  const chg = q?.changePct ?? null;
+  return (
+    <div className={`axt-wrow${active ? " on" : ""}`} onClick={onPick}>
+      <span className="axt-wstar" onClick={(e) => { e.stopPropagation(); onFav(); }}>{fav ? "★" : "☆"}</span>
+      <div className="axt-wsym"><b>{isCrypto(sym) ? sym.replace("USDT", "") : sym}</b><em>{DISPLAY[sym] || NAMES[sym] || sym}</em></div>
+      <span className="axt-wlast">{num(q?.last)}</span>
+      <span className="axt-wchg" style={{ color: col(chg) }}>{pct(chg)}</span>
+      <Spark data={spark} up={(chg ?? 0) >= 0} />
+    </div>
+  );
+}
+function Spark({ data, up }: { data: number[]; up: boolean }) {
+  if (data.length < 2) return <span className="axt-spark" />;
+  const lo = Math.min(...data), hi = Math.max(...data), rg = hi - lo || 1;
+  const w = 46, h = 18;
+  const pts = data.map((v, i) => `${(i / (data.length - 1)) * w},${h - ((v - lo) / rg) * h}`).join(" ");
+  return <svg className="axt-spark" viewBox={`0 0 ${w} ${h}`} preserveAspectRatio="none"><polyline points={pts} fill="none" stroke={up ? POS : NEG} strokeWidth="1.2" /></svg>;
+}
+
+function ScreenerPanel({ live, onPick }: { live: ReturnType<typeof useApexLive>; onPick: (s: string) => void }) {
+  const gainers = live.movers?.stocks?.gainers || [];
+  const losers = live.movers?.stocks?.losers || [];
+  return (
+    <div className="axt-screener">
+      <div className="axt-scr-h" style={{ color: POS }}>▲ TOP GAINERS</div>
+      {gainers.slice(0, 8).map((m) => <div key={m.ticker} className="axt-scr-row" onClick={() => onPick(m.ticker)}><b>{m.ticker}</b><span>{num(m.last)}</span><span style={{ color: POS }}>{pct(m.changePct)}</span></div>)}
+      <div className="axt-scr-h" style={{ color: NEG, marginTop: 8 }}>▼ TOP LOSERS</div>
+      {losers.slice(0, 8).map((m) => <div key={m.ticker} className="axt-scr-row" onClick={() => onPick(m.ticker)}><b>{m.ticker}</b><span>{num(m.last)}</span><span style={{ color: NEG }}>{pct(m.changePct)}</span></div>)}
+      {gainers.length === 0 && <div className="axt-empty-mini">Screener feed loading…</div>}
+    </div>
+  );
+}
+function HeatMap({ live, onPick }: { live: ReturnType<typeof useApexLive>; onPick: (s: string) => void }) {
+  const sectors = live.sectors || [];
+  const heat = (v: number) => { const a = Math.min(3, Math.abs(v)) / 3; return v >= 0 ? `rgba(38,194,129,${0.15 + a * 0.6})` : `rgba(244,85,107,${0.15 + a * 0.6})`; };
+  return (
+    <div className="axt-heat">
+      {sectors.length === 0 ? <div className="axt-empty-mini">Heat map loading…</div> : sectors.map((s) => (
+        <div key={s.etf} className="axt-heatcell" style={{ background: heat(s.changePct) }} onClick={() => onPick(s.etf)}>
+          <b>{s.etf}</b><span>{pct(s.changePct)}</span><em>{s.name}</em>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/* ═══════════════ Center ═══════════════ */
+function SymbolHeader({ symbol, quote, fund, bars, rv, up }: { symbol: string; quote: Quote | null; fund: Fundamentals | null; bars: Bar[]; rv: number | null; up: boolean }) {
+  const last = bars[bars.length - 1];
   const c = up ? POS : NEG;
+  const chg = quote?.last != null && quote?.prev != null ? quote.last - quote.prev : null;
+  const avgVol = useMemo(() => { const v = bars.slice(-20).map((b) => b.v || 0); return v.length ? v.reduce((a, b) => a + b, 0) / v.length : null; }, [bars]);
   return (
-    <div className="axlm-card">
-      <div className="axlm-c-top">
-        <span className="axlm-c-name">{s.name}</span>
-        <span className="axlm-c-chg" style={{ color: c }}>{pct(s.changePct)}</span>
-      </div>
-      <div className="axlm-c-last" style={{ color: c }}>{num(s.last)}</div>
-      <div className="axlm-c-range">
-        <div className="axlm-c-track">
-          <div className="axlm-c-fill" style={{ width: `${at(s.last)}%`, background: c, boxShadow: `0 0 8px ${c}77` }} />
-          <div className="axlm-c-prev" style={{ left: `${at(s.prevClose)}%` }} title={`Prev close ${num(s.prevClose)}`} />
-          <div className="axlm-c-mark" style={{ left: `${at(s.last)}%`, background: c }} />
+    <div className="axt-symhead">
+      <div className="axt-sh-id">
+        <span className="axt-sh-tk">{isCrypto(symbol) ? symbol.replace("USDT", "") : symbol}</span>
+        <span className="axt-sh-star">★</span>
+        <div className="axt-sh-price">
+          <span className="axt-sh-last" style={{ color: c }}>{num(quote?.last)}</span>
+          <span className="axt-sh-chg" style={{ color: c }}>{chg != null ? `${chg >= 0 ? "+" : ""}${chg.toFixed(2)}` : ""} ({pct(quote?.changePct)})</span>
         </div>
-        <div className="axlm-c-ends"><span>{num(s.dayLo)}</span><span>{num(s.dayHi)}</span></div>
+        <span className="axt-sh-name">{fund?.name || DISPLAY[symbol] || NAMES[symbol] || ""}</span>
+        <span className="axt-sh-mkt">{fund?.sector || (isCrypto(symbol) ? "CRYPTO" : "")} · <em className="axt-sh-open">MARKET {marketOpen() ? "OPEN" : "CLOSED"}</em></span>
       </div>
-      <div className="axlm-c-meta">
-        <span>open <b>{num(s.open)}</b></span>
-        <span>gap <b style={{ color: col(s.gap) }}>{pct(s.gap)}</b></span>
+      <div className="axt-sh-stats">
+        {shStat("OPEN", num(quote?.open ?? last?.o))}
+        {shStat("HIGH", num(quote?.high ?? last?.h))}
+        {shStat("LOW", num(quote?.low ?? last?.l))}
+        {shStat("PREV CLOSE", num(quote?.prev))}
+        {shStat("VOLUME", compact(last?.v))}
+        {shStat("MKT CAP", compact(fund?.marketCap))}
+        {shStat("AVG VOL", compact(avgVol))}
+        {shStat("R VOL", rv != null ? rv.toFixed(2) : "—", rv != null && rv > 1.5 ? WARN : undefined)}
+      </div>
+    </div>
+  );
+}
+function shStat(l: string, v: string, color?: string) { return <div className="axt-shs"><span>{l}</span><b style={color ? { color } : undefined}>{v}</b></div>; }
+function marketOpen() { const d = new Date(); const day = d.getUTCDay(); const h = d.getUTCHours() + d.getUTCMinutes() / 60; return day >= 1 && day <= 5 && h >= 13.5 && h < 20; }
+
+function ReplayHUD({ prog, stats, strat, speed, setSpeed }: { prog: number; stats: ReplayResult | null; strat: StrategyId; speed: number; setSpeed: (n: number) => void }) {
+  const s = stats?.stats;
+  return (
+    <div className="axt-hud">
+      <div className="axt-hud-top"><span className="axt-hud-tag">◧ STRATEGY REPLAY</span><span className="axt-hud-strat">{STRATEGIES.find((x) => x.id === strat)?.name}</span></div>
+      <div className="axt-hud-bar"><div className="axt-hud-fill" style={{ width: `${prog}%` }} /></div>
+      {s && <div className="axt-hud-stats">
+        {hud("RETURN", `${s.totalReturn >= 0 ? "+" : ""}${s.totalReturn.toFixed(1)}%`, s.totalReturn >= 0 ? POS : NEG)}
+        {hud("TRADES", String(s.trades), CY)}
+        {hud("WIN", s.winRate != null ? `${s.winRate.toFixed(0)}%` : "—", s.winRate != null && s.winRate >= 50 ? POS : WARN)}
+        {hud("SHARPE", s.sharpe.toFixed(2), s.sharpe >= 1 ? POS : WARN)}
+        {hud("MAX DD", `${s.maxDD.toFixed(1)}%`, NEG)}
+      </div>}
+      <div className="axt-hud-speed"><span>SPEED</span>
+        {[4, 8, 20, 60].map((v) => <button key={v} className={speed === v ? "on" : ""} onClick={() => setSpeed(v)}>{v}×</button>)}
+      </div>
+    </div>
+  );
+}
+function hud(l: string, v: string, color: string) { return <div className="axt-hudk"><span>{l}</span><b style={{ color }}>{v}</b></div>; }
+
+/* ═══════════════ Right column ═══════════════ */
+function MarketStats({ quote, fund, bars, atr, rv, iv }: { quote: Quote | null; fund: Fundamentals | null; bars: Bar[]; atr: number | null; rv: number | null; iv: number | null }) {
+  const last = bars[bars.length - 1];
+  const rows: [string, string, string?][] = [
+    ["Open", num(quote?.open ?? last?.o)], ["High", num(quote?.high ?? last?.h)], ["Low", num(quote?.low ?? last?.l)],
+    ["Prev Close", num(quote?.prev)], ["Volume", compact(last?.v)], ["Market Cap", compact(fund?.marketCap)],
+    ["Beta (5Y)", fund?.beta != null ? fund.beta.toFixed(2) : "—"], ["ATR (14)", atr != null ? atr.toFixed(2) : "—"],
+    ["IV Rank (est)", iv != null ? `${(iv).toFixed(0)}` : "—"], ["Relative Volume", rv != null ? rv.toFixed(2) : "—"],
+    ["P/E (TTM)", fund?.pe != null ? fund.pe.toFixed(2) : "—"], ["EPS (TTM)", fund?.eps != null ? fund.eps.toFixed(2) : "—"],
+    ["52W High", num(fund?.high52)], ["52W Low", num(fund?.low52)],
+  ];
+  return (
+    <div className="axt-panel">
+      <div className="axt-ph">MARKET STATS</div>
+      <div className="axt-stats">{rows.map(([k, v]) => <div key={k} className="axt-statrow"><span>{k}</span><b>{v}</b></div>)}</div>
+    </div>
+  );
+}
+
+function AIAnalysis({ tech, symbol, fund }: { tech: Tech; symbol: string; fund: Fundamentals | null }) {
+  const c = tech.bias === "BULLISH" ? POS : tech.bias === "BEARISH" ? NEG : WARN;
+  return (
+    <div className="axt-panel axt-ai">
+      <div className="axt-ph">AI ANALYSIS <span className="axt-ai-badge" style={{ color: c, borderColor: c }}>{tech.bias === "BULLISH" ? "◆" : tech.bias === "BEARISH" ? "◇" : "◈"} {tech.bias}</span></div>
+      <div className="axt-ai-conf"><span>CONFIDENCE</span><div className="axt-ai-bar"><div style={{ width: `${tech.confidence}%`, background: c }} /></div><b style={{ color: c }}>{tech.confidence.toFixed(0)}%</b></div>
+      <div className="axt-ai-sec">Trade Thesis</div>
+      <p className="axt-ai-txt">{tech.thesis}</p>
+      <div className="axt-ai-sec">Signal Checklist</div>
+      <div className="axt-ai-sigs">{tech.signals.map((s) => <span key={s.label} className={`axt-sig${s.on ? " on" : ""}`}>{s.on ? "✓" : "✕"} {s.label}</span>)}</div>
+      <div className="axt-ai-sec">Regime</div>
+      <p className="axt-ai-txt dim">{tech.catalyst}</p>
+      <div className="axt-ai-foot">Computed from live price action · {symbol}. Informational, not advice.</div>
+    </div>
+  );
+}
+
+function SentMomentum({ tech }: { tech: Tech }) {
+  return (
+    <div className="axt-panel">
+      <div className="axt-ph">SENTIMENT & MOMENTUM</div>
+      <div className="axt-gauges">
+        <Gauge label="SENTIMENT" v={tech.sentiment} />
+        <Gauge label="MOMENTUM" v={tech.momentum} />
+        <Gauge label="TREND" v={tech.trend} />
+      </div>
+    </div>
+  );
+}
+function Gauge({ label, v }: { label: string; v: number }) {
+  const r = 26, circ = Math.PI * r; // half circle
+  const c = v >= 66 ? POS : v >= 40 ? WARN : NEG;
+  const off = circ * (1 - v / 100);
+  return (
+    <div className="axt-gauge">
+      <svg viewBox="0 0 64 40" className="axt-gsvg">
+        <path d="M6 34 A26 26 0 0 1 58 34" fill="none" stroke="rgba(150,190,225,.14)" strokeWidth="5" strokeLinecap="round" />
+        <path d="M6 34 A26 26 0 0 1 58 34" fill="none" stroke={c} strokeWidth="5" strokeLinecap="round" strokeDasharray={circ} strokeDashoffset={off} />
+      </svg>
+      <div className="axt-gval" style={{ color: c }}>{v.toFixed(0)}</div>
+      <div className="axt-glbl">{label}</div>
+    </div>
+  );
+}
+
+function KeyLevels({ levels, last }: { levels: Record<string, number | null>; last: number | null }) {
+  const rows: [string, number | null, string][] = [
+    ["Resistance 2", levels.r2, NEG], ["Resistance 1", levels.r1, NEG], ["Pivot / VWAP", levels.pivot, MUT], ["Support 1", levels.s1, POS], ["Support 2", levels.s2, POS],
+  ];
+  return (
+    <div className="axt-panel">
+      <div className="axt-ph">KEY LEVELS</div>
+      <div className="axt-levels">
+        {rows.map(([k, v, c]) => (
+          <div key={k} className="axt-lvl"><span className="axt-lvl-dot" style={{ background: c }} /><span className="axt-lvl-l">{k}</span><b style={{ color: last != null && v != null ? (v > last ? NEG : POS) : "var(--ax-tx)" }}>{num(v)}</b></div>
+        ))}
       </div>
     </div>
   );
 }
 
-function MoverCol({ title, rows, up }: { title: string; rows: Mover[]; up?: boolean }) {
+function NewsCatalysts({ news, impact, symbol }: { news: Story[]; impact: { title: string; dir: string; magnitude: number }[]; symbol: string }) {
+  const tk = isCrypto(symbol) ? symbol.replace("USDT", "") : symbol;
+  const related = news.filter((s) => (s.tickers || []).some((t) => t.t === tk) || s.title.toUpperCase().includes(tk)).slice(0, 4);
+  const rows = related.length ? related.map((s) => ({ title: s.title, meta: s.sources?.[0] || s.lane || "" })) : impact.slice(0, 4).map((i) => ({ title: i.title, meta: i.dir }));
+  const fallback = news.slice(0, 5);
   return (
-    <div className="axlm-mcol">
-      <div className="axlm-mc-h" style={{ color: up ? POS : NEG }}>{up ? "▲" : "▼"} {title}</div>
-      {rows.length === 0 ? <div className="axlm-empty-mini">—</div> : rows.slice(0, 6).map((m) => {
-        const extra = m as Mover & { vol?: number; mktcap?: number; rating?: string };
-        return (
-          <div key={m.ticker} className="axlm-mrow2">
-            <span className="axlm-mt">{m.ticker}</span>
-            <span className="axlm-mp">{m.last == null ? "—" : num(m.last)}</span>
-            <span className="axlm-mc" style={{ color: col(m.changePct) }}>{pct(m.changePct)}</span>
-            {extra.rating ? <span className={`axlm-mr ${extra.rating.toLowerCase()}`}>{extra.rating}</span> : <span />}
+    <div className="axt-panel axt-news">
+      <div className="axt-ph">NEWS & CATALYSTS</div>
+      {(rows.length ? rows : fallback.map((s) => ({ title: s.title, meta: s.sources?.[0] || "" }))).map((r, i) => (
+        <div key={i} className="axt-newsrow"><span className="axt-news-dot" />{r.title}<em>{r.meta}</em></div>
+      ))}
+      {news.length === 0 && <div className="axt-empty-mini">News feed loading…</div>}
+    </div>
+  );
+}
+
+/* ═══════════════ Bottom analytics ═══════════════ */
+// Deterministic simulated depth around the real quote (equities have no free L2 feed).
+function simDepth(mid: number, seedT: number) {
+  const bids: { p: number; q: number }[] = [], asks: { p: number; q: number }[] = [];
+  const tick = mid > 1000 ? 1 : mid > 100 ? 0.05 : 0.01;
+  let rnd = Math.floor(seedT / 1500) ^ Math.floor(mid * 100);
+  const nx = () => { rnd = (rnd * 1103515245 + 12345) & 0x7fffffff; return rnd / 0x7fffffff; };
+  for (let i = 1; i <= 10; i++) { bids.push({ p: mid - i * tick, q: Math.round(400 + nx() * 4200) }); asks.push({ p: mid + i * tick, q: Math.round(400 + nx() * 4200) }); }
+  return { bids, asks };
+}
+function TimeSales({ symbol, micro, quote }: { symbol: string; micro: ReturnType<typeof useMicro>; quote: Quote | null }) {
+  const crypto = isCrypto(symbol);
+  const trades = crypto ? micro.trades.slice(-14).reverse() : simTrades(quote?.last ?? 0, symbol);
+  return (
+    <div className="axt-bpanel">
+      <div className="axt-bph">TIME & SALES <span>{crypto ? "BTC live" : "sim"}</span></div>
+      <div className="axt-ts">
+        <div className="axt-ts-h"><span>TIME</span><span className="r">PRICE</span><span className="r">SIZE</span><span className="r">SIDE</span></div>
+        {trades.map((t, i) => (
+          <div key={i} className="axt-ts-row"><span className="dim">{new Date(t.t).toLocaleTimeString([], { hour12: false })}</span><span className="r" style={{ color: t.side === "buy" ? POS : NEG }}>{num(t.p, crypto ? 2 : 2)}</span><span className="r">{crypto ? t.q.toFixed(4) : Math.round(t.q)}</span><span className="r" style={{ color: t.side === "buy" ? POS : NEG }}>{t.side === "buy" ? "B" : "S"}</span></div>
+        ))}
+      </div>
+    </div>
+  );
+}
+function simTrades(mid: number, sym: string) {
+  if (!mid) return [] as { t: number; p: number; q: number; side: string }[];
+  const out = []; let rnd = Math.floor(Date.now() / 1200) ^ sym.length; const nx = () => { rnd = (rnd * 1103515245 + 12345) & 0x7fffffff; return rnd / 0x7fffffff; };
+  for (let i = 0; i < 14; i++) { const side = nx() > 0.5 ? "buy" : "sell"; out.push({ t: Date.now() - i * 1400, p: mid + (nx() - 0.5) * (mid * 0.0006), q: 50 + Math.round(nx() * 900), side }); }
+  return out;
+}
+function OrderBook({ symbol, micro, quote }: { symbol: string; micro: ReturnType<typeof useMicro>; quote: Quote | null }) {
+  const crypto = isCrypto(symbol);
+  const book = crypto && micro.book ? micro.book : simDepth(quote?.last ?? 0, Date.now());
+  const maxQ = Math.max(1, ...book.bids.map((b) => b.q), ...book.asks.map((a) => a.q));
+  return (
+    <div className="axt-bpanel">
+      <div className="axt-bph">ORDER BOOK <span>{crypto ? "live" : "sim"}</span></div>
+      <div className="axt-ob">
+        <div className="axt-ob-h"><span>SIZE</span><span className="r">BID</span><span className="r">ASK</span><span className="r">SIZE</span></div>
+        {book.bids.slice(0, 9).map((b, i) => { const a = book.asks[i] || { p: 0, q: 0 }; return (
+          <div key={i} className="axt-ob-row">
+            <span className="axt-ob-sz"><span className="axt-ob-bar bid" style={{ width: `${(b.q / maxQ) * 100}%` }} />{Math.round(b.q).toLocaleString()}</span>
+            <span className="r axt-ob-bid">{num(b.p)}</span>
+            <span className="r axt-ob-ask">{num(a.p)}</span>
+            <span className="axt-ob-sz r"><span className="axt-ob-bar ask" style={{ width: `${(a.q / maxQ) * 100}%` }} />{Math.round(a.q).toLocaleString()}</span>
           </div>
-        );
-      })}
+        ); })}
+      </div>
     </div>
   );
 }
-
-function stat(label: string, value: string, color: string, sub?: string) {
+function OrderFlow({ symbol, micro }: { symbol: string; micro: ReturnType<typeof useMicro> }) {
+  const crypto = isCrypto(symbol);
+  const trades = crypto ? micro.trades : simTrades(100, symbol);
+  // bucket into cumulative delta
+  const buckets: { buy: number; sell: number }[] = [];
+  let bagBuy = 0, bagSell = 0, cnt = 0;
+  for (const t of trades) { if (t.side === "buy") bagBuy += t.q; else bagSell += t.q; if (++cnt >= Math.max(1, Math.floor(trades.length / 8))) { buckets.push({ buy: bagBuy, sell: bagSell }); bagBuy = 0; bagSell = 0; cnt = 0; } }
+  let cum = 0;
   return (
-    <div className="axlm-stat">
-      <div className="axlm-s-l">{label}</div>
-      <div className="axlm-s-v" style={{ color }}>{value}</div>
-      {sub ? <div className="axlm-s-s" style={{ color }}>{sub}</div> : null}
+    <div className="axt-bpanel">
+      <div className="axt-bph">ORDER FLOW <span>Δ delta</span></div>
+      <div className="axt-of">
+        <div className="axt-of-h"><span>DELTA</span><span className="r">CUM</span><span className="r">BUY%</span></div>
+        {buckets.slice(-8).map((b, i) => { const d = b.buy - b.sell; cum += d; const tot = b.buy + b.sell || 1; const bp = (b.buy / tot) * 100; return (
+          <div key={i} className="axt-of-row"><span style={{ color: d >= 0 ? POS : NEG }}>{d >= 0 ? "+" : ""}{compact(d)}</span><span className="r" style={{ color: cum >= 0 ? POS : NEG }}>{compact(cum)}</span><span className="r"><span className="axt-of-bar"><span style={{ width: `${bp}%`, background: POS }} /><span style={{ width: `${100 - bp}%`, background: NEG }} /></span>{bp.toFixed(0)}%</span></div>
+        ); })}
+        {buckets.length === 0 && <div className="axt-empty-mini">Flow warming up…</div>}
+      </div>
+    </div>
+  );
+}
+function Correlations({ live, symbol, onPick }: { live: ReturnType<typeof useApexLive>; symbol: string; onPick: (s: string) => void }) {
+  const corr = live.correlation;
+  const rows = useMemo(() => {
+    if (!corr?.symbols?.length) return [];
+    const tk = isCrypto(symbol) ? symbol.replace("USDT", "") : symbol;
+    let idx = corr.symbols.indexOf(tk); if (idx < 0) idx = 0;
+    return corr.symbols.map((s, j) => ({ sym: s, v: corr.matrix?.[idx]?.[j] ?? null })).filter((r) => r.sym !== corr.symbols[idx]).sort((a, b) => Math.abs(b.v ?? 0) - Math.abs(a.v ?? 0)).slice(0, 7);
+  }, [corr, symbol]);
+  return (
+    <div className="axt-bpanel">
+      <div className="axt-bph">CORRELATIONS <span>30D</span></div>
+      <div className="axt-corr">
+        {rows.length === 0 ? <div className="axt-empty-mini">Correlation matrix loading…</div> : rows.map((r) => (
+          <div key={r.sym} className="axt-corr-row" onClick={() => onPick(r.sym)}><b>{r.sym}</b><div className="axt-corr-track"><div className="axt-corr-fill" style={{ width: `${Math.abs(r.v ?? 0) * 100}%`, marginLeft: (r.v ?? 0) < 0 ? `${(1 - Math.abs(r.v ?? 0)) * 100}%` : 0, background: (r.v ?? 0) >= 0 ? CY : WARN }} /></div><span style={{ color: (r.v ?? 0) >= 0 ? CY : WARN }}>{r.v != null ? r.v.toFixed(2) : "—"}</span></div>
+        ))}
+      </div>
+    </div>
+  );
+}
+function OptionsSnapshot({ snap, symbol }: { snap: ReturnType<typeof optionsFromVol>; symbol: string }) {
+  return (
+    <div className="axt-bpanel">
+      <div className="axt-bph">OPTIONS SNAPSHOT <span>IV est · realized</span></div>
+      <div className="axt-opt">
+        <div className="axt-opt-kpis">
+          {ok("IV30 (est)", snap.iv30 != null ? `${snap.iv30.toFixed(1)}%` : "—", CY)}
+          {ok("HV20", snap.hv20 != null ? `${snap.hv20.toFixed(1)}%` : "—", "var(--ax-tx)")}
+          {ok("IV RANK", snap.ivRank != null ? `${snap.ivRank.toFixed(0)}` : "—", snap.ivRank != null && snap.ivRank > 60 ? WARN : POS)}
+        </div>
+        <div className="axt-opt-h"><span>EXPIRY</span><span className="r">IV (est)</span><span className="r">CONE</span></div>
+        {snap.expiries.map((e) => (
+          <div key={e.label} className="axt-opt-row"><span>{e.label}</span><span className="r">{e.iv.toFixed(1)}%</span><span className="r"><span className="axt-opt-bar" style={{ width: `${Math.min(100, e.iv)}%` }} /></span></div>
+        ))}
+        {snap.expiries.length === 0 && <div className="axt-empty-mini">Need more history for vol.</div>}
+      </div>
+    </div>
+  );
+}
+function ok(l: string, v: string, c: string) { return <div className="axt-optk"><span>{l}</span><b style={{ color: c }}>{v}</b></div>; }
+function ScannerHits({ live, onPick }: { live: ReturnType<typeof useApexLive>; onPick: (s: string) => void }) {
+  const anom = live.anomalies?.items || [];
+  const movers = [...(live.movers?.stocks?.gainers || []).slice(0, 3), ...(live.movers?.stocks?.losers || []).slice(0, 2)];
+  const hits = anom.length ? anom.slice(0, 8).map((a) => ({ tk: a.sym, label: a.z >= 0 ? "Unusual Upside" : "Unusual Downside", v: `${a.sigma.toFixed(1)}σ`, up: a.z >= 0 })) : movers.map((m) => ({ tk: m.ticker, label: (m.changePct ?? 0) >= 0 ? "Top Gainer" : "Top Loser", v: pct(m.changePct), up: (m.changePct ?? 0) >= 0 }));
+  return (
+    <div className="axt-bpanel">
+      <div className="axt-bph">SCANNER HITS & ALERTS <span>unusual</span></div>
+      <div className="axt-scan">
+        {hits.length === 0 ? <div className="axt-empty-mini">Scanner loading…</div> : hits.map((h, i) => (
+          <div key={i} className="axt-scan-row" onClick={() => onPick(h.tk)}><b>{h.tk}</b><span className="axt-scan-l">{h.label}</span><span style={{ color: h.up ? POS : NEG }}>{h.v}</span><span className="axt-scan-dot" style={{ background: h.up ? POS : NEG }} /></div>
+        ))}
+      </div>
     </div>
   );
 }
 
-const LM_CSS = `
-.ax-lm { height:100%; display:flex; flex-direction:column; gap:13px; padding:2px 2px 8px; font-family:var(--ax-sans); color:var(--ax-tx); min-height:0; }
-.axlm-head { display:flex; align-items:baseline; gap:12px; }
-.axlm-title { font-family:var(--ax-disp); font-size:15px; font-weight:800; letter-spacing:.12em; color:var(--ax-acc); }
-.axlm-sub { font-size:11px; color:var(--ax-mut); }
-.axlm-live { margin-left:auto; display:flex; align-items:center; gap:7px; font-size:10.5px; font-weight:700; letter-spacing:.06em; color:var(--ax-mut); padding:4px 11px; border:1px solid var(--ax-bd); border-radius:20px; background:var(--ax-panel); }
-.axlm-live em { font-style:normal; font-family:var(--ax-mono); font-weight:500; color:var(--ax-dim); }
-.axlm-dot { width:7px; height:7px; border-radius:50%; background:var(--ax-neg); }
-.axlm-dot.on { background:var(--ax-pos); box-shadow:0 0 7px var(--ax-posglow); animation:axlmPulse 2s infinite; }
-@keyframes axlmPulse { 0%,100% { opacity:1 } 50% { opacity:.45 } }
-.axlm-body { flex:1; min-height:0; overflow-y:auto; display:flex; flex-direction:column; gap:13px; padding-right:4px; }
-.axlm-session { display:grid; grid-template-columns:repeat(auto-fit,minmax(210px,1fr)); gap:11px; }
-.axlm-card { background:var(--ax-panel); border:1px solid var(--ax-bd); border-radius:13px; padding:13px 15px; }
-.axlm-c-top { display:flex; justify-content:space-between; align-items:baseline; gap:8px; }
-.axlm-c-name { font-size:10.5px; font-weight:600; letter-spacing:.05em; color:var(--ax-mut); }
-.axlm-c-chg { font-family:var(--ax-mono); font-size:12px; font-weight:700; }
-.axlm-c-last { font-family:var(--ax-mono); font-size:22px; font-weight:800; margin:4px 0 10px; letter-spacing:.01em; }
-.axlm-c-track { position:relative; height:6px; border-radius:4px; background:var(--ax-surface); border:1px solid var(--ax-bdsoft); }
-.axlm-c-fill { position:absolute; left:0; top:0; bottom:0; border-radius:4px; }
-.axlm-c-prev { position:absolute; top:-3px; bottom:-3px; width:1px; background:rgba(150,190,225,.55); }
-.axlm-c-mark { position:absolute; top:50%; width:7px; height:7px; border-radius:50%; transform:translate(-50%,-50%); border:1.5px solid var(--ax-panel); }
-.axlm-c-ends { display:flex; justify-content:space-between; margin-top:5px; font-family:var(--ax-mono); font-size:8.5px; color:var(--ax-dim); }
-.axlm-c-meta { display:flex; gap:14px; margin-top:8px; font-size:9.5px; color:var(--ax-mut); }
-.axlm-c-meta b { font-family:var(--ax-mono); font-weight:600; color:var(--ax-tx); }
-.axlm-grid { display:grid; grid-template-columns:1.35fr 1fr; gap:13px; }
-.axlm-panel { background:var(--ax-panel); border:1px solid var(--ax-bd); border-radius:13px; padding:13px 15px; min-width:0; }
-.axlm-ph { font-size:9.5px; font-weight:700; letter-spacing:.1em; color:var(--ax-cydim); margin-bottom:11px; display:flex; justify-content:space-between; align-items:baseline; gap:8px; }
-.axlm-ph > span:last-child { font-weight:500; letter-spacing:.02em; color:var(--ax-dim); text-transform:none; }
-.axlm-tabs { display:flex; gap:12px; }
-.axlm-tabs button { background:none; border:none; padding:0; font-size:9.5px; font-weight:700; letter-spacing:.1em; color:var(--ax-dim); cursor:pointer; font-family:var(--ax-sans); }
-.axlm-tabs button.on { color:var(--ax-cydim); }
-.axlm-movers { display:grid; grid-template-columns:1fr 1fr; gap:16px; }
-.axlm-mc-h { font-size:9px; font-weight:700; letter-spacing:.08em; margin-bottom:6px; }
-.axlm-mrow2 { display:grid; grid-template-columns:1fr .9fr .8fr auto; gap:6px; align-items:center; padding:5px 0; border-bottom:1px solid var(--ax-hair); font-size:11.5px; }
-.axlm-mt { font-family:var(--ax-mono); font-weight:700; color:var(--ax-tx); overflow:hidden; text-overflow:ellipsis; }
-.axlm-mp, .axlm-mc { font-family:var(--ax-mono); text-align:right; color:var(--ax-mut); }
-.axlm-mc { font-weight:600; }
-.axlm-mr { font-size:8px; font-weight:700; padding:1px 5px; border-radius:4px; letter-spacing:.04em; }
-.axlm-mr.buy { color:${POS}; border:1px solid color-mix(in srgb, ${POS} 40%, transparent); }
-.axlm-mr.sell { color:${NEG}; border:1px solid color-mix(in srgb, ${NEG} 40%, transparent); }
-.axlm-mr.hold, .axlm-mr.neutral { color:${WARN}; border:1px solid color-mix(in srgb, ${WARN} 40%, transparent); }
-.axlm-crypto { display:grid; grid-template-columns:1fr 1fr; gap:9px; margin-bottom:10px; }
-.axlm-cq { background:var(--ax-elev); border:1px solid var(--ax-bdsoft); border-radius:9px; padding:9px 11px; display:flex; flex-direction:column; gap:2px; }
-.axlm-cq-l { font-size:8.5px; letter-spacing:.08em; color:var(--ax-dim); }
-.axlm-cq-p { font-family:var(--ax-mono); font-size:14px; font-weight:700; color:var(--ax-tx); }
-.axlm-cq-c { font-family:var(--ax-mono); font-size:10px; }
-.axlm-cstats { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
-.axlm-stat { background:var(--ax-surface); border:1px solid var(--ax-bdsoft); border-radius:8px; padding:8px 10px; }
-.axlm-s-l { font-size:8px; letter-spacing:.08em; color:var(--ax-dim); margin-bottom:3px; }
-.axlm-s-v { font-family:var(--ax-mono); font-size:12.5px; font-weight:700; }
-.axlm-s-s { font-family:var(--ax-mono); font-size:9px; margin-top:1px; }
-.axlm-macro, .axlm-yields { display:flex; flex-direction:column; }
-.axlm-mrow { display:grid; grid-template-columns:1fr auto auto; gap:10px; align-items:baseline; padding:7px 0; border-bottom:1px solid var(--ax-hair); font-size:12px; }
-.axlm-m-l { color:var(--ax-mut); }
-.axlm-m-v { font-family:var(--ax-mono); font-weight:700; color:var(--ax-tx); }
-.axlm-m-d { font-family:var(--ax-mono); font-size:9px; }
-.axlm-yrow { display:grid; grid-template-columns:1fr 1.1fr auto; gap:10px; align-items:center; padding:6px 0; border-bottom:1px solid var(--ax-hair); font-size:11.5px; }
-.axlm-y-l { color:var(--ax-mut); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-.axlm-y-bar { height:5px; border-radius:3px; background:var(--ax-surface); border:1px solid var(--ax-bdsoft); overflow:hidden; }
-.axlm-y-fill { height:100%; background:${CY}; border-radius:3px; }
-.axlm-y-v { font-family:var(--ax-mono); font-weight:600; color:var(--ax-tx); }
-.axlm-empty { color:var(--ax-mut); font-size:12px; padding:22px 4px; grid-column:1/-1; }
-.axlm-empty-mini { color:var(--ax-dim); font-size:11px; padding:10px 2px; }
-.axlm-foot { font-size:9px; color:var(--ax-dim); }
-@media (max-width:900px) { .axlm-grid { grid-template-columns:1fr; } }
+/* ═══════════════ Status strip ═══════════════ */
+function StatusStrip({ live }: { live: ReturnType<typeof useApexLive> }) {
+  const idx = live.indices || [];
+  const y10 = (live.yields || []).find((y) => /10\s*yr|10-year|10 yr/i.test(y.security)) || (live.yields || [])[4];
+  const btc = live.crypto?.BTCUSDT, eth = live.crypto?.ETHUSDT;
+  const items = [
+    ...idx.slice(0, 4).map((i) => ({ l: i.name || i.ticker, v: num(i.last), c: i.changePct })),
+    ...(y10 ? [{ l: "10Y YIELD", v: `${y10.rate?.toFixed(2)}%`, c: null as number | null }] : []),
+    ...(btc ? [{ l: "BTC", v: num(btc.last), c: btc.changePct }] : []),
+    ...(eth ? [{ l: "ETH", v: num(eth.last), c: eth.changePct }] : []),
+  ];
+  return (
+    <div className="axt-status">
+      <span className="axt-st-live"><span className={`axt-st-dot${live.live ? " on" : ""}`} />{live.live ? "CONNECTED" : "CONNECTING"}</span>
+      <span className="axt-st-feed">DATA FEED: <b>{live.live ? "REAL-TIME" : "…"}</b></span>
+      <div className="axt-st-items">
+        {items.map((it, i) => <span key={i} className="axt-st-item"><em>{it.l}</em> <b>{it.v}</b>{it.c != null && <span style={{ color: col(it.c) }}>{pct(it.c)}</span>}</span>)}
+      </div>
+      <span className="axt-st-time">{new Date(live.updated || Date.now()).toLocaleTimeString([], { hour12: false })} · UTC{-new Date().getTimezoneOffset() / 60}</span>
+    </div>
+  );
+}
+
+const TERM_CSS = `
+.ax-term { position:absolute; inset:0; display:flex; flex-direction:column; gap:8px; padding:2px; font-family:var(--ax-sans); color:var(--ax-tx); overflow:hidden; }
+.ax-term button { font-family:var(--ax-sans); cursor:pointer; }
+.ax-term .r { text-align:right; }
+.ax-term .dim { color:var(--ax-mut); }
+
+/* Toolbar */
+.axt-toolbar { display:flex; align-items:center; gap:12px; flex-shrink:0; }
+.axt-search { position:relative; display:flex; align-items:center; flex:0 0 300px; background:var(--ax-surface); border:1px solid var(--ax-bd); border-radius:9px; padding:0 10px; height:34px; }
+.axt-search:focus-within { border-color:var(--ax-bdglow); }
+.axt-mag { color:var(--ax-mut); font-size:15px; }
+.axt-search input { flex:1; background:none; border:none; outline:none; color:var(--ax-tx); font-size:12px; padding:0 8px; font-family:var(--ax-sans); }
+.axt-search kbd { font-size:9px; color:var(--ax-dim); border:1px solid var(--ax-bdsoft); border-radius:4px; padding:1px 5px; }
+.axt-popular { display:flex; align-items:center; gap:6px; }
+.axt-pop-l { font-size:8.5px; letter-spacing:.1em; color:var(--ax-dim); font-weight:700; }
+.axt-chip { background:var(--ax-elev); border:1px solid var(--ax-bdsoft); color:var(--ax-mut); border-radius:6px; padding:5px 10px; font-size:11px; font-weight:700; font-family:var(--ax-mono); }
+.axt-chip.on, .axt-chip:hover { border-color:var(--ax-bdglow); color:var(--ax-acc); background:var(--ax-panelhi); }
+.axt-actions { margin-left:auto; display:flex; gap:7px; }
+.axt-act { background:var(--ax-surface); border:1px solid var(--ax-bdsoft); color:var(--ax-mut); border-radius:8px; padding:7px 12px; font-size:11px; font-weight:600; }
+.axt-act:hover { border-color:var(--ax-bdglow); color:var(--ax-tx); }
+.axt-act.primary { background:color-mix(in srgb, ${CY} 16%, transparent); border-color:color-mix(in srgb, ${CY} 45%, transparent); color:${CY}; }
+
+/* Main grid */
+.axt-main { flex:1; min-height:0; display:grid; grid-template-columns:236px 1fr 268px; gap:8px; }
+.axt-left, .axt-center, .axt-right { min-height:0; display:flex; flex-direction:column; gap:8px; }
+.axt-left { background:var(--ax-panel); border:1px solid var(--ax-bd); border-radius:11px; padding:9px; overflow:hidden; }
+.axt-right { overflow-y:auto; padding-right:2px; }
+
+/* Left */
+.axt-lefttabs { display:flex; gap:4px; }
+.axt-lefttabs button { flex:1; background:var(--ax-surface); border:1px solid var(--ax-bdsoft); color:var(--ax-dim); border-radius:6px; padding:6px 4px; font-size:8.5px; font-weight:700; letter-spacing:.04em; }
+.axt-lefttabs button.on { border-color:var(--ax-bdglow); color:var(--ax-acc); background:var(--ax-panelhi); }
+.axt-watchcat { display:flex; gap:4px; flex-wrap:wrap; }
+.axt-watchcat button { background:none; border:none; color:var(--ax-dim); font-size:10px; font-weight:600; padding:3px 4px; border-bottom:1.5px solid transparent; }
+.axt-watchcat button.on { color:var(--ax-acc); border-bottom-color:var(--ax-acc); }
+.axt-watchhead { display:grid; grid-template-columns:1.5fr .8fr .7fr .6fr; gap:5px; font-size:7.5px; letter-spacing:.05em; color:var(--ax-dim); padding:5px 4px 3px; border-bottom:1px solid var(--ax-bdsoft); }
+.axt-watchlist { flex:1; overflow-y:auto; overflow-x:hidden; }
+.axt-wrow { display:grid; grid-template-columns:14px 1.5fr .8fr .7fr 46px; gap:5px; align-items:center; padding:5px 3px; border-bottom:1px solid var(--ax-hair); font-size:11px; }
+.axt-wrow:hover { background:color-mix(in srgb, var(--ax-acc) 6%, transparent); }
+.axt-wrow.on { background:color-mix(in srgb, ${CY} 10%, transparent); box-shadow:inset 2px 0 0 ${CY}; }
+.axt-wstar { font-size:11px; color:var(--ax-dim); text-align:center; }
+.axt-wrow.on .axt-wstar, .axt-wstar:hover { color:${WARN}; }
+.axt-wsym { display:flex; flex-direction:column; min-width:0; }
+.axt-wsym b { font-family:var(--ax-mono); font-size:11.5px; font-weight:700; }
+.axt-wsym em { font-style:normal; font-size:8px; color:var(--ax-dim); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.axt-wlast { font-family:var(--ax-mono); text-align:right; color:var(--ax-tx); font-size:10.5px; }
+.axt-wchg { font-family:var(--ax-mono); text-align:right; font-size:10px; font-weight:600; }
+.axt-spark { width:46px; height:18px; display:block; }
+.axt-screener, .axt-heat { flex:1; overflow-y:auto; }
+.axt-scr-h { font-size:8.5px; font-weight:700; letter-spacing:.06em; padding:4px 2px; }
+.axt-scr-row { display:grid; grid-template-columns:1fr .8fr .7fr; gap:6px; padding:5px 3px; border-bottom:1px solid var(--ax-hair); font-size:11px; font-family:var(--ax-mono); }
+.axt-scr-row:hover { background:color-mix(in srgb, var(--ax-acc) 6%, transparent); }
+.axt-scr-row b { font-weight:700; } .axt-scr-row span { text-align:right; }
+.axt-heat { display:grid; grid-template-columns:1fr 1fr; gap:5px; align-content:start; }
+.axt-heatcell { border-radius:7px; padding:9px 8px; display:flex; flex-direction:column; gap:1px; border:1px solid var(--ax-hair); }
+.axt-heatcell b { font-family:var(--ax-mono); font-size:12px; } .axt-heatcell span { font-family:var(--ax-mono); font-size:11px; font-weight:700; } .axt-heatcell em { font-style:normal; font-size:7.5px; color:var(--ax-mut); }
+
+/* Center */
+.axt-center { min-width:0; }
+.axt-symhead { background:var(--ax-panel); border:1px solid var(--ax-bd); border-radius:11px; padding:10px 13px; display:flex; align-items:center; gap:18px; flex-shrink:0; }
+.axt-sh-id { display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
+.axt-sh-tk { font-family:var(--ax-disp); font-size:20px; font-weight:800; letter-spacing:.02em; }
+.axt-sh-star { color:${WARN}; font-size:13px; }
+.axt-sh-price { display:flex; align-items:baseline; gap:8px; }
+.axt-sh-last { font-family:var(--ax-mono); font-size:22px; font-weight:800; }
+.axt-sh-chg { font-family:var(--ax-mono); font-size:12px; font-weight:600; }
+.axt-sh-name { font-size:11px; color:var(--ax-mut); }
+.axt-sh-mkt { font-size:9px; color:var(--ax-dim); letter-spacing:.03em; }
+.axt-sh-open { font-style:normal; color:${POS}; }
+.axt-sh-stats { margin-left:auto; display:grid; grid-template-columns:repeat(8,auto); gap:14px; }
+.axt-shs { display:flex; flex-direction:column; gap:2px; }
+.axt-shs span { font-size:7.5px; letter-spacing:.05em; color:var(--ax-dim); }
+.axt-shs b { font-family:var(--ax-mono); font-size:12px; font-weight:700; }
+
+.axt-chartbar { display:flex; align-items:center; gap:10px; background:var(--ax-panel); border:1px solid var(--ax-bd); border-radius:9px; padding:5px 9px; flex-shrink:0; }
+.axt-tfs, .axt-indtoggles { display:flex; gap:2px; }
+.axt-tfs button, .axt-indtoggles button { background:none; border:1px solid transparent; color:var(--ax-dim); border-radius:5px; padding:4px 7px; font-size:10px; font-weight:700; font-family:var(--ax-mono); }
+.axt-tfs button.on { color:var(--ax-acc); background:var(--ax-panelhi); border-color:var(--ax-bdglow); }
+.axt-indtoggles { margin-left:6px; padding-left:8px; border-left:1px solid var(--ax-bdsoft); }
+.axt-indtoggles button.on { color:${CY}; border-color:color-mix(in srgb, ${CY} 40%, transparent); background:color-mix(in srgb, ${CY} 10%, transparent); }
+.axt-chartbar-r { margin-left:auto; display:flex; align-items:center; gap:6px; }
+.axt-stratsel { background:var(--ax-surface); border:1px solid var(--ax-bdsoft); color:var(--ax-tx); border-radius:6px; padding:5px 7px; font-size:10.5px; font-family:var(--ax-sans); outline:none; }
+.axt-replay { background:color-mix(in srgb, ${PUR} 14%, transparent); border:1px solid color-mix(in srgb, ${PUR} 45%, transparent); color:${PUR}; border-radius:7px; padding:6px 12px; font-size:11px; font-weight:700; }
+.axt-replay.on { background:${PUR}; color:#120a24; }
+
+.axt-chartzone { flex:1; min-height:0; display:flex; gap:6px; background:var(--ax-panel); border:1px solid var(--ax-bd); border-radius:11px; padding:8px; }
+.axt-drawtools { display:flex; flex-direction:column; gap:3px; }
+.axt-drawtools button { width:26px; height:26px; background:var(--ax-surface); border:1px solid var(--ax-bdsoft); color:var(--ax-mut); border-radius:6px; font-size:12px; display:flex; align-items:center; justify-content:center; }
+.axt-drawtools button:hover { border-color:var(--ax-bdglow); color:var(--ax-acc); }
+.axt-chartcanvas { flex:1; min-width:0; position:relative; }
+.axt-chart-empty { position:absolute; inset:0; display:flex; align-items:center; justify-content:center; color:var(--ax-mut); font-size:12px; }
+
+/* Replay HUD */
+.axt-hud { position:absolute; top:8px; left:8px; width:250px; background:color-mix(in srgb, var(--ax-panel) 92%, #000); border:1px solid color-mix(in srgb, ${PUR} 40%, transparent); border-radius:10px; padding:10px; backdrop-filter:blur(6px); box-shadow:0 8px 30px rgba(0,0,0,.5); }
+.axt-hud-top { display:flex; justify-content:space-between; align-items:baseline; margin-bottom:7px; }
+.axt-hud-tag { font-size:9px; font-weight:800; letter-spacing:.08em; color:${PUR}; }
+.axt-hud-strat { font-size:9px; color:var(--ax-mut); }
+.axt-hud-bar { height:4px; background:var(--ax-surface); border-radius:3px; overflow:hidden; margin-bottom:9px; }
+.axt-hud-fill { height:100%; background:linear-gradient(90deg,${PUR},${CY}); transition:width .1s linear; }
+.axt-hud-stats { display:grid; grid-template-columns:repeat(5,1fr); gap:5px; margin-bottom:8px; }
+.axt-hudk { display:flex; flex-direction:column; gap:1px; }
+.axt-hudk span { font-size:6.5px; letter-spacing:.04em; color:var(--ax-dim); }
+.axt-hudk b { font-family:var(--ax-mono); font-size:11px; }
+.axt-hud-speed { display:flex; align-items:center; gap:4px; }
+.axt-hud-speed span { font-size:7.5px; color:var(--ax-dim); letter-spacing:.06em; }
+.axt-hud-speed button { background:var(--ax-surface); border:1px solid var(--ax-bdsoft); color:var(--ax-mut); border-radius:4px; padding:3px 7px; font-size:9px; font-family:var(--ax-mono); font-weight:700; }
+.axt-hud-speed button.on { border-color:${PUR}; color:${PUR}; }
+
+/* Right panels */
+.axt-panel { background:var(--ax-panel); border:1px solid var(--ax-bd); border-radius:11px; padding:10px 12px; flex-shrink:0; }
+.axt-ph { font-size:9px; font-weight:700; letter-spacing:.1em; color:var(--ax-cydim); margin-bottom:9px; display:flex; align-items:center; justify-content:space-between; }
+.axt-stats { display:grid; grid-template-columns:1fr 1fr; gap:3px 14px; }
+.axt-statrow { display:flex; justify-content:space-between; align-items:baseline; padding:3px 0; border-bottom:1px solid var(--ax-hair); font-size:10.5px; }
+.axt-statrow span { color:var(--ax-mut); } .axt-statrow b { font-family:var(--ax-mono); font-weight:600; }
+.axt-ai-badge { font-size:9px; font-weight:800; letter-spacing:.06em; border:1px solid; border-radius:5px; padding:2px 7px; }
+.axt-ai-conf { display:flex; align-items:center; gap:8px; margin-bottom:9px; }
+.axt-ai-conf span { font-size:8px; letter-spacing:.06em; color:var(--ax-dim); }
+.axt-ai-bar { flex:1; height:6px; background:var(--ax-surface); border-radius:4px; overflow:hidden; }
+.axt-ai-bar div { height:100%; border-radius:4px; }
+.axt-ai-conf b { font-family:var(--ax-mono); font-size:12px; }
+.axt-ai-sec { font-size:8.5px; font-weight:700; letter-spacing:.05em; color:var(--ax-mut); margin:8px 0 4px; }
+.axt-ai-txt { font-size:11px; line-height:1.5; color:var(--ax-tx); margin:0; }
+.axt-ai-txt.dim { color:var(--ax-mut); font-size:10px; }
+.axt-ai-sigs { display:flex; flex-direction:column; gap:3px; }
+.axt-sig { font-size:9.5px; color:var(--ax-mut); font-family:var(--ax-mono); }
+.axt-sig.on { color:${POS}; }
+.axt-ai-foot { font-size:8px; color:var(--ax-dim); margin-top:8px; line-height:1.4; }
+.axt-gauges { display:grid; grid-template-columns:1fr 1fr 1fr; gap:6px; }
+.axt-gauge { display:flex; flex-direction:column; align-items:center; }
+.axt-gsvg { width:100%; height:38px; }
+.axt-gval { font-family:var(--ax-mono); font-size:16px; font-weight:800; margin-top:-8px; }
+.axt-glbl { font-size:7.5px; letter-spacing:.05em; color:var(--ax-dim); margin-top:2px; }
+.axt-levels { display:flex; flex-direction:column; gap:2px; }
+.axt-lvl { display:grid; grid-template-columns:8px 1fr auto; gap:8px; align-items:center; padding:4px 0; border-bottom:1px solid var(--ax-hair); font-size:11px; }
+.axt-lvl-dot { width:6px; height:6px; border-radius:50%; }
+.axt-lvl-l { color:var(--ax-mut); } .axt-lvl b { font-family:var(--ax-mono); font-weight:600; }
+.axt-news .axt-newsrow { display:block; font-size:10.5px; line-height:1.4; color:var(--ax-tx); padding:6px 0; border-bottom:1px solid var(--ax-hair); position:relative; padding-left:12px; }
+.axt-news-dot { position:absolute; left:0; top:9px; width:5px; height:5px; border-radius:50%; background:${CY}; }
+.axt-newsrow em { display:block; font-style:normal; font-size:8.5px; color:var(--ax-dim); margin-top:2px; }
+
+/* Bottom */
+.axt-bottom { flex-shrink:0; height:186px; display:grid; grid-template-columns:repeat(6,1fr); gap:8px; }
+.axt-bpanel { background:var(--ax-panel); border:1px solid var(--ax-bd); border-radius:10px; padding:8px 10px; min-width:0; display:flex; flex-direction:column; overflow:hidden; }
+.axt-bph { font-size:8.5px; font-weight:700; letter-spacing:.08em; color:var(--ax-cydim); margin-bottom:6px; display:flex; justify-content:space-between; align-items:baseline; }
+.axt-bph span { font-weight:500; color:var(--ax-dim); letter-spacing:.02em; }
+.axt-ts, .axt-ob, .axt-of, .axt-corr, .axt-opt, .axt-scan { flex:1; overflow-y:auto; font-family:var(--ax-mono); font-size:9.5px; }
+.axt-ts-h, .axt-ob-h, .axt-of-h, .axt-opt-h { display:grid; font-size:7px; letter-spacing:.04em; color:var(--ax-dim); padding-bottom:3px; border-bottom:1px solid var(--ax-bdsoft); margin-bottom:2px; position:sticky; top:0; background:var(--ax-panel); }
+.axt-ts-h { grid-template-columns:1.1fr .9fr .8fr .4fr; }
+.axt-ts-row { display:grid; grid-template-columns:1.1fr .9fr .8fr .4fr; gap:3px; padding:2.5px 0; border-bottom:1px solid var(--ax-hair); }
+.axt-ob-h, .axt-ob-row { grid-template-columns:1fr .9fr .9fr 1fr; }
+.axt-ob-row { display:grid; gap:3px; padding:2.5px 0; align-items:center; }
+.axt-ob-sz { position:relative; overflow:hidden; padding:0 3px; z-index:0; }
+.axt-ob-bar { position:absolute; top:0; bottom:0; right:0; z-index:-1; border-radius:2px; }
+.axt-ob-bar.bid { left:0; right:auto; background:color-mix(in srgb, ${POS} 22%, transparent); }
+.axt-ob-bar.ask { background:color-mix(in srgb, ${NEG} 22%, transparent); }
+.axt-ob-bid { color:${POS}; } .axt-ob-ask { color:${NEG}; }
+.axt-of-h, .axt-of-row { grid-template-columns:1fr 1fr 1.2fr; }
+.axt-of-row { display:grid; gap:4px; padding:3px 0; border-bottom:1px solid var(--ax-hair); align-items:center; }
+.axt-of-bar { display:inline-flex; width:34px; height:5px; border-radius:2px; overflow:hidden; margin-right:4px; vertical-align:middle; }
+.axt-of-bar span { display:block; height:100%; }
+.axt-corr-row { display:grid; grid-template-columns:.7fr 1.4fr .5fr; gap:6px; align-items:center; padding:3.5px 0; border-bottom:1px solid var(--ax-hair); }
+.axt-corr-row:hover { background:color-mix(in srgb, var(--ax-acc) 6%, transparent); }
+.axt-corr-track { height:5px; background:var(--ax-surface); border-radius:3px; overflow:hidden; }
+.axt-corr-fill { height:100%; border-radius:3px; }
+.axt-corr-row span { text-align:right; }
+.axt-opt-kpis { display:grid; grid-template-columns:1fr 1fr 1fr; gap:5px; margin-bottom:5px; }
+.axt-optk { background:var(--ax-surface); border-radius:5px; padding:4px 5px; display:flex; flex-direction:column; gap:1px; }
+.axt-optk span { font-size:6.5px; color:var(--ax-dim); letter-spacing:.03em; } .axt-optk b { font-size:11px; }
+.axt-opt-h, .axt-opt-row { grid-template-columns:1fr 1fr 1.1fr; }
+.axt-opt-row { display:grid; gap:4px; padding:3px 0; border-bottom:1px solid var(--ax-hair); align-items:center; }
+.axt-opt-bar { display:inline-block; height:5px; background:${CY}; border-radius:2px; }
+.axt-scan-row { display:grid; grid-template-columns:.7fr 1.3fr .6fr 8px; gap:5px; align-items:center; padding:3.5px 0; border-bottom:1px solid var(--ax-hair); }
+.axt-scan-row:hover { background:color-mix(in srgb, var(--ax-acc) 6%, transparent); }
+.axt-scan-l { color:var(--ax-mut); font-size:8.5px; font-family:var(--ax-sans); } .axt-scan-row span:nth-child(3) { text-align:right; }
+.axt-scan-dot { width:6px; height:6px; border-radius:50%; }
+.axt-empty-mini { color:var(--ax-dim); font-size:10px; padding:12px 2px; }
+
+/* Status */
+.axt-status { flex-shrink:0; height:26px; display:flex; align-items:center; gap:14px; background:var(--ax-panel); border:1px solid var(--ax-bd); border-radius:8px; padding:0 12px; font-size:10px; overflow:hidden; }
+.axt-st-live { display:flex; align-items:center; gap:6px; font-weight:700; letter-spacing:.05em; color:var(--ax-mut); font-size:9px; }
+.axt-st-dot { width:6px; height:6px; border-radius:50%; background:var(--ax-neg); }
+.axt-st-dot.on { background:${POS}; box-shadow:0 0 6px ${POS}; animation:axtPulse 2s infinite; }
+@keyframes axtPulse { 0%,100%{opacity:1} 50%{opacity:.4} }
+.axt-st-feed { font-size:9px; color:var(--ax-dim); } .axt-st-feed b { color:${POS}; font-family:var(--ax-mono); }
+.axt-st-items { display:flex; gap:16px; flex:1; overflow:hidden; }
+.axt-st-item { display:flex; gap:5px; align-items:baseline; white-space:nowrap; font-family:var(--ax-mono); }
+.axt-st-item em { font-style:normal; color:var(--ax-dim); font-size:9px; } .axt-st-item b { color:var(--ax-tx); }
+.axt-st-time { margin-left:auto; font-family:var(--ax-mono); font-size:9px; color:var(--ax-dim); }
+
+.axt-toast { position:absolute; bottom:40px; left:50%; transform:translateX(-50%); background:color-mix(in srgb, var(--ax-panel) 95%, #000); border:1px solid var(--ax-bdglow); color:var(--ax-tx); border-radius:9px; padding:9px 16px; font-size:12px; z-index:50; box-shadow:0 10px 34px rgba(0,0,0,.5); }
+
+@media (max-width:1400px) { .axt-main { grid-template-columns:210px 1fr 240px; } .axt-bottom { grid-template-columns:repeat(3,1fr); height:auto; } }
 `;
