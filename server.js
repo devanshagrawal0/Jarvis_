@@ -44,6 +44,12 @@ const helixPipeline = require("./server/helix-pipeline");
 const { createApexDb } = require("./server/apex-db");
 const { createApexIngest } = require("./server/apex-ingest");
 const { loadEnvFile } = require("./server/providers/apex/env-loader");
+// APEX native quant engine — replaces the Vibe-Trading Python sidecar (no more 8899). Fully in-process.
+const { createVibeNativeEngine } = require("./server/apex/quant/vibe-native");
+const { yahooChart: apexYahooChart } = require("./server/providers/apex/adapters");
+const { createApexPaper } = require("./server/apex/apex-paper");
+const { createApexBots } = require("./server/apex/apex-bots");
+let apexEngine = null, apexPaper = null, apexBots = null;
 const APEX_ENV = loadEnvFile(__dirname); // load .env keys into process.env before ingest init
 const { detectTabType, buildTabData, getProjectClassificationBias } = require("./server/helix-tab-classifier");
 const { PERSONALITY_VERSION, personalityInstruction, evaluatePersonality, polishPersonality } = require("./server/jarvis-personality");
@@ -6069,6 +6075,56 @@ async function handleApi(req, res, pathname, url) {
       if (req.method === "GET" && pathname === "/api/apex/nws") { sendJson(res, 200, { alerts: apexIngest.getNws() }); return; }
       if (req.method === "GET" && pathname === "/api/apex/sources") { sendJson(res, 200, { sources: apexIngest.listSources() }); return; }
       if (req.method === "GET" && pathname === "/api/apex/health/latest") { sendJson(res, 200, apexDb.latestHealthReport() || { report: [] }); return; }
+      // ── APEX ↔ native quant engine (NO SIDECAR — native Node port of Vibe-Trading) ──
+      if (pathname.startsWith("/api/apex/engine/")) {
+        if (!apexEngine) apexEngine = createVibeNativeEngine({
+          dataFetcher: async (symbol) => {
+            const sym = String(symbol || "SPY").toUpperCase();
+            const ysym = /^(BTC|ETH|SOL|BNB|XRP|ADA|DOGE|AVAX|LINK|DOT|MATIC|LTC)$/.test(sym) ? `${sym}-USD` : sym;
+            const y = await apexYahooChart(ysym, "2y", "1d");
+            return (y.bars || []).map((b) => ({ date: String(b.t).slice(0, 10), open: b.o, high: b.h, low: b.l, close: b.c, volume: b.v })).filter((b) => b.close != null);
+          },
+          callModel: async (prompt) => { const r = await callGemini({ prompt, mode: "chat", sessionId: "apex-engine", deviceId: "apex", source: "apex-engine", history: [] }); return (r && r.response) || ""; },
+        });
+        if (req.method === "GET" && pathname === "/api/apex/engine/health") { sendJson(res, 200, await apexEngine.health()); return; }
+        if (req.method === "GET" && pathname === "/api/apex/engine/alphas") { try { sendJson(res, 200, await apexEngine.get("/alpha/list")); } catch (e) { sendJson(res, 200, { error: e.message, connected: false, alphas: [] }); } return; }
+        const apexAlphaM = pathname.match(/^\/api\/apex\/engine\/alpha\/(.+)$/);
+        if (req.method === "GET" && apexAlphaM) { try { sendJson(res, 200, await apexEngine.get(`/alpha/${apexAlphaM[1]}`)); } catch (e) { sendJson(res, 200, { error: e.message }); } return; }
+        if (req.method === "POST" && pathname === "/api/apex/engine/backtest") { try { const b = await parseRequestData(req); sendJson(res, 200, await apexEngine.runBacktest(String((b && b.prompt) || ""), { pinnedCode: (b && b.pinnedCode) || null })); } catch (e) { sendJson(res, 200, { ok: false, error: e.message }); } return; }
+        if (req.method === "GET" && pathname === "/api/apex/engine/skills") { try { sendJson(res, 200, await apexEngine.get("/skills")); } catch (e) { sendJson(res, 200, { error: e.message, skills: [] }); } return; }
+      }
+
+      // ── APEX paper-trading desk (virtual, paper-only) — for the Paper Trading tab ──
+      if (pathname.startsWith("/api/apex/paper")) {
+        if (!apexPaper) apexPaper = createApexPaper(RUNTIME_DIR);
+        if (req.method === "GET" && pathname === "/api/apex/paper/account") { sendJson(res, 200, await apexPaper.account()); return; }
+        if (req.method === "GET" && pathname === "/api/apex/paper/orders") { sendJson(res, 200, apexPaper.orders()); return; }
+        if (req.method === "GET" && pathname === "/api/apex/paper/journal") { sendJson(res, 200, apexPaper.journal()); return; }
+        if (req.method === "GET" && pathname === "/api/apex/paper/equity") { sendJson(res, 200, apexPaper.equityCurve(Number(url.searchParams.get("limit")) || 300)); return; }
+        if (req.method === "POST" && pathname === "/api/apex/paper/order") { const b = await parseRequestData(req); sendJson(res, 200, await apexPaper.place(b || {})); return; }
+        if (req.method === "POST" && pathname === "/api/apex/paper/order/cancel") { const b = await parseRequestData(req); sendJson(res, 200, apexPaper.cancel((b || {}).orderId)); return; }
+        if (req.method === "POST" && pathname === "/api/apex/paper/reset") { sendJson(res, 200, apexPaper.reset()); return; }
+        sendJson(res, 404, { error: "Unknown paper route" }); return;
+      }
+
+      // ── APEX paper bots — rule strategies that trade ONLY into the paper desk — for the Bots tab ──
+      if (pathname.startsWith("/api/apex/bots")) {
+        if (!apexPaper) apexPaper = createApexPaper(RUNTIME_DIR);
+        if (!apexBots) apexBots = createApexBots({ runtimeDir: RUNTIME_DIR, paper: apexPaper });
+        if (req.method === "GET" && pathname === "/api/apex/bots") { sendJson(res, 200, await apexBots.list()); return; }
+        if (req.method === "GET" && pathname === "/api/apex/bots/events") { sendJson(res, 200, apexBots.events(url.searchParams.get("botId") || null, Number(url.searchParams.get("limit")) || 60)); return; }
+        if (req.method === "POST" && pathname === "/api/apex/bots") { const b = await parseRequestData(req); sendJson(res, 200, apexBots.create(b || {})); return; }
+        const apexBotM = pathname.match(/^\/api\/apex\/bots\/([^/]+)\/(start|pause|delete|evaluate)$/);
+        if (req.method === "POST" && apexBotM) {
+          const [, botId, action] = apexBotM;
+          if (action === "start") sendJson(res, 200, apexBots.setStatus(botId, "running"));
+          else if (action === "pause") sendJson(res, 200, apexBots.setStatus(botId, "paused"));
+          else if (action === "delete") sendJson(res, 200, apexBots.remove(botId));
+          else sendJson(res, 200, await apexBots.evaluateOnce(botId));
+          return;
+        }
+        sendJson(res, 404, { error: "Unknown bots route" }); return;
+      }
       // ── THE FORGE — strategy/bot library CRUD ──
       if (req.method === "GET" && pathname === "/api/apex/strategies") { sendJson(res, 200, { strategies: apexDb.listStrategies() }); return; }
       const stratM = pathname.match(/^\/api\/apex\/strategies\/([^/]+)$/);

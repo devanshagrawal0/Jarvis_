@@ -11,6 +11,16 @@ import { useHotkeys, HOTKEY_HELP } from "./useHotkeys";
 import { usePersonal, alertText, type AlertKind } from "./apex-personal";
 import { sfx, toggleMute, isMuted } from "./apex-sound";
 import { ForgeView } from "./forge/ForgeView";
+// The 9 tabs (ported from a collaborator's build), backed by our native APEX routes + engine.
+import { LiveMarketsView } from "./livemarkets/LiveMarketsView";
+import { PortfolioView } from "./portfolio/PortfolioView";
+import { PaperTradingView } from "./paper/PaperTradingView";
+import { BacktestView } from "./backtest/BacktestView";
+import { TradingBotsView } from "./bots/TradingBotsView";
+import { LiveTestingView } from "./livetest/LiveTestingView";
+import { NewsView } from "./news/NewsView";
+import { ScannerView } from "./scanner/ScannerView";
+import { RiskView } from "./risk/RiskView";
 import "./apex-home.css";
 
 /* small live-number component: monospaced value that flashes green/red on change */
@@ -1402,11 +1412,18 @@ export function ApexHome({ onExit }: Props) {
         </>
       ) : (
         activeTab === "Forge" ? <ForgeView onSound={sfx as (n: string) => void} /> :
+        activeTab === "Live Markets" ? <LiveMarketsView /> :
+        activeTab === "Portfolio" ? <PortfolioView /> :
+        activeTab === "Paper Trading" ? <PaperTradingView /> :
+        activeTab === "Backtesting" ? <BacktestView /> :
+        activeTab === "Trading Bots" ? <TradingBotsView /> :
+        activeTab === "Live Testing" ? <LiveTestingView /> :
+        activeTab === "News" ? <NewsView /> :
+        activeTab === "Scanner" ? <ScannerView /> :
+        activeTab === "Risk" ? <RiskView /> :
         <div className="grid" style={{ display: "block" }}><div className="tab-ph">
           <div className="tph-i">◲</div><div className="tph-t">{activeTab}</div>
-          <div className="tph-s">{activeTab === "Forge"
-            ? "The Forge — where you design trading strategies and assemble reusable bots from engineered building blocks: signals, entries, exits, sizing, and risk. Compose, backtest, then deploy to Paper Trading. Under construction — this is the next build."
-            : `This tab is on the roadmap — we're building APEX one tab at a time. Home is live now; ${activeTab} comes next.`}</div>
+          <div className="tph-s">This tab is on the roadmap.</div>
           <div className="tph-b" onClick={() => setActiveTab("Home")}>← Back to Home</div>
         </div></div>
       )}
