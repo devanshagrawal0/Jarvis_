@@ -53,6 +53,8 @@ export function ChartPro({ bars, up, indicators, replayActive, replaySpeed, repl
   const markersRef = useRef<ISeriesMarkersPluginApi<Time> | null>(null);
   const dataRef = useRef<Bar[]>([]);
   const replayTimer = useRef<number | null>(null);
+  const legendRef = useRef<HTMLDivElement | null>(null);
+  const lastVals = useRef<Record<string, number>>({});
 
   // ── Build the chart + all series ONCE ──
   useEffect(() => {
@@ -95,8 +97,33 @@ export function ChartPro({ bars, up, indicators, replayActive, replaySpeed, repl
     S.current.rsi.createPriceLine({ price: 70, color: "rgba(244,85,107,.5)", lineWidth: 1, lineStyle: LineStyle.Dashed, axisLabelVisible: true, title: "70" });
     S.current.rsi.createPriceLine({ price: 30, color: "rgba(38,194,129,.5)", lineWidth: 1, lineStyle: LineStyle.Dashed, axisLabelVisible: true, title: "30" });
 
+    // Crosshair-driven OHLC + indicator legend (the readout every pro chart has, top-left).
+    chart.subscribeCrosshairMove((param) => {
+      const cd = param.time ? (param.seriesData.get(candle) as { open: number; high: number; low: number; close: number } | undefined) : undefined;
+      const val = (k: string) => {
+        if (param.time) { const d = param.seriesData.get(S.current[k]) as { value?: number } | undefined; if (d && d.value != null) return d.value; }
+        return lastVals.current[k];
+      };
+      renderLegend(cd || { open: lastVals.current.o, high: lastVals.current.h, low: lastVals.current.l, close: lastVals.current.c }, val);
+    });
+
     return () => { if (replayTimer.current) clearInterval(replayTimer.current); chart.remove(); chartRef.current = null; S.current = {}; markersRef.current = null; };
   }, []);
+
+  // Paint the floating legend from an OHLC bar + an indicator-value accessor.
+  function renderLegend(bar: { open?: number; high?: number; low?: number; close?: number }, val: (k: string) => number | undefined) {
+    const el = legendRef.current; if (!el) return;
+    const f = (v?: number) => (v == null || !Number.isFinite(v) ? "—" : v.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }));
+    const up = (bar.close ?? 0) >= (bar.open ?? 0);
+    const chg = bar.open ? ((bar.close! - bar.open) / bar.open) * 100 : 0;
+    const cc = up ? COL.up : COL.down;
+    const ind = (label: string, k: string, color: string) => `<span class="axcp-li" style="color:${color}">${label} <b>${f(val(k))}</b></span>`;
+    el.innerHTML =
+      `<span class="axcp-ohlc"><span style="color:${COL.text}">O</span><b>${f(bar.open)}</b> <span style="color:${COL.text}">H</span><b>${f(bar.high)}</b> <span style="color:${COL.text}">L</span><b>${f(bar.low)}</b> <span style="color:${COL.text}">C</span><b style="color:${cc}">${f(bar.close)}</b> <b style="color:${cc}">${chg >= 0 ? "+" : ""}${chg.toFixed(2)}%</b></span>` +
+      (indicators.ema ? ind("EMA20", "ema20", COL.ema20) + ind("EMA50", "ema50", COL.ema50) + ind("EMA200", "ema200", COL.ema200) : "") +
+      (indicators.vwap ? ind("VWAP", "vwap", "#e6edf5") : "") +
+      (indicators.bb ? ind("BB", "bbM", COL.bbMid) : "");
+  }
 
   // ── Push data + indicators whenever bars change (and not mid-replay) ──
   useEffect(() => {
@@ -165,6 +192,14 @@ export function ChartPro({ bars, up, indicators, replayActive, replaySpeed, repl
       chartRef.current?.priceScale("eq").applyOptions({ visible: false });
       markersRef.current?.setMarkers([]);
     }
+
+    // Cache the latest bar's values so the legend has something to show when not hovering.
+    const li = n - 1; const lastFin = (arr: number[], from: number) => { for (let i = from; i >= 0; i--) if (Number.isFinite(arr[i])) return arr[i]; return NaN; };
+    const lb = all[li];
+    if (lb) {
+      lastVals.current = { o: lb.o, h: lb.h, l: lb.l, c: lb.c, ema20: lastFin(e20, li), ema50: lastFin(e50, li), ema200: lastFin(e200, li), vwap: lastFin(calcVwap(all), li), bbM: lastFin(bb.mid, li) };
+      renderLegend({ open: lb.o, high: lb.h, low: lb.l, close: lb.c }, (k) => lastVals.current[k]);
+    }
   }
 
   // ── Replay engine ──
@@ -193,5 +228,17 @@ export function ChartPro({ bars, up, indicators, replayActive, replaySpeed, repl
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [replayActive, replaySpeed, replayStrategy]);
 
-  return <div ref={wrapRef} className="axcp-wrap" style={{ position: "absolute", inset: 0 }} />;
+  return (
+    <div className="axcp-wrap" style={{ position: "absolute", inset: 0 }}>
+      <div ref={wrapRef} style={{ position: "absolute", inset: 0 }} />
+      <div ref={legendRef} className="axcp-legend" />
+      <style>{`
+        .axcp-legend { position:absolute; top:6px; left:10px; z-index:3; display:flex; flex-wrap:wrap; gap:10px; align-items:baseline; font-family:var(--ax-mono,ui-monospace); font-size:11px; pointer-events:none; text-shadow:0 1px 3px rgba(0,0,0,.9); }
+        .axcp-legend .axcp-ohlc { display:inline-flex; gap:5px; align-items:baseline; color:#93a7bd; }
+        .axcp-legend .axcp-ohlc b { color:#e6edf5; font-weight:600; }
+        .axcp-legend .axcp-li { font-size:10.5px; opacity:.95; }
+        .axcp-legend .axcp-li b { font-weight:600; }
+      `}</style>
+    </div>
+  );
 }

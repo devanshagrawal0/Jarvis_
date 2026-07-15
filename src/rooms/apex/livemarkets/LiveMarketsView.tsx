@@ -18,6 +18,8 @@ const POS = "#26c281", NEG = "#f4556b", CY = "#3fd0ff", WARN = "#f5a742", PUR = 
 
 const col = (n: number | null | undefined) => (n == null || n === 0) ? "var(--ax-tx)" : n > 0 ? POS : NEG;
 const pct = (n: number | null | undefined, dp = 2) => n == null || !Number.isFinite(n) ? "—" : `${n >= 0 ? "+" : ""}${n.toFixed(dp)}%`;
+// Redundant direction cue (arrow + sign) so gain/loss survives grayscale / colorblindness — never color alone.
+const pctA = (n: number | null | undefined, dp = 2) => n == null || !Number.isFinite(n) ? "—" : `${n >= 0 ? "▲" : "▼"} ${Math.abs(n).toFixed(dp)}%`;
 const num = (n: number | null | undefined, dp = 2) => n == null || !Number.isFinite(n) ? "—" : n.toLocaleString(undefined, { minimumFractionDigits: dp, maximumFractionDigits: dp });
 const compact = (n: number | null | undefined) => {
   if (n == null || !Number.isFinite(n)) return "—";
@@ -189,7 +191,9 @@ export function LiveMarketsView() {
               {bars.length > 1 ? (
                 <ChartPro bars={bars} up={up} indicators={ind} replayActive={replay} replaySpeed={replaySpeed} replayStrategy={replayStrat}
                   onReplayProgress={(p) => setReplayProg(p)} onReplayStats={setReplayStats} />
-              ) : <div className="axt-chart-empty">{barsLoading ? "Loading chart…" : "No chart data for this symbol/timeframe."}</div>}
+              ) : barsLoading ? (
+                <div className="axt-chart-skel"><div className="axt-skel-bars">{Array.from({ length: 40 }).map((_, i) => <span key={i} style={{ height: `${20 + (Math.sin(i * 1.3) * 0.5 + 0.5) * 60}%` }} />)}</div><div className="axt-skel-tag">Loading {symbol} · {tf}…</div></div>
+              ) : <div className="axt-chart-empty">No chart data for {symbol} at {tf}. Try another timeframe.</div>}
               {replay && <ReplayHUD prog={replayProg} stats={replayStats} strat={replayStrat} speed={replaySpeed} setSpeed={setReplaySpeed} />}
             </div>
           </div>
@@ -310,7 +314,7 @@ function WatchRow({ sym, active, onPick, fav, onFav }: { sym: string; active: bo
       <span className="axt-wstar" onClick={(e) => { e.stopPropagation(); onFav(); }}>{fav ? "★" : "☆"}</span>
       <div className="axt-wsym"><b>{isCrypto(sym) ? sym.replace("USDT", "") : sym}</b><em>{DISPLAY[sym] || NAMES[sym] || sym}</em></div>
       <span className="axt-wlast">{num(q?.last)}</span>
-      <span className="axt-wchg" style={{ color: col(chg) }}>{pct(chg)}</span>
+      <span className="axt-wchg" style={{ color: col(chg) }}>{pctA(chg)}</span>
       <Spark data={spark} up={(chg ?? 0) >= 0} />
     </div>
   );
@@ -652,7 +656,7 @@ function StatusStrip({ live }: { live: ReturnType<typeof useApexLive> }) {
       <span className="axt-st-live"><span className={`axt-st-dot${live.live ? " on" : ""}`} />{live.live ? "CONNECTED" : "CONNECTING"}</span>
       <span className="axt-st-feed">DATA FEED: <b>{live.live ? "REAL-TIME" : "…"}</b></span>
       <div className="axt-st-items">
-        {items.map((it, i) => <span key={i} className="axt-st-item"><em>{it.l}</em> <b>{it.v}</b>{it.c != null && <span style={{ color: col(it.c) }}>{pct(it.c)}</span>}</span>)}
+        {items.map((it, i) => <span key={i} className="axt-st-item"><em>{it.l}</em> <b>{it.v}</b>{it.c != null && <span style={{ color: col(it.c) }}>{pctA(it.c)}</span>}</span>)}
       </div>
       <span className="axt-st-time">{new Date(live.updated || Date.now()).toLocaleTimeString([], { hour12: false })} · UTC{-new Date().getTimezoneOffset() / 60}</span>
     </div>
@@ -661,9 +665,13 @@ function StatusStrip({ live }: { live: ReturnType<typeof useApexLive> }) {
 
 const TERM_CSS = `
 .ax-term { position:relative; flex:1 1 auto; min-height:0; display:flex; flex-direction:column; gap:7px; padding:8px; font-family:var(--ax-sans); color:var(--ax-tx); overflow:hidden;
-  background:#070b11;
-  /* solid, opaque terminal surfaces — override the room's translucent tokens so the 3D city can't bleed through */
-  --ax-panel:#0c121c; --ax-panelhi:#111a27; --ax-surface:#0a0f18; --ax-elev:#0e141f; --ax-bd:#1c2836; --ax-bdsoft:#161f2b; --ax-hair:rgba(120,160,200,.08); --ax-bdglow:#2a4257; }
+  background:#0b0f16; font-variant-numeric:tabular-nums;
+  /* solid, opaque terminal surfaces — override the room's translucent tokens so the 3D city can't bleed through.
+     Text tokens are lifted to clear WCAG AA (4.5:1 body / 3:1 large & lines) on this dark surface. */
+  --ax-panel:#0d131d; --ax-panelhi:#121b28; --ax-surface:#0b1019; --ax-elev:#0f1620; --ax-bd:#20303f; --ax-bdsoft:#182430; --ax-hair:rgba(130,170,205,.10); --ax-bdglow:#356a86;
+  --ax-tx:#e8eef6; --ax-mut:#9db2c7; --ax-dim:#7d92a6; --ax-cydim:#68c2e6; --ax-acc:#3fd0ff; }
+.ax-term *:focus-visible { outline:2px solid var(--ax-bdglow); outline-offset:1px; border-radius:4px; }
+.ax-term .num, .ax-term [class*="mono"] { font-variant-numeric:tabular-nums; }
 .ax-term button { font-family:var(--ax-sans); cursor:pointer; }
 .ax-term .r { text-align:right; }
 .ax-term .dim { color:var(--ax-mut); }
@@ -753,6 +761,11 @@ const TERM_CSS = `
 .axt-drawtools button:hover { border-color:var(--ax-bdglow); color:var(--ax-acc); }
 .axt-chartcanvas { flex:1; min-width:0; position:relative; }
 .axt-chart-empty { position:absolute; inset:0; display:flex; align-items:center; justify-content:center; color:var(--ax-mut); font-size:12px; }
+.axt-chart-skel { position:absolute; inset:0; display:flex; flex-direction:column; justify-content:flex-end; padding:24px; gap:14px; }
+.axt-skel-bars { flex:1; display:flex; align-items:flex-end; gap:3px; opacity:.5; }
+.axt-skel-bars span { flex:1; background:linear-gradient(180deg, var(--ax-bdglow), var(--ax-surface)); border-radius:2px; animation:axtSkel 1.3s ease-in-out infinite; }
+@keyframes axtSkel { 0%,100%{opacity:.35} 50%{opacity:.75} }
+.axt-skel-tag { text-align:center; color:var(--ax-dim); font-size:11px; font-family:var(--ax-mono); letter-spacing:.04em; }
 
 /* Replay HUD */
 .axt-hud { position:absolute; top:8px; left:8px; width:250px; background:color-mix(in srgb, var(--ax-panel) 92%, #000); border:1px solid color-mix(in srgb, ${PUR} 40%, transparent); border-radius:10px; padding:10px; backdrop-filter:blur(6px); box-shadow:0 8px 30px rgba(0,0,0,.5); }
