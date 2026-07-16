@@ -7,6 +7,55 @@ import {
 import type { Bar } from "../apex-data";
 import { ema, vwap as calcVwap, bollinger, rsi as calcRsi, macd as calcMacd, closes, getStrategy, runReplay, type StrategyId, type ReplayResult } from "./indicators";
 
+/* eslint-disable @typescript-eslint/no-explicit-any */
+// ── Bollinger band-fill: a custom lightweight-charts v5 series primitive that shades the region
+// between the upper and lower bands (no native band primitive exists). Draws behind the candles.
+type BBPt = { time: UTCTimestamp; up: number; lo: number };
+class BBFillRenderer {
+  constructor(private view: BBFillPrimitive) {}
+  draw() { /* nothing on the foreground layer */ }
+  drawBackground(target: any) {
+    try { this._draw(target); } catch { /* never let a primitive break chart rendering */ }
+  }
+  _draw(target: any) {
+    const { points, chart, series } = this.view;
+    if (!points.length || !chart || !series) return;
+    const ts = chart.timeScale();
+    target.useMediaCoordinateSpace((scope: any) => {
+      const ctx = scope.context as CanvasRenderingContext2D;
+      const top: [number, number][] = [], bot: [number, number][] = [];
+      for (const p of points) { const x = ts.timeToCoordinate(p.time), yu = series.priceToCoordinate(p.up), yl = series.priceToCoordinate(p.lo); if (x == null || yu == null || yl == null) continue; top.push([x, yu]); bot.push([x, yl]); }
+      if (top.length < 2) return;
+      ctx.beginPath();
+      ctx.moveTo(top[0][0], top[0][1]);
+      for (let i = 1; i < top.length; i++) ctx.lineTo(top[i][0], top[i][1]);
+      for (let i = bot.length - 1; i >= 0; i--) ctx.lineTo(bot[i][0], bot[i][1]);
+      ctx.closePath();
+      ctx.fillStyle = "rgba(77,159,209,0.07)";
+      ctx.fill();
+    });
+  }
+}
+class BBFillPaneView {
+  private r: BBFillRenderer;
+  constructor(view: BBFillPrimitive) { this.r = new BBFillRenderer(view); }
+  renderer() { return this.r; }
+  zOrder() { return "bottom" as const; }
+}
+class BBFillPrimitive {
+  points: BBPt[] = [];
+  chart: IChartApi | null = null;
+  series: ISeriesApi<"Candlestick"> | null = null;
+  private req: (() => void) | null = null;
+  private pv = new BBFillPaneView(this);
+  attached(p: any) { this.chart = p.chart; this.series = p.series; this.req = p.requestUpdate; }
+  detached() { this.chart = null; this.series = null; this.req = null; }
+  setPoints(pts: BBPt[]) { this.points = pts; this.req?.(); }
+  updateAllViews() { /* points are pushed imperatively */ }
+  paneViews() { return [this.pv]; }
+}
+/* eslint-enable @typescript-eslint/no-explicit-any */
+
 // APEX · Live Markets — the professional chart. TradingView-grade candles on real
 // OHLCV, with EMA 20/50/200, session VWAP, Bollinger Bands, a volume pane, and RSI +
 // MACD study panes. Also drives STRATEGY REPLAY: step the chart forward bar-by-bar
@@ -90,6 +139,7 @@ export function ChartPro({ bars, up, indicators, replayActive, replaySpeed, repl
   const chartRef = useRef<IChartApi | null>(null);
   const S = useRef<Record<string, ISeriesApi<"Candlestick" | "Line" | "Histogram">>>({});
   const markersRef = useRef<ISeriesMarkersPluginApi<Time> | null>(null);
+  const bbFillRef = useRef<BBFillPrimitive | null>(null);
   const dataRef = useRef<Bar[]>([]);
   const replayTimer = useRef<number | null>(null);
   const legendRef = useRef<HTMLDivElement | null>(null);
@@ -145,6 +195,8 @@ export function ChartPro({ bars, up, indicators, replayActive, replaySpeed, repl
     S.current.signal = chart.addSeries(LineSeries, { color: COL.signal, lineWidth: 1, priceLineVisible: false, lastValueVisible: false }, 3);
 
     markersRef.current = createSeriesMarkers(candle, []);
+    // Bollinger band-fill primitive (behind candles)
+    try { const bb = new BBFillPrimitive(); (candle as unknown as { attachPrimitive: (p: unknown) => void }).attachPrimitive(bb); bbFillRef.current = bb; } catch { bbFillRef.current = null; }
 
     // Guides on RSI (30 / 70)
     S.current.rsi.createPriceLine({ price: 70, color: "rgba(244,85,107,.5)", lineWidth: 1, lineStyle: LineStyle.Dashed, axisLabelVisible: true, title: "70" });
@@ -202,6 +254,7 @@ export function ChartPro({ bars, up, indicators, replayActive, replaySpeed, repl
     set("ema20", indicators.ema); set("ema50", indicators.ema); set("ema200", indicators.ema);
     set("vwap", indicators.vwap);
     set("bbU", indicators.bb); set("bbM", indicators.bb); set("bbL", indicators.bb);
+    if (bbFillRef.current) { const all = dataRef.current; const I = indRef.current; bbFillRef.current.setPoints(indicators.bb && all.length && I.t.length === all.length ? all.map((_, i) => ({ time: I.t[i], up: I.bbU[i], lo: I.bbL[i] })).filter((p) => Number.isFinite(p.up) && Number.isFinite(p.lo)) : []); }
     set("vol", indicators.volume); set("rsi", indicators.rsi);
     set("macd", indicators.macd); set("signal", indicators.macd); set("macdHist", indicators.macd);
     // Resize panes: hide RSI/MACD/vol panes by collapsing when off
@@ -249,6 +302,7 @@ export function ChartPro({ bars, up, indicators, replayActive, replaySpeed, repl
     s.ema20.setData(line(e20)); s.ema50.setData(line(e50)); s.ema200.setData(line(e200));
     s.vwap.setData(line(I.vwap));
     s.bbU.setData(line(I.bbU)); s.bbM.setData(line(I.bbM)); s.bbL.setData(line(I.bbL));
+    if (bbFillRef.current) bbFillRef.current.setPoints(indicators.bb ? sub.map((_, i) => ({ time: t[i], up: I.bbU[i], lo: I.bbL[i] })).filter((p) => Number.isFinite(p.up) && Number.isFinite(p.lo)) : []);
 
     s.vol.setData(sub.map((b) => ({ time: toSec(b.t), value: b.v || 0, color: b.c >= b.o ? "rgba(38,194,129,.5)" : "rgba(244,85,107,.5)" })));
 
