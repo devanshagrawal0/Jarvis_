@@ -156,10 +156,16 @@ export function JarvisUI() {
   const [approvalBusy, setApprovalBusy] = useState<string | null>(null);
   const [visible, setVisible] = useState(false);
   const [launcherOpen, setLauncherOpen] = useState(false);
-  const [helixOpen, setHelixOpen] = useState(false);
-  const [apexOpen, setApexOpen] = useState(false);
-  const [arbiterOpen, setArbiterOpen] = useState(false);
-  const [synapseOpen, setSynapseOpen] = useState(false);
+  // Persist which room is open so a page reload lands back in the same room (not the Jarvis home).
+  const savedRoom = (() => { try { return localStorage.getItem("jarvis.activeRoom") || ""; } catch { return ""; } })();
+  const [helixOpen, setHelixOpen] = useState(savedRoom === "helix");
+  const [apexOpen, setApexOpen] = useState(savedRoom === "apex");
+  const [arbiterOpen, setArbiterOpen] = useState(savedRoom === "arbiter");
+  const [synapseOpen, setSynapseOpen] = useState(false); // Synapse is a Jarvis FEATURE, not a room — not persisted
+  useEffect(() => {
+    const r = apexOpen ? "apex" : helixOpen ? "helix" : arbiterOpen ? "arbiter" : "";
+    try { localStorage.setItem("jarvis.activeRoom", r); } catch { /* ignore */ }
+  }, [apexOpen, helixOpen, arbiterOpen]);
   const [voiceMode, setVoiceMode] = useState<"dictate" | "live">("dictate");
   const [liveVoiceState, setLiveVoiceState] = useState<"idle" | "connecting" | "listening" | "speaking" | "error">("idle");
   const liveVoiceRef = useRef<LiveVoiceController | null>(null);
