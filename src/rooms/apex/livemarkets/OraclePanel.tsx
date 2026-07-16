@@ -183,6 +183,8 @@ export function OracleOverlay({ o, hist, bars, loading, resolvedNote, onClose, o
                 <div className="axo-curve"><div className="axo-curve-t">RELIABILITY (calibration)</div><ReliabilityCurve hist={hist} /></div>
                 <div className="axo-curve"><div className="axo-curve-t">EDGE DECAY</div><EdgeDecay hist={hist} /></div>
               </div>
+              <div className="axo-sec">MODEL VALIDATION <em>out-of-sample</em></div>
+              <BacktestPanel symbol={o.symbol} />
               <div className="axo-hint">Click ↻ Refresh on the next session to resolve these calls against realized prices and self-correct.</div>
             </div>
           </div>
@@ -237,6 +239,27 @@ function QuantLab({ q }: { q: Record<string, Record<string, unknown>> }) {
     ...(q.copula ? [["Co-crash", n(q.copula?.coCrashProb, 3), (q.copula?.coCrashProb as number) > 0.1 ? NEG : undefined] as [string, string, string?]] : []),
   ];
   return <div className="axo-quant">{items.map(([l, v, c]) => <div key={l} className="axo-ql"><span>{l}</span><b style={c ? { color: c } : undefined}>{v}</b></div>)}</div>;
+}
+
+// Walk-forward backtest panel — validates the forecaster out-of-sample on demand.
+function BacktestPanel({ symbol }: { symbol: string }) {
+  const [bt, setBt] = useState<{ ok: boolean; gate?: boolean; horizons?: Record<string, { n: number; hitRate: number | null; coverage90: number | null; brier: number | null; pass: boolean }> } | null>(null);
+  const [busy, setBusy] = useState(false);
+  const run = async () => { setBusy(true); try { const r = await fetch(`/api/apex/predict/${encodeURIComponent(symbol)}/backtest`).then((x) => x.json()); setBt(r); } catch { /* ignore */ } setBusy(false); };
+  return (
+    <div className="axo-bt">
+      {!bt ? <button className="axo-bt-run" onClick={run} disabled={busy}>{busy ? "Running walk-forward…" : "▶ Run walk-forward backtest"}</button> : (
+        <>
+          <div className="axo-bt-h">WALK-FORWARD (no look-ahead) <span style={{ color: bt.gate ? POS : WARN }}>{bt.gate ? "✓ gate pass" : "gate fail"}</span></div>
+          <div className="axo-bt-tbl"><div className="axo-bt-tr axo-bt-th"><span>H</span><span className="r">N</span><span className="r">HIT</span><span className="r">COV90</span><span className="r">BRIER</span><span className="r">GATE</span></div>
+            {Object.entries(bt.horizons || {}).map(([k, v]) => (
+              <div key={k} className="axo-bt-tr"><span>{k}</span><span className="r">{v.n}</span><span className="r" style={{ color: (v.hitRate ?? 0) >= 0.52 ? POS : WARN }}>{v.hitRate != null ? `${(v.hitRate * 100).toFixed(0)}%` : "—"}</span><span className="r">{v.coverage90 != null ? `${(v.coverage90 * 100).toFixed(0)}%` : "—"}</span><span className="r">{v.brier?.toFixed(3)}</span><span className="r" style={{ color: v.pass ? POS : NEG }}>{v.pass ? "✓" : "✕"}</span></div>
+            ))}
+          </div>
+        </>
+      )}
+    </div>
+  );
 }
 
 function kpi(l: string, v: string, c: string) { return <div className="axo-kpi"><span>{l}</span><b style={{ color: c }}>{v}</b></div>; }
@@ -305,6 +328,12 @@ const OVERLAY_CSS = `
 .axo-curves { display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-top:6px; }
 .axo-curve { background:#0b0f16; border:1px solid var(--ax-bd,#20303f); border-radius:6px; padding:6px; }
 .axo-curve-t { font-size:7.5px; color:var(--ax-dim,#6b7683); letter-spacing:.04em; margin-bottom:2px; text-align:center; }
+.axo-bt-run { width:100%; background:color-mix(in srgb, ${WARN} 12%, transparent); border:1px solid color-mix(in srgb, ${WARN} 38%, transparent); color:${WARN}; border-radius:5px; padding:8px; font-size:11px; font-weight:600; cursor:pointer; font-family:var(--ax-sans,inherit); }
+.axo-bt-run:disabled { opacity:.6; cursor:wait; }
+.axo-bt-h { font-size:8.5px; font-weight:700; letter-spacing:.05em; color:var(--ax-mut,#9aa7b4); display:flex; justify-content:space-between; margin-bottom:5px; }
+.axo-bt-tbl { font-family:var(--ax-mono); font-size:10.5px; }
+.axo-bt-tr { display:grid; grid-template-columns:34px 1fr 1fr 1fr 1fr .6fr; gap:6px; padding:3px 4px; border-bottom:1px solid var(--ax-hair,rgba(255,255,255,.05)); }
+.axo-bt-tr .r { text-align:right; } .axo-bt-th { color:var(--ax-dim,#6b7683); font-size:8px; }
 .axo-quant { display:grid; grid-template-columns:1fr 1fr; gap:3px 10px; }
 .axo-ql { display:flex; justify-content:space-between; align-items:baseline; padding:3px 0; border-bottom:1px solid var(--ax-hair,rgba(255,255,255,.05)); font-size:10px; }
 .axo-ql span { color:var(--ax-mut,#9aa7b4); } .axo-ql b { font-family:var(--ax-mono); font-size:10.5px; font-weight:600; }

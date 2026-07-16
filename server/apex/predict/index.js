@@ -152,6 +152,35 @@ function createOracle({ runtimeDir, getBars, priceAt, getNews = null, callModel 
     return payload;
   }
 
+  // Walk-forward backtest: at each sample point, forecast using ONLY past bars, then score
+  // against the realized future bar. Validates the forecaster (no look-ahead). Gates model_ver.
+  async function backtest(symbol) {
+    const bars = await getBars(symbol, { interval: "60m", range: "730d" });
+    if (!Array.isArray(bars) || bars.length < 120) { const b2 = await getBars(symbol, { interval: "1d", range: "5y" }); if (Array.isArray(b2) && b2.length > 120) return backtestOn(b2, [{ key: "1d", tau: 1 }, { key: "5d", tau: 5 }]); return { ok: false, reason: "insufficient history", symbol }; }
+    return backtestOn(bars, [{ key: "1d", tau: 6.5 }, { key: "5d", tau: 32.5 }]);
+  }
+  function backtestOn(bars, horizons) {
+    const out = {};
+    for (const h of horizons) {
+      const tau = Math.round(h.tau); let n = 0, hits = 0, cov = 0, brier = 0, mape = 0, pin = 0;
+      const warm = 60; const step = Math.max(1, Math.floor((bars.length - warm - tau) / 120));
+      for (let i = warm; i + tau < bars.length; i += step) {
+        const past = bars.slice(0, i + 1); const regime = detectRegime(past); const fc = forecast(past, regime, {});
+        if (!fc.ok) continue; const hf = fc.horizons.find((x) => Math.abs(x.tau - h.tau) < 0.01) || fc.horizons[0];
+        const realized = bars[i + tau].c; const S0 = past[past.length - 1].c;
+        n++; if (Math.sign(hf.p50 - S0) === Math.sign(realized - S0)) hits++;
+        if (realized >= hf.p05 && realized <= hf.p95) cov++;
+        const up = realized > S0 ? 1 : 0; brier += (hf.pUp - up) ** 2; mape += Math.abs(realized - hf.p50) / realized;
+        pin += (realized >= hf.p50 ? 0.5 * (realized - hf.p50) : 0.5 * (hf.p50 - realized)) / S0;
+      }
+      const hitRate = n ? hits / n : null;
+      out[h.key] = { n, hitRate, coverage90: n ? cov / n : null, brier: n ? brier / n : null, mape: n ? mape / n : null, pinball: n ? pin / n : null,
+        pass: n > 20 && hitRate > 0.50 && (cov / n) >= 0.80 && (brier / n) < 0.26 };
+    }
+    const gate = Object.values(out).every((r) => r.pass);
+    return { ok: true, horizons: out, gate, model_ver: MODEL_VER };
+  }
+
   function history(symbol, limit = 60) {
     const rows = store.history(symbol, limit);
     const scored = rows.filter((r) => r.hit != null);
@@ -160,7 +189,15 @@ function createOracle({ runtimeDir, getBars, priceAt, getNews = null, callModel 
     return { rows, summary: { total: rows.length, resolved: scored.length, hitRate, mape } };
   }
 
-  return { predict, refresh, resolveDue, history, computeForecast, store, model_ver: MODEL_VER };
+  // Leaderboard — per-symbol resolved hit-rate + avg edge, ranked. Which calls are winning.
+  function leaderboard() {
+    try {
+      const rows = store.db.prepare(`SELECT p.symbol, COUNT(o.pred_id) n, AVG(o.hit) hit_rate, AVG(o.abs_pct_err) mape, AVG(p.edge) edge
+        FROM predictions p JOIN outcomes o ON o.pred_id=p.id GROUP BY p.symbol HAVING n>=3 ORDER BY hit_rate DESC, n DESC LIMIT 20`).all();
+      return { rows };
+    } catch { return { rows: [] }; }
+  }
+  return { predict, refresh, resolveDue, history, backtest, leaderboard, computeForecast, store, model_ver: MODEL_VER };
 }
 
 module.exports = { createOracle };
