@@ -59,16 +59,26 @@ function expectedValue(K, m, s, premium, type = "call") {
 function recommendContract(fc, opts = {}) {
   const S = fc.spot, r = opts.r ?? 0.045, q = opts.q ?? 0;
   const type = fc.dir === "LONG" ? "call" : "put";
-  // expiry: horizon end in years, min ~1 trading day; add buffer so theta isn't brutal
-  const days = Math.max(1, Math.ceil((fc.tau / 6.5) * 1.6));
+  // Expiry buffer: give the trade room past the forecast horizon so theta doesn't eat a
+  // correct-direction move (was 1.6× → a 5-day call expired in 8d; now ~2.2× + a 4-day floor).
+  const days = Math.max(4, Math.ceil((fc.tau / 6.5) * 2.2));
   const T = days / 365;
-  const sig = fc.sigmaH / Math.sqrt(fc.tau) * Math.sqrt(6.5) || 0.3; // annualize per-bar-ish
   const sigAnn = clamp(fc.s / Math.sqrt(fc.tau) * Math.sqrt(6.5 * 252), 0.05, 3);
-  // Scan strikes around spot; select a directional contract in a sensible delta band
-  // (~0.25–0.55), then rank by ROI. Prevents the "always deepest-ITM" degenerate pick.
-  const targetDelta = 0.40;
+  // MATCH THE CONTRACT TO THE FORECAST. The old code always bought ~0.40-delta OTM options,
+  // which lose even when direction is right unless the move is big. Pick the moneyness from the
+  // EXPECTED MOVE + conviction: small move → deep ITM (tracks the stock, low theta); big
+  // high-edge move → OTM (leverage); in between → ATM.
+  const expMove = Math.abs(fc.predRet || 0) / 100;   // predicted % move over this horizon
+  const edge = fc.edge ?? Math.abs((fc.pUp ?? 0.5) - 0.5) * 2;
+  let targetDelta, moneyness, rationale;
+  if (expMove >= 0.10 && edge >= 0.15) { targetDelta = 0.45; moneyness = "OTM"; rationale = "Big, high-conviction move expected — OTM for leverage."; }
+  else if (expMove >= 0.06) { targetDelta = 0.58; moneyness = "ATM"; rationale = "Moderate move — near-the-money balances cost and payoff."; }
+  else { targetDelta = 0.75; moneyness = "ITM"; rationale = "Small/normal move — deep-in-the-money tracks the stock ~1:1 with minimal time decay."; }
+  const preferShares = expMove < 0.02 && edge < 0.08;
+  if (preferShares) rationale = "Edge/move too small for options — trade shares (or skip); an option would bleed theta.";
+
   const cands = [];
-  for (let pctOff = -0.30; pctOff <= 0.30; pctOff += 0.01) {
+  for (let pctOff = -0.35; pctOff <= 0.35; pctOff += 0.01) {
     const K = Math.round(S * (1 + pctOff) * 2) / 2; // 0.50 strike grid
     if (K <= 0) continue;
     const o = bs(S, K, r, q, sigAnn, T, type);
@@ -77,13 +87,12 @@ function recommendContract(fc, opts = {}) {
     cands.push({ K, T, days, type, premium: o.price, ...o, ...ev, sigAnn, absDelta: Math.abs(o.delta) });
   }
   if (!cands.length) return null;
-  const inBand = cands.filter((c) => c.absDelta >= 0.25 && c.absDelta <= 0.55);
+  // Pick the contract closest to the target delta (moneyness that fits the move); tie-break by EV.
+  const inBand = cands.filter((c) => c.absDelta >= targetDelta - 0.15 && c.absDelta <= targetDelta + 0.15);
   const pool = inBand.length ? inBand : cands;
-  // within the band, prefer positive EV then closeness to target delta
-  let best = pool.slice().sort((a, b) => (b.roi - a.roi) || (Math.abs(a.absDelta - targetDelta) - Math.abs(b.absDelta - targetDelta)))[0];
-  if (best.ev <= 0) best = pool.slice().sort((a, b) => Math.abs(a.absDelta - targetDelta) - Math.abs(b.absDelta - targetDelta))[0];
+  const best = pool.slice().sort((a, b) => (Math.abs(a.absDelta - targetDelta) - Math.abs(b.absDelta - targetDelta)) || (b.roi - a.roi))[0];
   return {
-    type: best.type, strike: best.K, expiryDays: best.days, T: best.T,
+    type: best.type, strike: best.K, expiryDays: best.days, T: best.T, moneyness, rationale, preferShares,
     premium: +best.premium.toFixed(3), impliedVol: +(best.sigAnn * 100).toFixed(1),
     delta: +best.delta.toFixed(3), gamma: +best.gamma.toFixed(4), vega: +best.vega.toFixed(3), theta: +best.theta.toFixed(3), rho: +best.rho.toFixed(3),
     ev: +best.ev.toFixed(3), roi: +(best.roi * 100).toFixed(1), pITM: +(best.pITM * 100).toFixed(1),

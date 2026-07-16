@@ -273,7 +273,7 @@ function createOracle({ runtimeDir, getBars, priceAt, getNews = null, callModel 
       const o = rec; const sigAnn = (o.impliedVol || 40) / 100; const Trem = Math.max(1, o.expiryDays - 5) / 365;
       const val = bs(finalPx, o.strike, 0.045, 0, sigAnn, Trem, o.type).price;
       const pnl = (val - o.premium) * 100; const pnlPct = o.premium > 0 ? (val / o.premium - 1) * 100 : 0;
-      option = { action: o.type === "call" ? "BUY CALL" : "BUY PUT", type: o.type, strike: o.strike, premium: o.premium, expiryDays: o.expiryDays,
+      option = { action: o.type === "call" ? "BUY CALL" : "BUY PUT", type: o.type, moneyness: o.moneyness, strike: o.strike, premium: o.premium, expiryDays: o.expiryDays,
         exitValue: +val.toFixed(2), pnlPerContract: +pnl.toFixed(0), pnlPct: +pnlPct.toFixed(0), win: pnl > 0 };
     }
     return { ok: true, symbol, asOf: past[past.length - 1].t, spot: +spot.toFixed(2), finalPx: finalPx != null ? +finalPx.toFixed(2) : null,

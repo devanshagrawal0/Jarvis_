@@ -44,7 +44,9 @@ function horizonForecast(S0, muBar, sigBar, h, regime, cal) {
   if (h.overnights > 0) { const sigGap = sigBar * 1.4; sigH = Math.sqrt(sigH * sigH + sigGap * sigGap * h.overnights); }
   // calibration vol multiplier
   sigH *= clamp(cal ? cal.vol_mult : 1, 0.3, 3);
-  const muH = clamp(muBar * tau, -3 * sigH, 3 * sigH);
+  // Clip drift much tighter: raw momentum drift was allowed to reach ±3σ, producing absurd
+  // multi-day targets (e.g. +15%). Cap at ±0.8σ_H so diffusion dominates and forecasts stay sane.
+  const muH = clamp(muBar * tau, -0.8 * sigH, 0.8 * sigH);
   // center in log space, minus persistent bias
   let m = Math.log(S0) + (muBar - 0.5 * sigBar * sigBar) * tau;
   if (cal && Number.isFinite(cal.bias_ewma)) m -= cal.bias_ewma;
@@ -87,7 +89,10 @@ function forecast(bars, regime, cals = {}) {
   const ou = ouHalfLife(closes, 26);
   const muMr = -ou.kappa * nz(ou.dev); // pull back toward EMA ref
   const g = clamp(regime.g != null ? regime.g : 0.5, 0, 1);
-  const muBar = g * muMom + (1 - g) * muMr;
+  // Momentum haircut: raw EWMA momentum overstates future drift (returns partially mean-revert),
+  // so shrink it toward 0 — the biggest driver of realistic magnitude forecasts.
+  const DRIFT_HAIRCUT = 0.45;
+  const muBar = (g * muMom + (1 - g) * muMr) * DRIFT_HAIRCUT;
   const sigBar = Math.sqrt(ewmaVar(rets, 0.97)) || std(rets);
   const horizons = HORIZONS.map((h) => horizonForecast(S0, muBar, sigBar, h, regime, cals[h.key]));
   return { ok: true, spot: S0, muBar, sigBar, ou, g, horizons };
