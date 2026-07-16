@@ -14,6 +14,7 @@ const { scorePrediction, updateCalibration } = require("./calibration");
 const { createOracleStore } = require("./store");
 const { buildPackages } = require("./signals");
 const { fuse } = require("./ensemble");
+const { computeQuant } = require("./phd");
 const { clamp } = require("./mathx");
 
 const MODEL_VER = "oracle-1.0";
@@ -23,6 +24,19 @@ const MS = { "1h": 3.6e6, "5h": 1.8e7, "12h": 4.32e7, "1d": 8.64e7, "5d": 4.32e8
 function horizonScaleLLM(pUp1d, tau) {
   const k = Math.sqrt(tau / 6.5); // 1d = tau 6.5 → k=1
   return clamp(0.5 + (pUp1d - 0.5) * clamp(k, 0.4, 1.4), 0.02, 0.98);
+}
+
+// Deterministic synthesis when the LLM is unavailable — a real read from the numeric signals.
+function deterministicThesis(symbol, regime, fc, sig) {
+  const oneDay = fc.horizons.find((h) => h.horizon === "1d") || fc.horizons[0];
+  const bias = sig.crossScore > 0.12 ? "bullish" : sig.crossScore < -0.12 ? "bearish" : "neutral";
+  const parts = [];
+  parts.push(`${regime.label.replace("_", " ").toLowerCase()} regime (conf ${(regime.confidence * 100).toFixed(0)}%)`);
+  const strong = Object.entries(sig.packages || {}).filter(([, v]) => Math.abs(v) > 0.2).sort((a, b) => Math.abs(b[1]) - Math.abs(a[1])).slice(0, 2);
+  if (strong.length) parts.push(strong.map(([k, v]) => `${v >= 0 ? "positive" : "negative"} ${k}`).join(" and "));
+  parts.push(`1-day P(up) ${(oneDay.pUp * 100).toFixed(0)}%`);
+  const thesis = `${bias === "bullish" ? "Constructive" : bias === "bearish" ? "Cautious" : "Two-sided"} read — ${parts.join(", ")}. ${regime.hurst > 0.55 ? "Persistent tape favors trend-following." : regime.hurst < 0.45 ? "Anti-persistent tape favors fading extremes." : "Random-walk tape; edge is thin."}`;
+  return { pUp: oneDay.pUp, bias, thesis, source: "deterministic" };
 }
 
 function createOracle({ runtimeDir, getBars, priceAt, getNews = null, callModel = null }) {
@@ -55,8 +69,9 @@ function createOracle({ runtimeDir, getBars, priceAt, getNews = null, callModel 
     // signal packages → crossScore (best-effort; tolerant of fetch failures)
     let sig = { crossScore: regime.trendScore, packages: { technical: regime.trendScore, news: 0, peer: 0, sector: 0, macro: 0 }, detail: {}, weights: {} };
     try { sig = await buildPackages(symbol, bars, { getBars, getNews }); } catch { /* keep technical fallback */ }
-    // Jarvis synthesis (one call)
-    const llm = await synthesize(symbol, regime, fc, sig);
+    // Jarvis synthesis (one call); deterministic fallback so the panel is never empty.
+    let llm = await synthesize(symbol, regime, fc, sig);
+    if (!llm) llm = deterministicThesis(symbol, regime, fc, sig);
     const pCross = clamp(0.5 + 0.5 * sig.crossScore, 0.02, 0.98);
     // ensemble per horizon (technical GBM view + cross-asset view + LLM view)
     for (const h of fc.horizons) {
@@ -75,7 +90,8 @@ function createOracle({ runtimeDir, getBars, priceAt, getNews = null, callModel 
       h.confidence = Math.max(0.05, Math.min(0.95, regime.confidence * 0.35 + coverageHealth * 0.25 + h.edge * 0.2 + (1 - ens.spread) * 0.2));
       h.calibrated = !!cal;
     }
-    const payload = { ok: true, symbol, asOf: null, spot: fc.spot, regime, muBar: fc.muBar, sigBar: fc.sigBar, ou: fc.ou, g: fc.g, horizons: fc.horizons, crossScore: sig.crossScore, packages: sig.packages, signalDetail: sig.detail, weights: sig.weights, jarvis: llm, model_ver: MODEL_VER };
+    let quant = null; try { quant = computeQuant(bars); } catch { /* optional */ }
+    const payload = { ok: true, symbol, asOf: null, spot: fc.spot, regime, muBar: fc.muBar, sigBar: fc.sigBar, ou: fc.ou, g: fc.g, horizons: fc.horizons, crossScore: sig.crossScore, packages: sig.packages, signalDetail: sig.detail, weights: sig.weights, jarvis: llm, quant, model_ver: MODEL_VER };
     const sc = selfCheck(payload);
     payload.selfCheck = sc; payload.degraded = !sc.ok;
     return payload;

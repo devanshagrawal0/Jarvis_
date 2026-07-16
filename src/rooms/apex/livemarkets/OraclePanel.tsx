@@ -14,6 +14,7 @@ export interface OraclePayload {
   crossScore: number; packages: Record<string, number>;
   signalDetail: { peers?: { sym: string; rho: number; mom: number; kind: string }[]; sector?: { etf: string; rho: number; etfMom: number } | null; news?: { count: number; score: number } | null };
   jarvis: { pUp: number; bias: string; thesis: string } | null;
+  quant?: Record<string, Record<string, unknown>> | null;
   horizons: OracleHorizon[]; asOf: number; selfCheck?: { ok: boolean; issues: string[] };
 }
 export interface OracleHistory { rows: { horizon: string; hit: number | null; abs_pct_err: number | null; made_at: number }[]; summary: { total: number; resolved: number; hitRate: number | null; mape: number | null } }
@@ -138,6 +139,8 @@ export function OracleOverlay({ o, hist, loading, resolvedNote, onClose, onRefre
                         {ov("Δ DELTA", money(h.option.delta, 3))}{ov("Γ GAMMA", money(h.option.gamma, 4))}{ov("ν VEGA", money(h.option.vega, 3))}{ov("Θ THETA", money(h.option.theta, 3))}
                         {ov("EV", money(h.option.ev), h.option.ev >= 0 ? POS : NEG)}{ov("ROI", `${h.option.roi}%`, h.option.roi >= 0 ? POS : NEG)}{ov("P(ITM)", `${h.option.pITM}%`)}{ov("BREAKEVEN", money(h.option.breakeven))}
                       </div>
+                      <div className="axo-opt-sub">PAYOFF AT EXPIRY</div>
+                      <PayoffDiagram opt={h.option} spot={o.spot} p05={h.p05} p50={h.p50} p95={h.p95} />
                       <div className="axo-opt-note">Paper-proof: premium priced at model IV; EV computed under the forecast distribution. Paper trading only — not advice.</div>
                     </div>
                   )}
@@ -159,6 +162,7 @@ export function OracleOverlay({ o, hist, loading, resolvedNote, onClose, onRefre
                 ))}{o.signalDetail.sector && <div className="axo-peer axo-etf" onClick={() => onPick(o.signalDetail!.sector!.etf)}><b>{o.signalDetail.sector.etf}</b><span className="axo-peer-kind">sector ETF</span><span className="r">ρ {o.signalDetail.sector.rho.toFixed(2)}</span><span className="r" style={{ color: o.signalDetail.sector.etfMom >= 0 ? POS : NEG }}>{pctS(o.signalDetail.sector.etfMom)}</span></div>}</div></>
               ) : null}
               {o.jarvis?.thesis && (<><div className="axo-sec">JARVIS SYNTHESIS <em style={{ color: regimeColor(o.jarvis.bias === "bullish" ? "TREND_UP" : o.jarvis.bias === "bearish" ? "TREND_DOWN" : "X") }}>{o.jarvis.bias}</em></div><p className="axo-jarvis">{o.jarvis.thesis}</p></>)}
+              {o.quant && o.quant.ok && (<><div className="axo-sec">QUANT LAB <em>14 PhD-level models</em></div><QuantLab q={o.quant} /></>)}
               <div className="axo-sec">TRACK RECORD <em>predictions vs actual</em></div>
               <div className="axo-score">
                 {sc("HIT RATE", hist?.summary.hitRate != null ? `${(hist.summary.hitRate * 100).toFixed(0)}%` : "—", hist?.summary.hitRate != null && hist.summary.hitRate >= 0.5 ? POS : WARN)}
@@ -174,6 +178,52 @@ export function OracleOverlay({ o, hist, loading, resolvedNote, onClose, onRefre
       </div>
     </div>
   );
+}
+
+// Options payoff-at-expiry diagram (P&L vs underlying), with breakeven + forecast guides.
+function PayoffDiagram({ opt, spot, p05, p50, p95 }: { opt: OracleOption; spot: number; p05: number; p50: number; p95: number }) {
+  const W = 300, H = 120, padL = 4, padR = 4, padT = 8, padB = 16;
+  const lo = Math.min(spot, opt.strike, p05) * 0.97, hi = Math.max(spot, opt.strike, p95) * 1.03;
+  const payoff = (S: number) => ((opt.type === "call" ? Math.max(0, S - opt.strike) : Math.max(0, opt.strike - S)) - opt.premium) * 100;
+  const N = 60; const pts = Array.from({ length: N + 1 }, (_, i) => { const S = lo + (i / N) * (hi - lo); return { S, pl: payoff(S) }; });
+  const pls = pts.map((p) => p.pl); const pmin = Math.min(...pls), pmax = Math.max(...pls); const rg = pmax - pmin || 1;
+  const X = (S: number) => padL + ((S - lo) / (hi - lo)) * (W - padL - padR);
+  const Y = (pl: number) => padT + (1 - (pl - pmin) / rg) * (H - padT - padB);
+  const line = pts.map((p, i) => `${i ? "L" : "M"}${X(p.S).toFixed(1)},${Y(p.pl).toFixed(1)}`).join(" ");
+  const zeroY = Y(0);
+  return (
+    <svg viewBox={`0 0 ${W} ${H}`} className="axo-payoff" preserveAspectRatio="none">
+      <line x1={padL} y1={zeroY} x2={W - padR} y2={zeroY} stroke="rgba(255,255,255,.15)" strokeDasharray="3 3" />
+      <path d={`${line} L${X(hi)},${zeroY} L${X(lo)},${zeroY} Z`} fill="rgba(38,166,154,.08)" stroke="none" />
+      <path d={line} fill="none" stroke={POS} strokeWidth="1.6" />
+      {[[opt.breakeven, "BE", "#e6edf3"], [opt.strike, "K", "rgba(255,255,255,.4)"], [spot, "now", CY], [p50, "p50", WARN], [p05, "p05", NEG], [p95, "p95", POS]].map(([v, lbl, c], i) => (
+        <g key={i}><line x1={X(v as number)} y1={padT} x2={X(v as number)} y2={H - padB} stroke={c as string} strokeWidth="1" strokeDasharray={lbl === "now" ? "0" : "2 2"} opacity="0.7" /><text x={X(v as number)} y={H - 4} fill={c as string} fontSize="7" textAnchor="middle" fontFamily="var(--ax-mono,monospace)">{lbl as string}</text></g>
+      ))}
+    </svg>
+  );
+}
+
+// Quant Lab — the 14 PhD-level computations, compact.
+function QuantLab({ q }: { q: Record<string, Record<string, unknown>> }) {
+  const n = (v: unknown, d = 2) => (typeof v === "number" ? v.toFixed(d) : String(v ?? "—"));
+  const items: [string, string, string?][] = [
+    ["½-Kelly", n(q.kelly?.half, 3), (q.kelly?.half as number) >= 0 ? POS : NEG],
+    ["Kalman slope", `${n(q.kalman?.slopePct, 2)}%`, (q.kalman?.slopePct as number) >= 0 ? POS : NEG],
+    ["GARCH σ→LR", `${n((q.garch?.sigmaNow as number) * 100, 1)}→${n((q.garch?.longRun as number) * 100, 1)}%`],
+    ["OU half-life", `${n(q.ou?.halfLifeBars, 0)} bars`],
+    ["Hurst regime", n(q.hmm?.pStormy, 2), (q.hmm?.pStormy as number) > 0.5 ? WARN : POS],
+    ["CUSUM", n(q.changePoint?.cusum, 1), q.changePoint?.alarm ? NEG : POS],
+    ["Entropy", n(q.changePoint?.entropy, 2)],
+    ["Jumps (λ)", `${n(q.jumps?.count, 0)} (${n(q.jumps?.lambdaPerBar, 3)})`],
+    ["VaR 95%", `-${n(q.varCvar?.var95, 2)}%`, NEG],
+    ["CVaR 95%", `-${n(q.varCvar?.cvar95, 2)}%`, NEG],
+    ["Frac-diff acf", `${n(q.fracDiff?.acf1Price, 2)}→${n(q.fracDiff?.acf1FracDiff, 2)}`],
+    ["Kyle λ", String(q.kyle?.lambda ?? "—")],
+    ["Hawkes", n(q.hawkes?.intensity, 3)],
+    ...(q.cointegration ? [["Coint z", n(q.cointegration?.z, 2), Math.abs(q.cointegration?.z as number) > 2 ? WARN : undefined] as [string, string, string?]] : []),
+    ...(q.copula ? [["Co-crash", n(q.copula?.coCrashProb, 3), (q.copula?.coCrashProb as number) > 0.1 ? NEG : undefined] as [string, string, string?]] : []),
+  ];
+  return <div className="axo-quant">{items.map(([l, v, c]) => <div key={l} className="axo-ql"><span>{l}</span><b style={c ? { color: c } : undefined}>{v}</b></div>)}</div>;
 }
 
 function kpi(l: string, v: string, c: string) { return <div className="axo-kpi"><span>{l}</span><b style={{ color: c }}>{v}</b></div>; }
@@ -234,7 +284,12 @@ const OVERLAY_CSS = `
 .axo-opt-tag { font-size:10px; }
 .axo-opt-grid { display:grid; grid-template-columns:repeat(4,1fr); gap:8px 10px; }
 .axo-ov { display:flex; flex-direction:column; gap:1px; } .axo-ov span { font-size:7.5px; color:var(--ax-dim,#6b7683); letter-spacing:.03em; } .axo-ov b { font-family:var(--ax-mono); font-size:11.5px; }
+.axo-opt-sub { font-size:8px; font-weight:700; letter-spacing:.06em; color:var(--ax-dim,#6b7683); margin:10px 0 4px; }
+.axo-payoff { width:100%; height:120px; display:block; }
 .axo-opt-note { font-size:8.5px; color:var(--ax-dim,#6b7683); margin-top:9px; line-height:1.4; }
+.axo-quant { display:grid; grid-template-columns:1fr 1fr; gap:3px 10px; }
+.axo-ql { display:flex; justify-content:space-between; align-items:baseline; padding:3px 0; border-bottom:1px solid var(--ax-hair,rgba(255,255,255,.05)); font-size:10px; }
+.axo-ql span { color:var(--ax-mut,#9aa7b4); } .axo-ql b { font-family:var(--ax-mono); font-size:10.5px; font-weight:600; }
 .axo-pkgs { display:flex; flex-direction:column; gap:4px; }
 .axo-pkg { display:grid; grid-template-columns:70px 1fr 44px; gap:8px; align-items:center; font-size:10.5px; }
 .axo-pkg-l { color:var(--ax-mut,#9aa7b4); text-transform:capitalize; }
