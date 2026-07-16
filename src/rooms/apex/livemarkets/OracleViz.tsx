@@ -164,7 +164,70 @@ export function TimeMachine({ symbol }: { symbol: string }) {
   );
 }
 
+/* 8. NEWS INTELLIGENCE — multi-source event feed + propagation tree (how a story ripples out). */
+interface NIItem { title: string; source: string; corroboration: number; ageH: number; eventLabel: string; event: string; sentiment: number; impact: number }
+interface NIProp { sym: string; kind: string; rho: number | null; effect: number; dir: string }
+interface NewsIntelData { symbol: string; count: number; sources: string[]; newsScore: number; bull: number; bear: number; items: NIItem[]; propagation: NIProp[]; topEvents: { label: string; n: number }[] }
+export function NewsIntel({ symbol, onPick }: { symbol: string; onPick: (s: string) => void }) {
+  const [d, setD] = useState<NewsIntelData | null>(null);
+  const [busy, setBusy] = useState(false);
+  useEffect(() => { let dead = false; setD(null); setBusy(true); fetch(`/api/apex/predict/${encodeURIComponent(symbol)}/news`).then((r) => r.json()).then((j) => { if (!dead && j && j.items) setD(j); }).catch(() => {}).finally(() => !dead && setBusy(false)); return () => { dead = true; }; }, [symbol]);
+  if (busy && !d) return <div className="axv-ni-empty">Scanning news wires…</div>;
+  if (!d) return <div className="axv-ni-empty">No news data.</div>;
+  const sc = d.newsScore >= 0.1 ? POS : d.newsScore <= -0.1 ? NEG : "#9aa7b4";
+  const evColor = (s: number) => s > 0.1 ? POS : s < -0.1 ? NEG : "#6b7683";
+  return (
+    <div className="axv-ni">
+      <div className="axv-ni-hero">
+        <div className="axv-ni-score" style={{ color: sc }}>{d.newsScore >= 0 ? "+" : ""}{d.newsScore.toFixed(2)}</div>
+        <div className="axv-ni-meta"><span><b>{d.count}</b> stories · <b>{d.sources.length}</b> sources</span><span className="axv-ni-bb"><i style={{ color: POS }}>{d.bull}▲</i> <i style={{ color: NEG }}>{d.bear}▼</i></span></div>
+        <div className="axv-ni-events">{d.topEvents.map((e) => <span key={e.label} className="axv-ni-ev">{e.label}{e.n > 1 ? ` ×${e.n}` : ""}</span>)}</div>
+      </div>
+      <div className="axv-ni-cols">
+        <div className="axv-ni-feed">
+          {d.items.slice(0, 10).map((it, i) => (
+            <div key={i} className="axv-ni-row">
+              <span className="axv-ni-badge" style={{ borderColor: evColor(it.sentiment), color: evColor(it.sentiment) }}>{it.event === "general" ? "•" : it.eventLabel}</span>
+              <span className="axv-ni-title">{it.title}</span>
+              <span className="axv-ni-src">{it.source}{it.corroboration > 1 ? ` ·×${it.corroboration}` : ""} · {it.ageH < 24 ? `${it.ageH.toFixed(0)}h` : `${(it.ageH / 24).toFixed(0)}d`}</span>
+            </div>
+          ))}
+        </div>
+        <div className="axv-ni-tree">
+          <div className="axv-ni-tree-h">PROPAGATION — how this ripples out</div>
+          <svg viewBox="0 0 240 168" className="axv" preserveAspectRatio="xMidYMid meet">
+            {d.propagation.map((p, i) => { const n = d.propagation.length; const y = 14 + (i / Math.max(1, n - 1)) * 140; const c = p.effect > 0.05 ? POS : p.effect < -0.05 ? NEG : "#6b7683"; const w = 0.6 + Math.abs(p.effect) * 4; return (
+              <g key={p.sym}>
+                <path d={`M40,84 C90,84 100,${y} 150,${y}`} fill="none" stroke={c} strokeWidth={w} opacity="0.55" />
+                <circle cx={150} cy={y} r={7} fill={`${c}22`} stroke={c} strokeWidth="1.2" onClick={() => onPick(p.sym)} style={{ cursor: "pointer" }} />
+                <text x={162} y={y - 2} fill="#c9d4e0" fontSize="8" fontFamily="var(--ax-mono,monospace)">{p.sym}</text>
+                <text x={162} y={y + 7} fill="#6b7683" fontSize="6">{p.kind}{p.rho != null ? ` ρ${p.rho}` : ""}</text>
+              </g>
+            ); })}
+            <circle cx={40} cy={84} r={13} fill="#141a22" stroke={sc} strokeWidth="1.6" />
+            <text x={40} y={87} fill="#e6edf3" fontSize="8" fontWeight="700" textAnchor="middle" fontFamily="var(--ax-mono,monospace)">{d.symbol}</text>
+          </svg>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export const VIZ_CSS = `
+.axv-ni-empty { padding:14px; color:var(--ax-dim,#6b7683); font-size:11px; }
+.axv-ni-hero { display:flex; align-items:center; gap:14px; flex-wrap:wrap; margin-bottom:9px; }
+.axv-ni-score { font-family:var(--ax-mono); font-size:22px; font-weight:800; }
+.axv-ni-meta { display:flex; flex-direction:column; gap:2px; font-size:10.5px; color:var(--ax-mut,#9aa7b4); }
+.axv-ni-meta b { color:var(--ax-tx,#e6edf3); font-family:var(--ax-mono); } .axv-ni-bb i { font-style:normal; font-family:var(--ax-mono); margin-right:6px; }
+.axv-ni-events { display:flex; gap:5px; flex-wrap:wrap; margin-left:auto; }
+.axv-ni-ev { font-size:9px; color:var(--ax-cydim,#4d9fd1); border:1px solid color-mix(in srgb, ${CY} 30%, transparent); border-radius:4px; padding:2px 7px; }
+.axv-ni-cols { display:grid; grid-template-columns:1.3fr 1fr; gap:14px; }
+.axv-ni-feed { display:flex; flex-direction:column; max-height:230px; overflow-y:auto; }
+.axv-ni-row { display:grid; grid-template-columns:auto 1fr; gap:5px 8px; padding:5px 2px; border-bottom:1px solid var(--ax-hair,rgba(255,255,255,.05)); align-items:baseline; }
+.axv-ni-badge { grid-row:1; font-size:7.5px; font-weight:700; letter-spacing:.03em; border:1px solid; border-radius:3px; padding:1px 5px; white-space:nowrap; align-self:start; }
+.axv-ni-title { grid-row:1; font-size:11px; line-height:1.35; color:var(--ax-tx,#e6edf3); }
+.axv-ni-src { grid-column:2; grid-row:2; font-size:8.5px; color:var(--ax-dim,#6b7683); font-family:var(--ax-mono); }
+.axv-ni-tree-h { font-size:8px; letter-spacing:.05em; color:var(--ax-dim,#6b7683); margin-bottom:4px; }
 .axv-tm-run, .axv-tm-re { background:color-mix(in srgb, ${PUR} 14%, transparent); border:1px solid color-mix(in srgb, ${PUR} 40%, transparent); color:${PUR}; border-radius:5px; padding:7px; font-size:11px; font-weight:600; cursor:pointer; font-family:inherit; }
 .axv-tm-run { width:100%; } .axv-tm-run:disabled { opacity:.6; }
 .axv-tm-re { padding:3px 8px; font-size:10px; }

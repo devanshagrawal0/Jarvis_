@@ -16,6 +16,7 @@ const { buildPackages } = require("./signals");
 const { fuse } = require("./ensemble");
 const { computeQuant } = require("./phd");
 const { metaTest } = require("./metamodel");
+const { analyzeNews } = require("./news-intel");
 const { bs } = require("./options");
 const { clamp } = require("./mathx");
 
@@ -137,6 +138,21 @@ function createOracle({ runtimeDir, getBars, priceAt, getNews = null, callModel 
     // signal packages → crossScore (best-effort; tolerant of fetch failures)
     let sig = { crossScore: regime.trendScore, packages: { technical: regime.trendScore, news: 0, peer: 0, sector: 0, macro: 0 }, detail: {}, weights: {} };
     try { sig = await buildPackages(symbol, bars, { getBars, getNews }); } catch { /* keep technical fallback */ }
+    // Enrich the news package with the deep News-Intelligence pipeline (multi-source + event
+    // classification), cached ~20 min so it doesn't slow every request. This makes real news
+    // move the verdict, not the thin word-counter.
+    let newsIntel = null;
+    try {
+      newsIntel = store.cacheGet(symbol, "newsintel", 20 * 60 * 1000);
+      if (!newsIntel) { newsIntel = await analyzeNews(symbol, { getBars }); if (newsIntel && newsIntel.items) store.cacheSet(symbol, "newsintel", newsIntel); }
+      if (newsIntel && newsIntel.items && newsIntel.items.length) {
+        sig.packages.news = newsIntel.newsScore;
+        sig.detail.news = { count: newsIntel.count, score: newsIntel.newsScore, events: newsIntel.topEvents };
+        const w = sig.weights && Object.keys(sig.weights).length ? sig.weights : { technical: 0.4, sector: 0.2, peer: 0.15, news: 0.15, macro: 0.1 };
+        const wSum = Object.values(w).reduce((a, b) => a + b, 0) || 1;
+        sig.crossScore = clamp(Object.keys(w).reduce((s, k) => s + w[k] * (sig.packages[k] || 0), 0) / wSum, -1, 1);
+      }
+    } catch { /* keep buildPackages news */ }
     // Jarvis synthesis (one call); deterministic fallback so the panel is never empty.
     let llm = await synthesize(symbol, regime, fc, sig);
     if (!llm) llm = deterministicThesis(symbol, regime, fc, sig);
@@ -162,7 +178,7 @@ function createOracle({ runtimeDir, getBars, priceAt, getNews = null, callModel 
       h.calibrated = !!cal;
     }
     let quant = null; try { quant = computeQuant(bars); } catch { /* optional */ }
-    const payload = { ok: true, symbol, asOf: null, spot: fc.spot, regime, muBar: fc.muBar, sigBar: fc.sigBar, ou: fc.ou, g: fc.g, horizons: fc.horizons, crossScore: sig.crossScore, packages: sig.packages, signalDetail: sig.detail, weights: sig.weights, jarvis: llm, quant, model_ver: MODEL_VER };
+    const payload = { ok: true, symbol, asOf: null, spot: fc.spot, regime, muBar: fc.muBar, sigBar: fc.sigBar, ou: fc.ou, g: fc.g, horizons: fc.horizons, crossScore: sig.crossScore, packages: sig.packages, signalDetail: sig.detail, weights: sig.weights, jarvis: llm, quant, newsIntel, model_ver: MODEL_VER };
     try { payload.report = compileReport(payload); } catch { payload.report = null; }
     const sc = selfCheck(payload);
     payload.selfCheck = sc; payload.degraded = !sc.ok;
@@ -311,7 +327,8 @@ function createOracle({ runtimeDir, getBars, priceAt, getNews = null, callModel 
     if (!Array.isArray(bars) || bars.length < 200) return { ok: false, reason: "insufficient history", symbol };
     return { ok: true, symbol, d1: metaTest(bars, 7), d5: metaTest(bars, 33) };
   }
-  return { predict, refresh, resolveDue, history, backtest, leaderboard, hindcast, metatest, computeForecast, store, model_ver: MODEL_VER };
+  const newsIntel = (symbol) => analyzeNews(symbol, { getBars });
+  return { predict, refresh, resolveDue, history, backtest, leaderboard, hindcast, metatest, newsIntel, computeForecast, store, model_ver: MODEL_VER };
 }
 
 module.exports = { createOracle };
