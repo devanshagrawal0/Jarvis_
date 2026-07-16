@@ -102,15 +102,16 @@ async function analyzeNews(symbol, deps = {}) {
     const recency = Math.exp(-(now - it.ts) / halfLifeMs);
     const novelty = 1 / it.corroboration ** 0.5;            // repeated stories add less new info
     const weight = recency * (0.6 + 0.4 * Math.min(1, it.corroboration / 3)); // corroboration adds trust
-    const impact = sentiment * ev.mag * weight;
+    const w = ev.mag * weight;                 // attention weight for this story (magnitude × recency×corroboration)
+    const impact = sentiment * w;
     if (sentiment > 0.1) bull++; else if (sentiment < -0.1) bear++;
     // tickers this headline explicitly names
     const tags = [...known].filter((t) => new RegExp(`\\b${t}\\b`).test(it.title.toUpperCase())).slice(0, 4);
-    return { title: it.title, source: it.source, sources: [...it.sources], corroboration: it.corroboration, ageH: +ageH.toFixed(1), event: ev.type, eventLabel: ev.label, sentiment: +sentiment.toFixed(2), impact: +impact.toFixed(2), tags };
+    return { title: it.title, source: it.source, sources: [...it.sources], corroboration: it.corroboration, ageH: +ageH.toFixed(1), event: ev.type, eventLabel: ev.label, sentiment: +sentiment.toFixed(2), w, impact: +impact.toFixed(2), tags };
   });
-  // aggregate
-  const wSum = items.reduce((s, x) => s + Math.abs(x.impact) + 0.01, 0);
-  const newsScore = clamp(items.reduce((s, x) => s + x.impact, 0) / (items.length ? Math.max(1, wSum * 0.4) : 1), -1, 1);
+  // aggregate = attention-weighted MEAN of sentiment (naturally in [-1,1]; no saturation).
+  const wSum = items.reduce((s, x) => s + x.w, 0) || 1;
+  const newsScore = clamp(items.reduce((s, x) => s + x.sentiment * x.w, 0) / wSum, -1, 1);
   const eventCounts = {}; for (const it of items) if (it.event !== "general") eventCounts[it.eventLabel] = (eventCounts[it.eventLabel] || 0) + 1;
 
   // ── PROPAGATION: how this news ripples to related tickers ──
