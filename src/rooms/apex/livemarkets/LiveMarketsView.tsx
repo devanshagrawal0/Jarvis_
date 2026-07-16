@@ -750,11 +750,14 @@ function StatusStrip({ live }: { live: ReturnType<typeof useApexLive> }) {
 
 const TERM_CSS = `
 .ax-term { position:relative; flex:1 1 auto; min-height:0; display:flex; flex-direction:column; gap:7px; padding:8px; font-family:var(--ax-sans); color:var(--ax-tx); overflow:hidden;
-  background:#0a0e14; font-variant-numeric:tabular-nums;
-  /* Institutional dark ramp (near-black, slight cool bias — GitHub-dark style). Solid & opaque so the
-     3D city can't bleed through. Text lifted to WCAG AA; ONE rationed accent, hairline borders, no glow. */
-  --ax-panel:#0d1117; --ax-panelhi:#141a22; --ax-surface:#0b0f16; --ax-elev:#1b232e; --ax-bd:rgba(255,255,255,.07); --ax-bdsoft:rgba(255,255,255,.05); --ax-hair:rgba(255,255,255,.045); --ax-bdglow:#2c5a74;
-  --ax-tx:#e6edf3; --ax-mut:#9aa7b4; --ax-dim:#6b7683; --ax-cydim:#4d9fd1; --ax-acc:#4d9fd1; }
+  background:radial-gradient(120% 70% at 50% -10%, rgba(18,80,120,.10), transparent 55%), linear-gradient(180deg, #030a12 0%, #01060b 100%); font-variant-numeric:tabular-nums;
+  /* Deep blue-black terminal with selective cyan energy (spec §4). Panels are cyan-tinted glass, not
+     neutral charcoal cards; borders carry cyan at ~20%, glow is rationed to selection/active. */
+  --ax-panel:rgba(6,21,33,.92); --ax-panelhi:rgba(9,32,49,.96); --ax-surface:rgba(3,14,23,.94); --ax-elev:rgba(7,26,40,.96);
+  --ax-bd:rgba(70,180,232,.20); --ax-bdsoft:rgba(70,180,232,.11); --ax-hair:rgba(110,160,195,.09); --ax-bdglow:rgba(42,201,255,.55);
+  --ax-panel-grad:radial-gradient(130% 100% at 50% -25%, rgba(22,110,155,.10), transparent 60%), linear-gradient(180deg, rgba(7,23,36,.96), rgba(2,10,17,.97));
+  --ax-panel-glow:inset 0 1px 0 rgba(255,255,255,.045), 0 2px 16px -9px rgba(0,0,0,.65);
+  --ax-tx:#dcebf7; --ax-mut:#9fb4c6; --ax-dim:#6f8698; --ax-cydim:#57b7e4; --ax-acc:#2ec7ff; }
 .ax-term *:focus-visible { outline:2px solid var(--ax-bdglow); outline-offset:1px; border-radius:4px; }
 .ax-term .axt-tip { border-bottom:1px dotted color-mix(in srgb, var(--ax-mut) 60%, transparent); cursor:help; }
 .ax-term .num, .ax-term [class*="mono"] { font-variant-numeric:tabular-nums; }
@@ -781,7 +784,7 @@ const TERM_CSS = `
 /* Main grid */
 .axt-main { flex:1; min-height:0; display:grid; grid-template-columns:236px 1fr 268px; gap:8px; }
 .axt-left, .axt-center, .axt-right { min-height:0; display:flex; flex-direction:column; gap:8px; }
-.axt-left { background:var(--ax-panel); border:1px solid var(--ax-bd); border-radius:11px; padding:9px; overflow:hidden; }
+.axt-left { background:var(--ax-panel-grad); border:1px solid var(--ax-bd); border-radius:10px; padding:9px; overflow:hidden; box-shadow:var(--ax-panel-glow); }
 .axt-right { overflow-y:auto; padding-right:3px; gap:7px; scrollbar-width:thin; scrollbar-color:var(--ax-bd) transparent; }
 .axt-right::-webkit-scrollbar { width:5px; } .axt-right::-webkit-scrollbar-thumb { background:var(--ax-bd); border-radius:3px; }
 .axt-right .axt-panel { padding:9px 11px; }
@@ -874,7 +877,7 @@ const TERM_CSS = `
 .axt-hud-speed button.on { border-color:${PUR}; color:${PUR}; }
 
 /* Right panels */
-.axt-panel { background:var(--ax-panel); border:1px solid var(--ax-bd); border-radius:11px; padding:10px 12px; flex-shrink:0; }
+.axt-panel { background:var(--ax-panel-grad); border:1px solid var(--ax-bd); border-radius:10px; padding:10px 12px; flex-shrink:0; box-shadow:var(--ax-panel-glow); }
 .axt-ph { font-size:9px; font-weight:700; letter-spacing:.1em; color:var(--ax-cydim); margin-bottom:9px; display:flex; align-items:center; justify-content:space-between; }
 .axt-stats { display:grid; grid-template-columns:1fr 1fr; gap:3px 14px; }
 .axt-statrow { display:flex; justify-content:space-between; align-items:baseline; padding:3px 0; border-bottom:1px solid var(--ax-hair); font-size:10.5px; }
@@ -914,7 +917,7 @@ const TERM_CSS = `
 
 /* Bottom */
 .axt-bottom { flex-shrink:0; height:186px; display:grid; grid-template-columns:repeat(6,1fr); gap:8px; }
-.axt-bpanel { background:var(--ax-panel); border:1px solid var(--ax-bd); border-radius:10px; padding:8px 10px; min-width:0; display:flex; flex-direction:column; overflow:hidden; }
+.axt-bpanel { background:var(--ax-panel-grad); border:1px solid var(--ax-bd); border-radius:10px; padding:8px 10px; min-width:0; display:flex; flex-direction:column; overflow:hidden; box-shadow:var(--ax-panel-glow); }
 .axt-bph { font-size:8.5px; font-weight:700; letter-spacing:.08em; color:var(--ax-cydim); margin-bottom:6px; display:flex; justify-content:space-between; align-items:baseline; }
 .axt-bph span { font-weight:500; color:var(--ax-dim); letter-spacing:.02em; }
 .axt-ts, .axt-ob, .axt-of, .axt-corr, .axt-opt, .axt-scan { flex:1; overflow-y:auto; font-family:var(--ax-mono); font-size:9.5px; }
