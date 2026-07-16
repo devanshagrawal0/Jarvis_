@@ -97,6 +97,8 @@ export function LiveMarketsView() {
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchIdx, setSearchIdx] = useState(0);
   const searchResults = useMemo(() => searchInstruments(search), [search]);
+  const [layout, setLayout] = useState<"standard" | "chart" | "exec">(() => { try { return (localStorage.getItem("apex.lm.layout") as "standard" | "chart" | "exec") || "standard"; } catch { return "standard"; } });
+  const pickLayout = useCallback((l: "standard" | "chart" | "exec") => { setLayout(l); try { localStorage.setItem("apex.lm.layout", l); } catch { /* ignore */ } }, []);
   const [watchTab, setWatchTab] = useState("Stocks");
   const [leftTab, setLeftTab] = useState<"watch" | "screener" | "heat">("watch");
   const [favorites, setFavorites] = useState<string[]>(["NVDA", "AAPL", "TSLA"]);
@@ -169,7 +171,7 @@ export function LiveMarketsView() {
   const searchGo = (e: React.FormEvent) => { e.preventDefault(); if (search.trim()) { changeSym(search); setSearch(""); } };
 
   return (
-    <div className="ax-term">
+    <div className={`ax-term axl-${layout}`}>
       <style>{TERM_CSS}</style>
 
       {/* ── Toolbar ── */}
@@ -205,6 +207,11 @@ export function LiveMarketsView() {
           <span className="axt-pop-l">POPULAR</span>
           {["NVDA", "SPY", "BTCUSDT", "ETHUSDT", "TSLA", "SOLUSDT"].map((s) => (
             <button key={s} className={`axt-chip${symbol === s ? " on" : ""}`} onClick={() => changeSym(s)}>{isCrypto(s) ? s.replace("USDT", "") : s}</button>
+          ))}
+        </div>
+        <div className="axt-layouts" role="group" aria-label="Layout preset">
+          {([["standard", "▦", "Standard"], ["chart", "▭", "Chart focus"], ["exec", "▤", "Execution"]] as const).map(([k, ic, lbl]) => (
+            <button key={k} className={`axt-lyt${layout === k ? " on" : ""}`} title={lbl} aria-label={lbl} onClick={() => pickLayout(k)}>{ic}</button>
           ))}
         </div>
         <div className="axt-actions">
@@ -844,13 +851,24 @@ const TERM_CSS = `
 .axt-pop-l { font-size:8.5px; letter-spacing:.1em; color:var(--ax-dim); font-weight:700; }
 .axt-chip { background:var(--ax-elev); border:1px solid var(--ax-bdsoft); color:var(--ax-mut); border-radius:6px; padding:5px 10px; font-size:11px; font-weight:700; font-family:var(--ax-mono); }
 .axt-chip.on, .axt-chip:hover { border-color:var(--ax-bdglow); color:var(--ax-acc); background:var(--ax-panelhi); }
-.axt-actions { margin-left:auto; display:flex; gap:7px; }
+.axt-layouts { margin-left:auto; display:inline-flex; gap:2px; background:var(--ax-surface); border:1px solid var(--ax-bd); border-radius:8px; padding:2px; }
+.axt-lyt { background:none; border:none; color:var(--ax-dim); font-size:13px; padding:3px 9px; border-radius:6px; line-height:1; }
+.axt-lyt:hover { color:var(--ax-mut); }
+.axt-lyt.on { background:color-mix(in srgb, ${CY} 18%, transparent); color:var(--ax-acc); }
+.axt-actions { margin-left:8px; display:flex; gap:7px; }
 .axt-act { background:var(--ax-surface); border:1px solid var(--ax-bdsoft); color:var(--ax-mut); border-radius:8px; padding:7px 12px; font-size:11px; font-weight:600; }
 .axt-act:hover { border-color:var(--ax-bdglow); color:var(--ax-tx); }
 .axt-act.primary { background:color-mix(in srgb, ${CY} 16%, transparent); border-color:color-mix(in srgb, ${CY} 45%, transparent); color:${CY}; }
 
 /* Main grid */
 .axt-main { flex:1; min-height:0; display:grid; grid-template-columns:236px 1fr 268px; gap:8px; }
+/* Layout presets (§8): Standard = default; Chart focus = hide right rail + dock; Execution = slimmer
+   rails + taller microstructure dock. Persisted to localStorage. */
+.axl-chart .axt-main { grid-template-columns:236px 1fr; }
+.axl-chart .axt-right { display:none; }
+.axl-chart .axt-bottom { display:none; }
+.axl-exec .axt-main { grid-template-columns:200px 1fr 224px; }
+.axl-exec .axt-bottom { height:252px; }
 .axt-left, .axt-center, .axt-right { min-height:0; display:flex; flex-direction:column; gap:8px; }
 .axt-left { background:var(--ax-panel-grad); border:1px solid var(--ax-bd); border-radius:10px; padding:9px; overflow:hidden; box-shadow:var(--ax-panel-glow); }
 .axt-right { overflow-y:auto; padding-right:3px; gap:7px; scrollbar-width:thin; scrollbar-color:var(--ax-bd) transparent; }
