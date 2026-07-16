@@ -29,24 +29,90 @@ export interface OracleReport {
 }
 const toneColor = (t: string) => t === "pos" ? POS : t === "neg" ? NEG : t === "warn" ? WARN : "#9aa7b4";
 
+// ── Holographic visual primitives ─────────────────────────────────────────
+// Radial gauge: a 240° arc filled to `value` (0..1), glowing, big number in the centre.
+function RadialGauge({ value, label, color, sub, size = 92 }: { value: number; label: string; color: string; sub?: string; size?: number }) {
+  const v = Math.max(0, Math.min(1, value));
+  const R = 38, cx = 50, cy = 50, start = 150, sweep = 240; // degrees
+  const pol = (deg: number) => { const a = (deg * Math.PI) / 180; return [cx + R * Math.cos(a), cy + R * Math.sin(a)]; };
+  const arc = (frac: number) => { const a0 = start, a1 = start + sweep * frac; const [x0, y0] = pol(a0), [x1, y1] = pol(a1); const large = sweep * frac > 180 ? 1 : 0; return `M${x0.toFixed(2)},${y0.toFixed(2)} A${R},${R} 0 ${large} 1 ${x1.toFixed(2)},${y1.toFixed(2)}`; };
+  const uid = `g${label}${Math.round(v * 100)}`;
+  return (
+    <div className="axo-gauge" style={{ width: size }}>
+      <svg viewBox="0 0 100 100" style={{ width: size, height: size, display: "block" }}>
+        <defs><linearGradient id={uid} x1="0" y1="0" x2="1" y2="1"><stop offset="0" stopColor={color} stopOpacity="0.5" /><stop offset="1" stopColor={color} /></linearGradient>
+          <filter id={`${uid}f`} x="-40%" y="-40%" width="180%" height="180%"><feGaussianBlur stdDeviation="2.2" result="b" /><feMerge><feMergeNode in="b" /><feMergeNode in="SourceGraphic" /></feMerge></filter></defs>
+        <path d={arc(1)} fill="none" stroke="#1b2430" strokeWidth="8" strokeLinecap="round" />
+        <path d={arc(v)} fill="none" stroke={`url(#${uid})`} strokeWidth="8" strokeLinecap="round" filter={`url(#${uid}f)`} />
+        <text x="50" y="47" textAnchor="middle" fontSize="23" fontWeight="800" fill={color} fontFamily="var(--ax-mono,monospace)">{Math.round(v * 100)}</text>
+        <text x="50" y="60" textAnchor="middle" fontSize="8" fill="var(--ax-dim,#6b7683)">%</text>
+      </svg>
+      <div className="axo-gauge-l">{label}</div>
+      {sub ? <div className="axo-gauge-s" style={{ color }}>{sub}</div> : null}
+    </div>
+  );
+}
+
+// Forward forecast cone from the 5 horizons: p50 line + p05/p95 shaded band, starting at spot.
+function MiniForecast({ horizons, spot, color }: { horizons: OracleHorizon[]; spot: number; color: string }) {
+  const hs = horizons;
+  if (!hs.length || !Number.isFinite(spot)) return null;
+  const pts = [{ p05: spot, p50: spot, p95: spot }, ...hs.map((h) => ({ p05: h.p05, p50: h.p50, p95: h.p95 }))];
+  const lo = Math.min(...pts.map((p) => p.p05)), hi = Math.max(...pts.map((p) => p.p95));
+  const W = 210, H = 78, pad = 3;
+  const X = (i: number) => pad + (i / (pts.length - 1)) * (W - pad * 2);
+  const Y = (v: number) => hi === lo ? H / 2 : pad + (1 - (v - lo) / (hi - lo)) * (H - pad * 2);
+  const top = pts.map((p, i) => `${X(i).toFixed(1)},${Y(p.p95).toFixed(1)}`).join(" ");
+  const bot = pts.map((p, i) => `${X(i).toFixed(1)},${Y(p.p05).toFixed(1)}`).reverse().join(" ");
+  const mid = pts.map((p, i) => `${i === 0 ? "M" : "L"}${X(i).toFixed(1)},${Y(p.p50).toFixed(1)}`).join(" ");
+  const uid = `cone${Math.round(spot)}`;
+  return (
+    <svg viewBox={`0 0 ${W} ${H}`} className="axo-cone" preserveAspectRatio="none">
+      <defs><linearGradient id={uid} x1="0" y1="0" x2="0" y2="1"><stop offset="0" stopColor={color} stopOpacity="0.28" /><stop offset="1" stopColor={color} stopOpacity="0.03" /></linearGradient></defs>
+      <line x1={pad} y1={Y(spot)} x2={W - pad} y2={Y(spot)} stroke="#2a3542" strokeWidth="0.7" strokeDasharray="2 3" />
+      <polygon points={`${top} ${bot}`} fill={`url(#${uid})`} />
+      <path d={mid} fill="none" stroke={color} strokeWidth="1.6" />
+      {pts.map((p, i) => i > 0 && i === pts.length - 1 ? <circle key={i} cx={X(i)} cy={Y(p.p50)} r="2.4" fill={color} /> : null)}
+      {hs.map((h, i) => <text key={h.horizon} x={X(i + 1)} y={H - 1} textAnchor="middle" fontSize="6.5" fill="var(--ax-dim,#6b7683)" fontFamily="var(--ax-mono,monospace)">{h.horizon}</text>)}
+    </svg>
+  );
+}
+
+// Diverging score meter: −1…+1 centred bar for a signal-package score.
+function ScoreMeter({ score }: { score: number }) {
+  const v = Math.max(-1, Math.min(1, score));
+  const c = v > 0.08 ? POS : v < -0.08 ? NEG : "#8794a3";
+  return (
+    <span className="axo-meter" title={`${v >= 0 ? "+" : ""}${v.toFixed(2)}`}>
+      <span className="axo-meter-mid" />
+      <span className="axo-meter-fill" style={{ background: c, width: `${Math.abs(v) * 50}%`, left: v >= 0 ? "50%" : `${50 - Math.abs(v) * 50}%` }} />
+    </span>
+  );
+}
+
 // The algo verdict card — labelled signal + up/down/stable + bullet-point proof per source.
 function AlgoReport({ r }: { r: OracleReport }) {
   const sc = toneColor(r.signal.tone);
   const dirColor = r.verdict.direction === "UP" ? POS : r.verdict.direction === "DOWN" ? NEG : WARN;
   return (
     <div className="axo-report">
-      <div className="axo-rp-hero">
-        <div className="axo-rp-signal" style={{ color: sc, borderColor: sc }}>{r.signal.label}</div>
-        <div className="axo-rp-verdict">
-          <div className="axo-rp-dir" style={{ color: dirColor }}>{r.verdict.direction === "UP" ? "▲" : r.verdict.direction === "DOWN" ? "▼" : "▬"} {r.verdict.direction} ~{r.verdict.magnitudePct}%<span> / {r.verdict.horizon}</span></div>
-          <div className="axo-rp-meta"><span>{r.verdict.pUp}% chance up</span><span className="axo-rp-conf">confidence <b>{r.verdict.confidence}%</b></span></div>
+      <div className="axo-rp-hero" style={{ ["--tc" as string]: sc }}>
+        <div className="axo-rp-badge">
+          <div className="axo-rp-badge-k">ALGO VERDICT</div>
+          <div className="axo-rp-signal" style={{ color: sc }}>{r.signal.label}</div>
+          <div className="axo-rp-dir" style={{ color: dirColor }}>{r.verdict.direction === "UP" ? "▲" : r.verdict.direction === "DOWN" ? "▼" : "▬"} {r.verdict.direction} ~{r.verdict.magnitudePct}% <span>/ {r.verdict.horizon}</span></div>
+        </div>
+        <div className="axo-rp-stats">
+          <div className="axo-rp-stat"><span>P(UP)</span><b style={{ color: r.verdict.pUp >= 50 ? POS : NEG }}>{r.verdict.pUp}%</b></div>
+          <div className="axo-rp-stat"><span>CONFIDENCE</span><b>{r.verdict.confidence}%</b></div>
+          <div className="axo-rp-stat"><span>SIGNAL</span><b style={{ color: r.crossScore >= 0 ? POS : NEG }}>{r.crossScore >= 0 ? "+" : ""}{r.crossScore.toFixed(2)}</b></div>
         </div>
       </div>
       <p className="axo-rp-summary">{r.summary}</p>
       <div className="axo-rp-sections">
         {r.sections.map((s) => (
           <div key={s.title} className="axo-rp-sec">
-            <div className="axo-rp-sec-h"><span>{s.title}</span><b style={{ color: s.score > 0.08 ? POS : s.score < -0.08 ? NEG : "#9aa7b4" }}>{s.score >= 0 ? "+" : ""}{s.score.toFixed(2)}</b></div>
+            <div className="axo-rp-sec-h"><span>{s.title}</span><span className="axo-rp-sec-sc"><ScoreMeter score={s.score} /><b style={{ color: s.score > 0.08 ? POS : s.score < -0.08 ? NEG : "#9aa7b4" }}>{s.score >= 0 ? "+" : ""}{s.score.toFixed(2)}</b></span></div>
             {s.bullets.map((b, i) => <div key={i} className="axo-rp-bullet"><span className="axo-rp-mk" style={{ color: b.dir > 0 ? POS : b.dir < 0 ? NEG : "#6b7683" }}>{b.dir > 0 ? "▲" : b.dir < 0 ? "▼" : "•"}</span>{b.t}</div>)}
           </div>
         ))}
@@ -101,20 +167,35 @@ export function OracleCard({ o, loading, onExpand, onRefresh }: { o: OraclePaylo
       </div>
       {!o ? <div className="axo-empty">{loading ? "Computing forecast…" : "No forecast."}</div> : (
         <>
-          {o.report ? <div className="axo-signal-chip" style={{ color: toneColor(o.report.signal.tone), borderColor: toneColor(o.report.signal.tone) }}>{o.report.signal.label} · {o.report.verdict.direction} ~{o.report.verdict.magnitudePct}% / 5d</div> : null}
-          <div className="axo-regime"><span className="axo-reg-dot" style={{ background: rc }} /><b style={{ color: rc }}>{o.regime.label.replace("_", " ")}</b><em>conf {(o.regime.confidence * 100).toFixed(0)}%</em>{o.degraded && <span className="axo-degraded">degraded</span>}</div>
-          {oneDay && (
-            <div className="axo-call">
-              <div className="axo-call-dir" style={{ color: oneDay.dir === "LONG" ? POS : NEG }}>{oneDay.dir === "LONG" ? "▲ LONG" : "▼ SHORT"}</div>
-              <div className="axo-call-meta"><span>1-day P(up) <b style={{ color: oneDay.pUp >= 0.5 ? POS : NEG }}>{(oneDay.pUp * 100).toFixed(0)}%</b></span><span>target <b>{money(oneDay.p50)}</b> <em style={{ color: oneDay.predRet >= 0 ? POS : NEG }}>{pctS(oneDay.predRet)}</em></span></div>
-            </div>
-          )}
+          {(() => {
+            const rep = o.report; const tone = rep ? rep.signal.tone : "neutral"; const tc = toneColor(tone);
+            const conf = rep ? rep.verdict.confidence : (oneDay ? Math.round(oneDay.confidence * 100) : 50);
+            const pUp = rep ? rep.verdict.pUp : (oneDay ? Math.round(oneDay.pUp * 100) : 50);
+            const dc = rep ? (rep.verdict.direction === "UP" ? POS : rep.verdict.direction === "DOWN" ? NEG : WARN) : PUR;
+            return (
+              <div className="axo-sum" style={{ ["--tc" as string]: tc }}>
+                <div className="axo-sum-top">
+                  <span className="axo-sum-sig" style={{ color: tc }}>{rep ? rep.signal.label : (oneDay ? oneDay.dir : "—")}</span>
+                  {rep && <span className="axo-sum-dir" style={{ color: dc }}>{rep.verdict.direction === "UP" ? "▲" : rep.verdict.direction === "DOWN" ? "▼" : "▬"} {rep.verdict.direction} ~{rep.verdict.magnitudePct}%<em> / 5d</em></span>}
+                </div>
+                <div className="axo-sum-chips">
+                  <span className="axo-chip">P(up) <b style={{ color: pUp >= 50 ? POS : NEG }}>{pUp}%</b></span>
+                  <span className="axo-chip">Conf <b>{conf}%</b></span>
+                  <span className="axo-chip">Regime <b style={{ color: rc }}>{o.regime.label.replace("_", " ")}</b></span>
+                  {o.degraded && <span className="axo-chip axo-chip-warn">degraded</span>}
+                </div>
+              </div>
+            );
+          })()}
+          <div className="axo-cone-wrap"><div className="axo-cone-h">5-HORIZON FORECAST <em>{money(o.spot)} → {money(o.horizons[o.horizons.length - 1]?.p50)}</em></div><MiniForecast horizons={o.horizons} spot={o.spot} color={rc} /></div>
           <div className="axo-horizons">
             {o.horizons.map((h) => (
               <div key={h.horizon} className="axo-hz" title={`${h.dir} · P(up) ${(h.pUp * 100).toFixed(0)}% · conf ${(h.confidence * 100).toFixed(0)}%`}>
                 <span className="axo-hz-k">{h.horizon}</span>
-                <span className="axo-hz-bar"><span style={{ width: `${h.pUp * 100}%`, background: h.dir === "LONG" ? POS : NEG }} /></span>
-                <span className="axo-hz-p" style={{ color: h.dir === "LONG" ? POS : NEG }}>{(h.pUp * 100).toFixed(0)}</span>
+                <span className="axo-hz-dir" style={{ color: h.dir === "LONG" ? POS : NEG }}>{h.dir === "LONG" ? "▲" : "▼"}</span>
+                <span className="axo-hz-bar"><span className="axo-hz-mid" /><span style={{ width: `${Math.abs(h.pUp - 0.5) * 200}%`, left: h.pUp >= 0.5 ? "50%" : `${h.pUp * 100}%`, background: h.dir === "LONG" ? POS : NEG }} /></span>
+                <span className="axo-hz-p" style={{ color: h.dir === "LONG" ? POS : NEG }}>{(h.pUp * 100).toFixed(0)}%</span>
+                <span className="axo-hz-t">{money(h.p50)}</span>
               </div>
             ))}
           </div>
@@ -129,28 +210,115 @@ export function OracleCard({ o, loading, onExpand, onRefresh }: { o: OraclePaylo
 /* Full-screen expandable overlay. */
 export function OracleOverlay({ o, hist, bars, loading, resolvedNote, onClose, onRefresh, onPick }: { o: OraclePayload | null; hist: OracleHistory | null; bars?: Bar[]; loading: boolean; resolvedNote: string | null; onClose: () => void; onRefresh: () => void; onPick: (s: string) => void }) {
   const [sel, setSel] = useState("1d");
+  const [tab, setTab] = useState<"home" | "analysis" | "tools">("home");
   const h = o?.horizons.find((x) => x.horizon === sel) || o?.horizons[0];
   const rc = o ? regimeColor(o.regime.label) : PUR;
   const pkgOrder = ["technical", "sector", "peer", "news", "macro"];
+  const rep = o?.report || null;
+  const tc = rep ? toneColor(rep.signal.tone) : PUR;
   return (
     <div className="axo-back" onClick={onClose}>
       <div className="axo-full" onClick={(e) => e.stopPropagation()}>
         <div className="axo-full-h">
           <span className="axo-full-t">◎ ORACLE · {o?.symbol}</span>
           {o && <span className="axo-full-reg" style={{ color: rc }}>{o.regime.label.replace("_", " ")} · conf {(o.regime.confidence * 100).toFixed(0)}%</span>}
+          <span className="axo-tabs">
+            {(["home", "analysis", "tools"] as const).map((t) => <button key={t} className={`axo-tab${tab === t ? " on" : ""}`} onClick={() => setTab(t)}>{t === "home" ? "Home" : t === "analysis" ? "Analysis" : "Tools"}</button>)}
+          </span>
           <span className="axo-full-actions"><button className="axo-mini" onClick={onRefresh}>{loading ? "…" : "↻ Refresh"}</button><span className="axo-x" onClick={onClose}>✕</span></span>
         </div>
         {resolvedNote && <div className="axo-resolved">✓ {resolvedNote}</div>}
         {!o ? <div className="axo-empty" style={{ padding: 40 }}>{loading ? "Computing…" : "No forecast."}</div> : (
           <div className="axo-full-scroll">
-          {o.report ? <AlgoReport r={o.report} /> : null}
-          <div className="axo-newsband"><div className="axo-sec" style={{ margin: "0 0 6px" }}>NEWS INTELLIGENCE <em>multi-source · event-classified · propagation</em></div><NewsIntel symbol={o.symbol} onPick={onPick} /><div style={{ marginTop: 10 }}><NewsStudy symbol={o.symbol} /></div></div>
+
+          {/* ───────────── HOME — clean summary: signal · graph · signals · news ───────────── */}
+          {tab === "home" && (
+            <div className="axo-pane">
+              {rep && (
+                <div className="axo-hsum" style={{ ["--tc" as string]: tc }}>
+                  <div className="axo-hsum-l">
+                    <div className="axo-hsum-k">ALGO VERDICT · {rep.verdict.horizon}</div>
+                    <div className="axo-hsum-sig" style={{ color: tc }}>{rep.signal.label}</div>
+                    <div className="axo-hsum-dir" style={{ color: rep.verdict.direction === "UP" ? POS : rep.verdict.direction === "DOWN" ? NEG : WARN }}>{rep.verdict.direction === "UP" ? "▲" : rep.verdict.direction === "DOWN" ? "▼" : "▬"} {rep.verdict.direction} ~{rep.verdict.magnitudePct}%</div>
+                  </div>
+                  <div className="axo-hsum-stats">
+                    <div className="axo-hstat"><span>P(UP)</span><b style={{ color: rep.verdict.pUp >= 50 ? POS : NEG }}>{rep.verdict.pUp}%</b></div>
+                    <div className="axo-hstat"><span>CONFIDENCE</span><b>{rep.verdict.confidence}%</b></div>
+                    <div className="axo-hstat"><span>SIGNAL FORCE</span><b style={{ color: o.crossScore >= 0 ? POS : NEG }}>{o.crossScore >= 0 ? "+" : ""}{o.crossScore.toFixed(2)}</b></div>
+                    <div className="axo-hstat"><span>REGIME</span><b style={{ color: rc }}>{o.regime.label.replace("_", " ")}</b></div>
+                  </div>
+                </div>
+              )}
+              {rep && <p className="axo-hsummary">{rep.summary}</p>}
+              <div className="axo-hgrid">
+                <div className="axo-hcard">
+                  <div className="axo-sec">5-HORIZON FORECAST <em>{money(o.spot)} → {money(o.horizons[o.horizons.length - 1]?.p50)}</em></div>
+                  <MiniForecast horizons={o.horizons} spot={o.spot} color={rc} />
+                  <div className="axo-horizons" style={{ marginTop: 8 }}>
+                    {o.horizons.map((x) => (
+                      <div key={x.horizon} className="axo-hz">
+                        <span className="axo-hz-k">{x.horizon}</span>
+                        <span className="axo-hz-dir" style={{ color: x.dir === "LONG" ? POS : NEG }}>{x.dir === "LONG" ? "▲" : "▼"}</span>
+                        <span className="axo-hz-bar"><span className="axo-hz-mid" /><span style={{ width: `${Math.abs(x.pUp - 0.5) * 200}%`, left: x.pUp >= 0.5 ? "50%" : `${x.pUp * 100}%`, background: x.dir === "LONG" ? POS : NEG }} /></span>
+                        <span className="axo-hz-p" style={{ color: x.dir === "LONG" ? POS : NEG }}>{(x.pUp * 100).toFixed(0)}%</span>
+                        <span className="axo-hz-t">{money(x.p50)}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+                <div className="axo-hcard">
+                  <div className="axo-sec">ALL SIGNALS <em>crossScore {o.crossScore >= 0 ? "+" : ""}{o.crossScore.toFixed(2)}</em></div>
+                  <div className="axo-pkgs">
+                    {pkgOrder.map((k) => { const v = o.packages[k] ?? 0; return (
+                      <div key={k} className="axo-pkg"><span className="axo-pkg-l">{k}</span><span className="axo-pkg-track"><span className="axo-pkg-fill" style={{ width: `${Math.abs(v) * 50}%`, marginLeft: v < 0 ? `${50 - Math.abs(v) * 50}%` : "50%", background: v >= 0 ? POS : NEG }} /></span><span className="axo-pkg-v" style={{ color: v >= 0 ? POS : NEG }}>{v >= 0 ? "+" : ""}{v.toFixed(2)}</span></div>
+                    ); })}
+                  </div>
+                  {rep?.flags.length ? <div className="axo-rp-flags" style={{ marginTop: 12 }}><span className="axo-rp-flags-h">⚠ WATCH</span>{rep.flags.slice(0, 3).map((f, i) => <div key={i} className="axo-rp-flag">{f}</div>)}</div> : null}
+                </div>
+              </div>
+              <div className="axo-sec">NEWS INTELLIGENCE <em>surprise · reaction-gap · propagation</em></div>
+              <NewsIntel symbol={o.symbol} onPick={onPick} />
+            </div>
+          )}
+
+          {/* ───────────── ANALYSIS — the readable deep report ───────────── */}
+          {tab === "analysis" && (
+            <div className="axo-pane">
+              {rep ? <AlgoReport r={rep} /> : null}
+              <div className="axo-report" style={{ paddingTop: 4 }}>
+                <div className="axo-sec">MULTI-HORIZON FORECAST</div>
+                <div className="axo-tbl">
+                  <div className="axo-tr axo-th"><span>H</span><span>DIR</span><span className="r">P(UP)</span><span className="r">TARGET</span><span className="r">RANGE (P05–P95)</span><span className="r">CONF</span></div>
+                  {o.horizons.map((x) => (
+                    <div key={x.horizon} className={`axo-tr${sel === x.horizon ? " on" : ""}`} onClick={() => setSel(x.horizon)}>
+                      <span className="axo-k">{x.horizon}</span>
+                      <span style={{ color: x.dir === "LONG" ? POS : NEG }}>{x.dir === "LONG" ? "▲" : "▼"} {x.dir}</span>
+                      <span className="r" style={{ color: x.pUp >= 0.5 ? POS : NEG }}>{(x.pUp * 100).toFixed(0)}%</span>
+                      <span className="r">{money(x.p50)} <em style={{ color: x.predRet >= 0 ? POS : NEG }}>{pctS(x.predRet)}</em></span>
+                      <span className="r dim">{money(x.p05)}–{money(x.p95)}</span>
+                      <span className="r">{(x.confidence * 100).toFixed(0)}%</span>
+                    </div>
+                  ))}
+                </div>
+                {o.jarvis?.thesis && (<><div className="axo-sec">JARVIS SYNTHESIS <em style={{ color: regimeColor(o.jarvis.bias === "bullish" ? "TREND_UP" : o.jarvis.bias === "bearish" ? "TREND_DOWN" : "X") }}>{o.jarvis.bias}</em></div><p className="axo-jarvis">{o.jarvis.thesis}</p></>)}
+                <div className="axo-sec">TRACK RECORD <em>predictions vs actual</em></div>
+                <div className="axo-score">
+                  {sc("HIT RATE", hist?.summary.hitRate != null ? `${(hist.summary.hitRate * 100).toFixed(0)}%` : "—", hist?.summary.hitRate != null && hist.summary.hitRate >= 0.5 ? POS : WARN)}
+                  {sc("RESOLVED", `${hist?.summary.resolved ?? 0}`, CY)}
+                  {sc("TRACKED", `${hist?.summary.total ?? 0}`, PUR)}
+                  {sc("MAPE", hist?.summary.mape != null ? `${(hist.summary.mape * 100).toFixed(1)}%` : "—", WARN)}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* ───────────── TOOLS — in-depth instruments ───────────── */}
+          {tab === "tools" && (
           <div className="axo-full-body">
-            {/* left: horizon table + detail */}
             <div className="axo-col">
-              <div className="axo-sec">MULTI-HORIZON FORECAST</div>
+              <div className="axo-sec">HORIZON DETAIL <em>select a row</em></div>
               <div className="axo-tbl">
-                <div className="axo-tr axo-th"><span>H</span><span>DIR</span><span className="r">P(UP)</span><span className="r">TARGET</span><span className="r">RANGE (P05–P95)</span><span className="r">CONF</span></div>
+                <div className="axo-tr axo-th"><span>H</span><span>DIR</span><span className="r">P(UP)</span><span className="r">TARGET</span><span className="r">RANGE</span><span className="r">CONF</span></div>
                 {o.horizons.map((x) => (
                   <div key={x.horizon} className={`axo-tr${sel === x.horizon ? " on" : ""}`} onClick={() => setSel(x.horizon)}>
                     <span className="axo-k">{x.horizon}</span>
@@ -164,7 +332,6 @@ export function OracleOverlay({ o, hist, bars, loading, resolvedNote, onClose, o
               </div>
               {h && (
                 <div className="axo-detail">
-                  <div className="axo-sec">{h.horizon} DETAIL</div>
                   <div className="axo-kpis">
                     {kpi("DIRECTION", h.dir, h.dir === "LONG" ? POS : NEG)}
                     {kpi("EDGE", `${(h.edge * 100).toFixed(0)}%`, CY)}
@@ -193,42 +360,30 @@ export function OracleOverlay({ o, hist, bars, loading, resolvedNote, onClose, o
                 </div>
               )}
             </div>
-            {/* right: packages + peers + jarvis + scorecard */}
             <div className="axo-col">
-              <div className="axo-sec">SIGNAL PACKAGES <em>crossScore {o.crossScore >= 0 ? "+" : ""}{o.crossScore.toFixed(2)}</em></div>
-              <div className="axo-pkgs">
-                {pkgOrder.map((k) => { const v = o.packages[k] ?? 0; return (
-                  <div key={k} className="axo-pkg"><span className="axo-pkg-l">{k}</span><span className="axo-pkg-track"><span className="axo-pkg-fill" style={{ width: `${Math.abs(v) * 50}%`, marginLeft: v < 0 ? `${50 - Math.abs(v) * 50}%` : "50%", background: v >= 0 ? POS : NEG }} /></span><span className="axo-pkg-v" style={{ color: v >= 0 ? POS : NEG }}>{v >= 0 ? "+" : ""}{v.toFixed(2)}</span></div>
-                ); })}
-              </div>
+              {o.quant && o.quant.ok && (<><div className="axo-sec">QUANT LAB <em>14 PhD-level models</em></div><QuantLab q={o.quant} /></>)}
               {o.signalDetail?.peers?.length ? (
                 <><div className="axo-sec">PEERS · SUBSTITUTES <em>ρ / 20d mom</em></div>
                 <div className="axo-peers">{o.signalDetail.peers.slice(0, 6).map((p) => (
                   <div key={p.sym} className="axo-peer" onClick={() => onPick(p.sym)}><b>{p.sym}</b><span className="axo-peer-kind">{p.kind}</span><span className="r">ρ {p.rho.toFixed(2)}</span><span className="r" style={{ color: p.mom >= 0 ? POS : NEG }}>{pctS(p.mom)}</span></div>
                 ))}{o.signalDetail.sector && <div className="axo-peer axo-etf" onClick={() => onPick(o.signalDetail!.sector!.etf)}><b>{o.signalDetail.sector.etf}</b><span className="axo-peer-kind">sector ETF</span><span className="r">ρ {o.signalDetail.sector.rho.toFixed(2)}</span><span className="r" style={{ color: o.signalDetail.sector.etfMom >= 0 ? POS : NEG }}>{pctS(o.signalDetail.sector.etfMom)}</span></div>}</div></>
               ) : null}
-              {o.jarvis?.thesis && (<><div className="axo-sec">JARVIS SYNTHESIS <em style={{ color: regimeColor(o.jarvis.bias === "bullish" ? "TREND_UP" : o.jarvis.bias === "bearish" ? "TREND_DOWN" : "X") }}>{o.jarvis.bias}</em></div><p className="axo-jarvis">{o.jarvis.thesis}</p></>)}
-              {o.quant && o.quant.ok && (<><div className="axo-sec">QUANT LAB <em>14 PhD-level models</em></div><QuantLab q={o.quant} /></>)}
               {o.signalDetail?.peers?.length ? (<><div className="axo-sec">CROSS-ASSET CONTAGION <em>ρ network</em></div><ContagionGraph symbol={o.symbol} peers={[...o.signalDetail.peers, ...(o.signalDetail.sector ? [{ sym: o.signalDetail.sector.etf, rho: o.signalDetail.sector.rho, mom: o.signalDetail.sector.etfMom, kind: "sector" }] : [])]} /></>) : null}
               {bars && bars.length > 40 ? (<><div className="axo-sec">REGIME TIMELINE <em>trend history</em></div><RegimeRibbon bars={bars} /></>) : null}
-              <div className="axo-sec">TRACK RECORD <em>predictions vs actual</em></div>
-              <div className="axo-score">
-                {sc("HIT RATE", hist?.summary.hitRate != null ? `${(hist.summary.hitRate * 100).toFixed(0)}%` : "—", hist?.summary.hitRate != null && hist.summary.hitRate >= 0.5 ? POS : WARN)}
-                {sc("RESOLVED", `${hist?.summary.resolved ?? 0}`, CY)}
-                {sc("TRACKED", `${hist?.summary.total ?? 0}`, PUR)}
-                {sc("MAPE", hist?.summary.mape != null ? `${(hist.summary.mape * 100).toFixed(1)}%` : "—", WARN)}
-              </div>
               <div className="axo-curves">
                 <div className="axo-curve"><div className="axo-curve-t">RELIABILITY (calibration)</div><ReliabilityCurve hist={hist} /></div>
                 <div className="axo-curve"><div className="axo-curve-t">EDGE DECAY</div><EdgeDecay hist={hist} /></div>
               </div>
               <div className="axo-sec">TIME MACHINE <em>hindcast: predicted vs actual</em></div>
               <TimeMachine symbol={o.symbol} />
+              <div className="axo-sec">EVENT PAYOFF STUDY <em>news → realized move</em></div>
+              <NewsStudy symbol={o.symbol} />
               <div className="axo-sec">MODEL VALIDATION <em>out-of-sample</em></div>
               <BacktestPanel symbol={o.symbol} />
               <div className="axo-hint">Click ↻ Refresh on the next session to resolve these calls against realized prices and self-correct.</div>
             </div>
           </div>
+          )}
           </div>
         )}
         <style>{OVERLAY_CSS}{VIZ_CSS}</style>
@@ -314,23 +469,41 @@ export const ORACLE_CARD_CSS = `
 .axo-mini { background:var(--ax-surface); border:1px solid var(--ax-bd); color:var(--ax-mut); border-radius:4px; padding:2px 7px; font-size:11px; cursor:pointer; font-family:var(--ax-sans); }
 .axo-mini:hover { border-color:var(--ax-acc); color:var(--ax-acc); }
 .axo-empty { color:var(--ax-mut); font-size:11px; padding:10px 2px; }
-.axo-signal-chip { display:inline-block; font-family:var(--ax-mono); font-size:11px; font-weight:700; letter-spacing:.03em; border:1px solid; border-radius:5px; padding:4px 9px; margin-bottom:8px; }
-.axo-regime { display:flex; align-items:center; gap:7px; margin-bottom:8px; font-size:12px; }
-.axo-reg-dot { width:8px; height:8px; border-radius:2px; }
-.axo-regime b { font-weight:700; letter-spacing:.02em; } .axo-regime em { font-style:normal; color:var(--ax-dim); font-size:10px; }
-.axo-degraded { margin-left:auto; font-size:8px; color:${WARN}; border:1px solid ${WARN}; border-radius:3px; padding:1px 4px; }
-.axo-call { display:flex; align-items:center; gap:12px; padding:8px 0; border-top:1px solid var(--ax-hair); border-bottom:1px solid var(--ax-hair); margin-bottom:8px; }
-.axo-call-dir { font-size:15px; font-weight:800; font-family:var(--ax-mono); }
-.axo-call-meta { display:flex; flex-direction:column; gap:2px; font-size:10.5px; color:var(--ax-mut); }
-.axo-call-meta b { font-family:var(--ax-mono); color:var(--ax-tx); } .axo-call-meta em { font-style:normal; }
-.axo-horizons { display:flex; flex-direction:column; gap:3px; margin-bottom:8px; }
-.axo-hz { display:grid; grid-template-columns:26px 1fr 22px; gap:6px; align-items:center; font-family:var(--ax-mono); font-size:10px; }
-.axo-hz-k { color:var(--ax-dim); }
-.axo-hz-bar { height:6px; background:var(--ax-surface); border-radius:3px; overflow:hidden; }
-.axo-hz-bar span { display:block; height:100%; }
-.axo-hz-p { text-align:right; font-weight:600; }
-.axo-thesis { font-size:10.5px; line-height:1.4; color:var(--ax-mut); padding:7px 0; border-top:1px solid var(--ax-hair); }
-.axo-expand { width:100%; margin-top:6px; background:color-mix(in srgb, ${CY} 12%, transparent); border:1px solid color-mix(in srgb, ${CY} 35%, transparent); color:${CY}; border-radius:6px; padding:7px; font-size:11px; font-weight:600; cursor:pointer; font-family:var(--ax-sans); }
+.axo-reg-dot { width:7px; height:7px; border-radius:2px; }
+.axo-degraded { font-size:8px; color:${WARN}; border:1px solid ${WARN}; border-radius:3px; padding:1px 4px; }
+/* refined verdict summary — no glow, institutional */
+.axo-sum { padding:2px 0 10px; margin-bottom:9px; border-bottom:1px solid var(--ax-hair); }
+.axo-sum-top { display:flex; align-items:baseline; gap:10px; flex-wrap:wrap; }
+.axo-sum-sig { font-family:var(--ax-sans); font-size:16px; font-weight:800; letter-spacing:.01em; line-height:1.15; }
+.axo-sum-dir { font-family:var(--ax-mono); font-size:12px; font-weight:700; margin-left:auto; } .axo-sum-dir em { font-style:normal; color:var(--ax-dim); font-weight:400; }
+.axo-sum-chips { display:flex; flex-wrap:wrap; gap:5px; margin-top:8px; }
+.axo-chip { font-size:10px; color:var(--ax-mut); background:rgba(255,255,255,.03); border:1px solid var(--ax-hair); border-radius:5px; padding:2px 7px; }
+.axo-chip b { font-family:var(--ax-mono); color:var(--ax-tx); font-weight:700; margin-left:2px; }
+.axo-chip-warn { color:${WARN}; border-color:color-mix(in srgb, ${WARN} 40%, transparent); }
+.axo-gauge { flex:0 0 auto; text-align:center; }
+.axo-gauge-l { font-size:7.5px; letter-spacing:.09em; color:var(--ax-dim); font-weight:700; margin-top:-6px; }
+.axo-gauge-s { font-size:9px; font-family:var(--ax-mono); font-weight:700; margin-top:1px; }
+/* forecast cone */
+.axo-cone-wrap { margin-bottom:9px; padding:8px 9px; border-radius:8px; background:linear-gradient(180deg, rgba(255,255,255,.02), transparent); border:1px solid var(--ax-hair); }
+.axo-cone-h { font-size:8px; letter-spacing:.08em; color:var(--ax-dim); font-weight:700; margin-bottom:5px; display:flex; justify-content:space-between; } .axo-cone-h em { font-style:normal; color:var(--ax-mut); font-family:var(--ax-mono); }
+.axo-cone { width:100%; height:78px; display:block; }
+/* horizon ladder */
+.axo-horizons { display:flex; flex-direction:column; gap:4px; margin-bottom:9px; }
+.axo-hz { display:grid; grid-template-columns:26px 12px 1fr 34px 58px; gap:7px; align-items:center; font-family:var(--ax-mono); font-size:10px; }
+.axo-hz-k { color:var(--ax-dim); font-weight:600; }
+.axo-hz-dir { text-align:center; font-size:8px; }
+.axo-hz-bar { position:relative; height:7px; background:var(--ax-surface,#0e141b); border-radius:4px; overflow:hidden; }
+.axo-hz-mid { position:absolute; left:50%; top:0; bottom:0; width:1px; background:rgba(255,255,255,.14); }
+.axo-hz-bar > span:not(.axo-hz-mid) { position:absolute; top:0; height:100%; border-radius:4px; box-shadow:0 0 8px -1px currentColor; }
+.axo-hz-p { text-align:right; font-weight:700; }
+.axo-hz-t { text-align:right; color:var(--ax-mut); }
+.axo-thesis { font-size:10.5px; line-height:1.45; color:var(--ax-mut); padding:8px 10px; border-radius:7px; background:rgba(255,255,255,.02); border:1px solid var(--ax-hair); border-left:2px solid ${CY}; }
+.axo-expand { width:100%; margin-top:8px; background:linear-gradient(180deg, color-mix(in srgb, ${CY} 20%, transparent), color-mix(in srgb, ${CY} 8%, transparent)); border:1px solid color-mix(in srgb, ${CY} 45%, transparent); color:#dcecf7; border-radius:7px; padding:8px; font-size:11px; font-weight:700; letter-spacing:.02em; cursor:pointer; font-family:var(--ax-sans); transition:box-shadow .15s, transform .1s; }
+.axo-expand:hover { box-shadow:0 0 18px -4px ${CY}; transform:translateY(-1px); }
+/* diverging score meter */
+.axo-meter { position:relative; display:inline-block; width:52px; height:6px; background:var(--ax-surface,#0e141b); border-radius:3px; overflow:hidden; vertical-align:middle; }
+.axo-meter-mid { position:absolute; left:50%; top:0; bottom:0; width:1px; background:rgba(255,255,255,.16); }
+.axo-meter-fill { position:absolute; top:0; height:100%; border-radius:3px; box-shadow:0 0 6px -1px currentColor; }
 `;
 
 const OVERLAY_CSS = `
@@ -339,26 +512,48 @@ const OVERLAY_CSS = `
 .axo-full-h { display:flex; align-items:center; gap:14px; padding:12px 16px; border-bottom:1px solid var(--ax-bd,#20303f); }
 .axo-full-t { font-family:var(--ax-disp,inherit); font-size:15px; font-weight:800; letter-spacing:.08em; color:${CY}; }
 .axo-full-reg { font-size:12px; font-weight:700; }
+.axo-tabs { display:inline-flex; gap:2px; margin-left:8px; background:rgba(255,255,255,.03); border:1px solid var(--ax-hair); border-radius:8px; padding:2px; }
+.axo-tab { background:none; border:none; color:var(--ax-mut,#9aa7b4); font-family:var(--ax-sans); font-size:12px; font-weight:600; padding:4px 14px; border-radius:6px; cursor:pointer; transition:background .12s,color .12s; }
+.axo-tab:hover { color:var(--ax-tx,#e6edf3); }
+.axo-tab.on { background:color-mix(in srgb, ${CY} 20%, transparent); color:#dcecf7; }
 .axo-full-actions { margin-left:auto; display:flex; align-items:center; gap:10px; }
 .axo-x { cursor:pointer; color:var(--ax-mut,#9aa7b4); font-size:15px; } .axo-x:hover { color:${NEG}; }
 .axo-resolved { padding:8px 16px; background:color-mix(in srgb, ${POS} 12%, transparent); color:${POS}; font-size:11.5px; border-bottom:1px solid var(--ax-bd,#20303f); }
 .axo-full-scroll { overflow-y:auto; }
+/* Home tab */
+.axo-pane { padding:16px; }
+.axo-hsum { display:flex; align-items:center; gap:18px; padding:14px 16px; border-radius:10px; background:linear-gradient(180deg, rgba(255,255,255,.025), rgba(0,0,0,.12)); border:1px solid var(--ax-hair); position:relative; overflow:hidden; margin-bottom:12px; }
+.axo-hsum::before { content:""; position:absolute; left:0; top:0; bottom:0; width:3px; background:var(--tc); }
+.axo-hsum-l { flex:1; min-width:0; }
+.axo-hsum-k { font-size:8.5px; letter-spacing:.13em; color:var(--ax-dim); font-weight:700; }
+.axo-hsum-sig { font-size:24px; font-weight:800; line-height:1.08; margin:2px 0 3px; }
+.axo-hsum-dir { font-family:var(--ax-mono); font-size:13px; font-weight:800; }
+.axo-hsum-stats { flex:0 0 auto; display:flex; gap:20px; }
+.axo-hstat { text-align:right; } .axo-hstat span { display:block; font-size:8px; letter-spacing:.09em; color:var(--ax-dim); font-weight:700; } .axo-hstat b { font-family:var(--ax-mono); font-size:17px; font-weight:800; }
+.axo-hsummary { font-size:12.5px; line-height:1.55; color:var(--ax-tx,#e6edf3); margin:0 0 12px; background:linear-gradient(180deg, rgba(255,255,255,.025), transparent); border-left:2px solid ${CY}; padding:10px 13px; border-radius:0 6px 6px 0; }
+.axo-hgrid { display:grid; grid-template-columns:1fr 1fr; gap:14px; margin-bottom:14px; }
+.axo-hcard { padding:11px 13px; border-radius:9px; background:linear-gradient(180deg, rgba(255,255,255,.02), transparent); border:1px solid var(--ax-hair); }
+@media (max-width:820px){ .axo-hgrid{ grid-template-columns:1fr; } .axo-hsum-stats{ display:none; } }
 .axo-newsband { padding:6px 16px 12px; border-bottom:1px solid var(--ax-bd,#20303f); margin-bottom:4px; }
 .axo-full-body { display:grid; grid-template-columns:1fr 1fr; gap:16px; padding:16px; }
 /* Algo verdict report */
 .axo-report { padding:16px 16px 4px; }
-.axo-rp-hero { display:flex; align-items:stretch; gap:16px; margin-bottom:10px; }
-.axo-rp-signal { flex:0 0 auto; display:flex; align-items:center; padding:0 20px; font-family:var(--ax-disp,inherit); font-size:22px; font-weight:800; letter-spacing:.04em; border:1.5px solid; border-radius:8px; text-align:center; line-height:1.05; }
-.axo-rp-verdict { flex:1; display:flex; flex-direction:column; justify-content:center; gap:5px; }
-.axo-rp-dir { font-family:var(--ax-mono); font-size:20px; font-weight:800; } .axo-rp-dir span { color:var(--ax-dim,#6b7683); font-size:12px; font-weight:400; }
-.axo-rp-meta { display:flex; gap:18px; font-size:12px; color:var(--ax-mut,#9aa7b4); font-family:var(--ax-mono); }
-.axo-rp-conf b { color:var(--ax-tx,#e6edf3); }
-.axo-rp-summary { font-size:12px; line-height:1.5; color:var(--ax-tx,#e6edf3); margin:0 0 12px; background:#0b0f16; border-left:2px solid ${CY}; padding:9px 12px; border-radius:0 4px 4px 0; }
-.axo-rp-sections { display:grid; grid-template-columns:1fr 1fr; gap:10px 18px; }
-.axo-rp-sec-h { display:flex; justify-content:space-between; align-items:baseline; font-size:9px; font-weight:700; letter-spacing:.08em; color:var(--ax-cydim,#4d9fd1); margin-bottom:4px; border-bottom:1px solid var(--ax-hair,rgba(255,255,255,.05)); padding-bottom:3px; }
-.axo-rp-sec-h b { font-family:var(--ax-mono); }
-.axo-rp-bullet { display:flex; gap:7px; font-size:11px; line-height:1.45; color:var(--ax-mut,#9aa7b4); padding:2px 0; }
-.axo-rp-mk { flex:0 0 auto; font-size:9px; }
+.axo-rp-hero { display:flex; align-items:center; gap:18px; margin-bottom:14px; padding:14px 16px; border-radius:10px;
+  background:linear-gradient(180deg, rgba(255,255,255,.025), rgba(0,0,0,.12)); border:1px solid var(--ax-hair,rgba(255,255,255,.07)); position:relative; overflow:hidden; }
+.axo-rp-hero::before { content:""; position:absolute; left:0; top:0; bottom:0; width:3px; background:var(--tc); }
+.axo-rp-badge { flex:1; min-width:0; }
+.axo-rp-badge-k { font-size:8.5px; letter-spacing:.14em; color:var(--ax-dim,#6b7683); font-weight:700; }
+.axo-rp-signal { font-family:var(--ax-sans); font-size:23px; font-weight:800; letter-spacing:.01em; line-height:1.08; margin:2px 0 3px; }
+.axo-rp-dir { font-family:var(--ax-mono); font-size:14px; font-weight:800; } .axo-rp-dir span { color:var(--ax-dim,#6b7683); font-size:11px; font-weight:400; }
+.axo-rp-stats { flex:0 0 auto; display:flex; gap:22px; }
+.axo-rp-stat { text-align:right; } .axo-rp-stat span { display:block; font-size:8px; letter-spacing:.1em; color:var(--ax-dim,#6b7683); font-weight:700; } .axo-rp-stat b { font-family:var(--ax-mono); font-size:19px; font-weight:800; }
+.axo-rp-summary { font-size:12.5px; line-height:1.55; color:var(--ax-tx,#e6edf3); margin:0 0 14px; background:linear-gradient(180deg, rgba(255,255,255,.025), transparent); border-left:2px solid ${CY}; padding:11px 14px; border-radius:0 6px 6px 0; }
+.axo-rp-sections { display:grid; grid-template-columns:1fr 1fr; gap:12px 18px; }
+.axo-rp-sec { padding:10px 12px; border-radius:9px; background:linear-gradient(180deg, rgba(255,255,255,.02), transparent); border:1px solid var(--ax-hair,rgba(255,255,255,.06)); }
+.axo-rp-sec-h { display:flex; justify-content:space-between; align-items:center; font-size:9.5px; font-weight:700; letter-spacing:.09em; color:var(--ax-cydim,#4d9fd1); margin-bottom:7px; padding-bottom:6px; border-bottom:1px solid var(--ax-hair,rgba(255,255,255,.06)); }
+.axo-rp-sec-sc { display:flex; align-items:center; gap:7px; } .axo-rp-sec-sc b { font-family:var(--ax-mono); font-size:11px; }
+.axo-rp-bullet { display:flex; gap:7px; font-size:11px; line-height:1.5; color:var(--ax-mut,#9aa7b4); padding:2.5px 0; }
+.axo-rp-mk { flex:0 0 auto; font-size:9px; margin-top:2px; }
 .axo-rp-flags { margin-top:11px; background:color-mix(in srgb, ${WARN} 8%, transparent); border:1px solid color-mix(in srgb, ${WARN} 30%, transparent); border-radius:6px; padding:8px 11px; }
 .axo-rp-flags-h { font-size:9px; font-weight:700; letter-spacing:.06em; color:${WARN}; }
 .axo-rp-flag { font-size:10.5px; color:var(--ax-mut,#9aa7b4); margin-top:3px; }

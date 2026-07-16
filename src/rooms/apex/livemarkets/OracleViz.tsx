@@ -184,12 +184,12 @@ function NewsBrainBand({ b }: { b: NIBrain }) {
         <div className="axv-nb-h">REACTION-GAP</div>
         {r ? <>
           <div className="axv-nb-sig" style={{ color: rColor }}>{r.signal}</div>
-          <svg viewBox="0 0 100 26" className="axv-nb-dial" preserveAspectRatio="none">
-            <line x1="4" y1="18" x2="96" y2="18" stroke="#2a323d" strokeWidth="1" />
-            <line x1="50" y1="13" x2="50" y2="23" stroke="#3a434f" strokeWidth="1" />
-            <line x1={toX(r.expSigma)} y1="9" x2={toX(r.expSigma)} y2="18" stroke="#8aa0b8" strokeWidth="1.4" />
-            <circle cx={toX(r.realizedSigma)} cy="18" r="3" fill={rColor} />
-            <text x="4" y="7" fill="#6b7683" fontSize="5">expected ▏ realized ●</text>
+          <div className="axv-nb-legend"><span><i className="axv-nb-exp" /> expected {r.expSigma}σ</span><span><i className="axv-nb-real" style={{ background: rColor }} /> realized {r.realizedSigma}σ</span></div>
+          <svg viewBox="0 0 100 16" className="axv-nb-dial" preserveAspectRatio="none">
+            <line x1="4" y1="9" x2="96" y2="9" stroke="#2a323d" strokeWidth="1.4" strokeLinecap="round" />
+            <line x1="50" y1="4" x2="50" y2="14" stroke="#48525f" strokeWidth="1" />
+            <line x1={toX(r.expSigma)} y1="3" x2={toX(r.expSigma)} y2="15" stroke="#9fb2c8" strokeWidth="2" strokeLinecap="round" />
+            <circle cx={toX(r.realizedSigma)} cy="9" r="3.4" fill={rColor} stroke="#0d1117" strokeWidth="0.8" />
           </svg>
           <div className="axv-nb-note">{r.note}</div>
         </> : <div className="axv-nb-note">—</div>}
@@ -307,7 +307,10 @@ export const VIZ_CSS = `
 .axv-nb-cell { border:1px solid var(--ax-hair,rgba(255,255,255,.06)); border-radius:6px; padding:7px 9px; background:color-mix(in srgb, var(--ax-panel,#0d1117) 60%, transparent); min-width:0; }
 .axv-nb-h { font-size:8px; letter-spacing:.09em; color:var(--ax-dim,#6b7683); font-weight:700; margin-bottom:4px; }
 .axv-nb-sig { font-size:11px; font-weight:800; letter-spacing:.02em; font-family:var(--ax-mono); }
-.axv-nb-dial { width:100%; height:26px; display:block; margin:2px 0; }
+.axv-nb-dial { width:100%; height:16px; display:block; margin:1px 0 2px; }
+.axv-nb-legend { display:flex; gap:12px; font-size:8.5px; color:var(--ax-mut,#9aa7b4); margin:3px 0 1px; }
+.axv-nb-legend i { display:inline-block; width:8px; height:2px; background:#9fb2c8; vertical-align:middle; margin-right:3px; }
+.axv-nb-legend .axv-nb-real { width:6px; height:6px; border-radius:50%; }
 .axv-nb-row { display:flex; justify-content:space-between; align-items:baseline; font-family:var(--ax-mono); font-size:14px; font-weight:800; color:var(--ax-tx,#e6edf3); }
 .axv-nb-row em { font-style:normal; font-size:9px; color:var(--ax-dim,#6b7683); font-weight:600; }
 .axv-nb-row span:last-child { font-size:11px; }
