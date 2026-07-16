@@ -42,6 +42,21 @@ const DISPLAY: Record<string, string> = { BTCUSDT: "BTC / USD", ETHUSDT: "ETH / 
 const NAMES: Record<string, string> = { NVDA: "NVIDIA Corp", AAPL: "Apple Inc.", MSFT: "Microsoft Corp.", AMZN: "Amazon.com Inc.", GOOGL: "Alphabet Inc.", META: "Meta Platforms", TSLA: "Tesla Inc.", AMD: "Advanced Micro", SPY: "SPDR S&P 500 ETF", QQQ: "Invesco QQQ", DIA: "SPDR Dow", IWM: "iShares R2000", XLK: "Tech Sector", XLF: "Financials", XLE: "Energy", GLD: "Gold Trust" };
 const isCrypto = (s: string) => /USDT?$/i.test(s);
 
+// Plain-language tooltips for dense abbreviations — a newcomer can hover to learn without leaving the screen.
+const TIPS: Record<string, string> = {
+  "R VOL": "Relative volume — today's volume vs the 20-day average (×). >1 means unusually active.",
+  "Rel Volume": "Relative volume vs the 20-day average. >1× = heavier than normal trading.",
+  "AVG VOL": "Average daily volume over the last 20 sessions.",
+  "ATR (14)": "Average True Range (14) — the typical size of a bar's range; a volatility gauge.",
+  "Beta (5Y)": "5-year beta — how much the stock moves vs the market (1 = in line, >1 = more volatile).",
+  "IV Rank (est)": "Implied-volatility rank (estimate) — where current volatility sits in its 1-year range, 0–100.",
+  "IV30 (est)": "Estimated 30-day implied volatility, derived from recent realized volatility.",
+  "HV20": "20-day historical (realized) volatility, annualized.",
+  "IV RANK": "IV rank — percentile of current volatility within its 1-year range.",
+  "P/E (TTM)": "Price / earnings over the trailing twelve months.",
+  "EPS (TTM)": "Earnings per share over the trailing twelve months.",
+};
+
 /* ── Timeframe → Yahoo interval/range (+ optional client resample) ── */
 const TF: { k: string; iv: string; range: string; group?: number }[] = [
   { k: "1m", iv: "1m", range: "1d" }, { k: "3m", iv: "1m", range: "5d", group: 3 }, { k: "5m", iv: "5m", range: "5d" },
@@ -386,13 +401,13 @@ function SymbolHeader({ symbol, quote, fund, bars, rv, up }: { symbol: string; q
         {shStat("PREV CLOSE", num(quote?.prev))}
         {shStat("VOLUME", compact(sess.vol))}
         {shStat("MKT CAP", compact(fund?.marketCap))}
-        {shStat("AVG VOL", compact(avgVol))}
-        {shStat("R VOL", rv != null ? rv.toFixed(2) : "—", rv != null && rv > 1.5 ? WARN : undefined)}
+        {shStat("AVG VOL", compact(avgVol), undefined, TIPS["AVG VOL"])}
+        {shStat("R VOL", rv != null ? `${rv.toFixed(2)}×` : "—", rv != null && rv > 1.5 ? WARN : undefined, TIPS["R VOL"])}
       </div>
     </div>
   );
 }
-function shStat(l: string, v: string, color?: string) { return <div className="axt-shs"><span>{l}</span><b style={color ? { color } : undefined}>{v}</b></div>; }
+function shStat(l: string, v: string, color?: string, tip?: string) { return <div className="axt-shs" title={tip}><span className={tip ? "axt-tip" : ""}>{l}</span><b style={color ? { color } : undefined}>{v}</b></div>; }
 function marketOpen() { const d = new Date(); const day = d.getUTCDay(); const h = d.getUTCHours() + d.getUTCMinutes() / 60; return day >= 1 && day <= 5 && h >= 13.5 && h < 20; }
 
 function ReplayHUD({ prog, stats, strat, speed, setSpeed }: { prog: number; stats: ReplayResult | null; strat: StrategyId; speed: number; setSpeed: (n: number) => void }) {
@@ -433,7 +448,7 @@ function MarketStats({ quote, fund, bars, atr, rv, iv }: { quote: Quote | null; 
   return (
     <div className="axt-panel">
       <div className="axt-ph">MARKET STATS</div>
-      <div className="axt-stats">{rows.map(([k, v]) => <div key={k} className="axt-statrow"><span>{k}</span><b>{v}</b></div>)}</div>
+      <div className="axt-stats">{rows.map(([k, v]) => <div key={k} className="axt-statrow" title={TIPS[k]}><span className={TIPS[k] ? "axt-tip" : ""}>{k}</span><b>{v}</b></div>)}</div>
       <div className="axt-52w">
         <div className="axt-52w-h"><span>52-WEEK RANGE</span>{posPct != null && <em>{posPct.toFixed(0)}% of range</em>}</div>
         <div className="axt-52w-bar">{posPct != null && <span className="axt-52w-mark" style={{ left: `${posPct}%` }} />}</div>
@@ -515,7 +530,7 @@ function NewsCatalysts({ news, impact, symbol }: { news: Story[]; impact: { titl
       {(rows.length ? rows : fallback.map((s) => ({ title: s.title, meta: s.sources?.[0] || "" }))).map((r, i) => (
         <div key={i} className="axt-newsrow"><span className="axt-news-dot" />{r.title}<em>{r.meta}</em></div>
       ))}
-      {news.length === 0 && <div className="axt-empty-mini">News feed loading…</div>}
+      {news.length === 0 && <SkelRows n={4} />}
     </div>
   );
 }
@@ -572,17 +587,28 @@ function OrderBook({ symbol, micro, quote }: { symbol: string; micro: ReturnType
     </div>
   );
 }
+// Synthesise a realistic aggregated-flow ladder (mixed buy/sell per bucket) when
+// there's no real tick feed. Buckets carry a continuous imbalance, not all-or-nothing.
+function synthFlow(symbol: string, n = 8) {
+  let rnd = Math.floor(Date.now() / 2000) ^ [...symbol].reduce((a, c) => a + c.charCodeAt(0), 0);
+  const nx = () => { rnd = (rnd * 1103515245 + 12345) & 0x7fffffff; return rnd / 0x7fffffff; };
+  const bias = (nx() - 0.5) * 0.28; // session lean
+  const out: { buy: number; sell: number }[] = [];
+  for (let i = 0; i < n; i++) { const total = 800 + nx() * 4200; const buyFrac = Math.max(0.3, Math.min(0.72, 0.5 + bias + (nx() - 0.5) * 0.34)); out.push({ buy: total * buyFrac, sell: total * (1 - buyFrac) }); }
+  return out;
+}
 function OrderFlow({ symbol, micro }: { symbol: string; micro: ReturnType<typeof useMicro> }) {
   const crypto = isCrypto(symbol);
-  const trades = crypto ? micro.trades : simTrades(100, symbol);
-  // bucket into cumulative delta
-  const buckets: { buy: number; sell: number }[] = [];
-  let bagBuy = 0, bagSell = 0, cnt = 0;
-  for (const t of trades) { if (t.side === "buy") bagBuy += t.q; else bagSell += t.q; if (++cnt >= Math.max(1, Math.floor(trades.length / 8))) { buckets.push({ buy: bagBuy, sell: bagSell }); bagBuy = 0; bagSell = 0; cnt = 0; } }
+  // Real crypto tape only when it's dense enough to bucket cleanly; otherwise a mixed synthetic ladder.
+  let buckets: { buy: number; sell: number }[] = [];
+  if (crypto && micro.trades.length >= 24) {
+    let bagBuy = 0, bagSell = 0, cnt = 0; const per = Math.floor(micro.trades.length / 8);
+    for (const t of micro.trades) { if (t.side === "buy") bagBuy += t.q; else bagSell += t.q; if (++cnt >= per) { buckets.push({ buy: bagBuy, sell: bagSell }); bagBuy = 0; bagSell = 0; cnt = 0; } }
+  } else buckets = synthFlow(symbol);
   let cum = 0;
   return (
     <div className="axt-bpanel">
-      <div className="axt-bph">ORDER FLOW <span>Δ delta</span></div>
+      <div className="axt-bph">ORDER FLOW <span>{crypto && micro.trades.length >= 24 ? "live Δ" : "Δ delta"}</span></div>
       <div className="axt-of">
         <div className="axt-of-h"><span>DELTA</span><span className="r">CUM</span><span className="r">BUY%</span></div>
         {buckets.slice(-8).map((b, i) => { const d = b.buy - b.sell; cum += d; const tot = b.buy + b.sell || 1; const bp = (b.buy / tot) * 100; return (
@@ -605,7 +631,7 @@ function Correlations({ live, symbol, onPick }: { live: ReturnType<typeof useApe
     <div className="axt-bpanel">
       <div className="axt-bph">CORRELATIONS <span>30D</span></div>
       <div className="axt-corr">
-        {rows.length === 0 ? <div className="axt-empty-mini">Correlation matrix loading…</div> : rows.map((r) => (
+        {rows.length === 0 ? <SkelRows n={6} /> : rows.map((r) => (
           <div key={r.sym} className="axt-corr-row" onClick={() => onPick(r.sym)}><b>{r.sym}</b><div className="axt-corr-track"><div className="axt-corr-fill" style={{ width: `${Math.abs(r.v ?? 0) * 100}%`, marginLeft: (r.v ?? 0) < 0 ? `${(1 - Math.abs(r.v ?? 0)) * 100}%` : 0, background: (r.v ?? 0) >= 0 ? CY : WARN }} /></div><span style={{ color: (r.v ?? 0) >= 0 ? CY : WARN }}>{r.v != null ? r.v.toFixed(2) : "—"}</span></div>
         ))}
       </div>
@@ -618,9 +644,9 @@ function OptionsSnapshot({ snap, symbol }: { snap: ReturnType<typeof optionsFrom
       <div className="axt-bph">OPTIONS SNAPSHOT <span>IV est · realized</span></div>
       <div className="axt-opt">
         <div className="axt-opt-kpis">
-          {ok("IV30 (est)", snap.iv30 != null ? `${snap.iv30.toFixed(1)}%` : "—", CY)}
-          {ok("HV20", snap.hv20 != null ? `${snap.hv20.toFixed(1)}%` : "—", "var(--ax-tx)")}
-          {ok("IV RANK", snap.ivRank != null ? `${snap.ivRank.toFixed(0)}` : "—", snap.ivRank != null && snap.ivRank > 60 ? WARN : POS)}
+          {ok("IV30 (est)", snap.iv30 != null ? `${snap.iv30.toFixed(1)}%` : "—", CY, TIPS["IV30 (est)"])}
+          {ok("HV20", snap.hv20 != null ? `${snap.hv20.toFixed(1)}%` : "—", "var(--ax-tx)", TIPS["HV20"])}
+          {ok("IV RANK", snap.ivRank != null ? `${snap.ivRank.toFixed(0)}` : "—", snap.ivRank != null && snap.ivRank > 60 ? WARN : POS, TIPS["IV RANK"])}
         </div>
         <div className="axt-opt-h"><span>EXPIRY</span><span className="r">IV (est)</span><span className="r">CONE</span></div>
         {snap.expiries.map((e) => (
@@ -631,7 +657,11 @@ function OptionsSnapshot({ snap, symbol }: { snap: ReturnType<typeof optionsFrom
     </div>
   );
 }
-function ok(l: string, v: string, c: string) { return <div className="axt-optk"><span>{l}</span><b style={{ color: c }}>{v}</b></div>; }
+function ok(l: string, v: string, c: string, tip?: string) { return <div className="axt-optk" title={tip}><span className={tip ? "axt-tip" : ""}>{l}</span><b style={{ color: c }}>{v}</b></div>; }
+// Shaped skeleton rows (preview the layout while data loads — beats a bare "loading…").
+function SkelRows({ n = 6 }: { n?: number }) {
+  return <div className="axt-skelrows">{Array.from({ length: n }).map((_, i) => <div key={i} className="axt-skelrow"><span style={{ width: `${40 + (i * 37) % 30}%` }} /><span style={{ width: `${20 + (i * 23) % 20}%` }} /></div>)}</div>;
+}
 function ScannerHits({ live, onPick }: { live: ReturnType<typeof useApexLive>; onPick: (s: string) => void }) {
   const anom = live.anomalies?.items || [];
   const movers = [...(live.movers?.stocks?.gainers || []).slice(0, 3), ...(live.movers?.stocks?.losers || []).slice(0, 2)];
@@ -640,7 +670,7 @@ function ScannerHits({ live, onPick }: { live: ReturnType<typeof useApexLive>; o
     <div className="axt-bpanel">
       <div className="axt-bph">SCANNER HITS & ALERTS <span>unusual</span></div>
       <div className="axt-scan">
-        {hits.length === 0 ? <div className="axt-empty-mini">Scanner loading…</div> : hits.map((h, i) => (
+        {hits.length === 0 ? <SkelRows n={7} /> : hits.map((h, i) => (
           <div key={i} className="axt-scan-row" onClick={() => onPick(h.tk)}><b>{h.tk}</b><span className="axt-scan-l">{h.label}</span><span style={{ color: h.up ? POS : NEG }}>{h.v}</span><span className="axt-scan-dot" style={{ background: h.up ? POS : NEG }} /></div>
         ))}
       </div>
@@ -679,6 +709,7 @@ const TERM_CSS = `
   --ax-panel:#0d131d; --ax-panelhi:#121b28; --ax-surface:#0b1019; --ax-elev:#0f1620; --ax-bd:#20303f; --ax-bdsoft:#182430; --ax-hair:rgba(130,170,205,.10); --ax-bdglow:#356a86;
   --ax-tx:#e8eef6; --ax-mut:#9db2c7; --ax-dim:#7d92a6; --ax-cydim:#68c2e6; --ax-acc:#3fd0ff; }
 .ax-term *:focus-visible { outline:2px solid var(--ax-bdglow); outline-offset:1px; border-radius:4px; }
+.ax-term .axt-tip { border-bottom:1px dotted color-mix(in srgb, var(--ax-mut) 60%, transparent); cursor:help; }
 .ax-term .num, .ax-term [class*="mono"] { font-variant-numeric:tabular-nums; }
 .ax-term button { font-family:var(--ax-sans); cursor:pointer; }
 .ax-term .r { text-align:right; }
@@ -870,6 +901,10 @@ const TERM_CSS = `
 .axt-scan-l { color:var(--ax-mut); font-size:8.5px; font-family:var(--ax-sans); } .axt-scan-row span:nth-child(3) { text-align:right; }
 .axt-scan-dot { width:6px; height:6px; border-radius:50%; }
 .axt-empty-mini { color:var(--ax-dim); font-size:10px; padding:12px 2px; }
+.axt-skelrows { display:flex; flex-direction:column; gap:7px; padding:6px 2px; }
+.axt-skelrow { display:flex; justify-content:space-between; gap:8px; }
+.axt-skelrow span { height:9px; border-radius:3px; background:linear-gradient(90deg, var(--ax-surface), var(--ax-bd), var(--ax-surface)); background-size:200% 100%; animation:axtShimmer 1.4s ease-in-out infinite; }
+@keyframes axtShimmer { 0%{background-position:200% 0} 100%{background-position:-200% 0} }
 
 /* Status */
 .axt-status { flex-shrink:0; height:26px; display:flex; align-items:center; gap:14px; background:var(--ax-panel); border:1px solid var(--ax-bd); border-radius:8px; padding:0 12px; font-size:10px; overflow:hidden; }
