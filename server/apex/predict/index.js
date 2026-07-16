@@ -148,7 +148,7 @@ function createOracle({ runtimeDir, getBars, priceAt, getNews = null, callModel 
     try {
       newsIntel = store.cacheGet(symbol, "newsintel", 20 * 60 * 1000);
       if (!newsIntel) {
-        newsIntel = await analyzeNews(symbol, { getBars });
+        newsIntel = await analyzeNews(symbol, { getBars, newsDaily: (s) => store.newsDailyCounts(s, 12) });
         if (newsIntel && newsIntel.items) {
           store.cacheSet(symbol, "newsintel", newsIntel);
           // Point-in-time log: archive each classified story (INSERT OR IGNORE dedupes by hash),
@@ -340,7 +340,7 @@ function createOracle({ runtimeDir, getBars, priceAt, getNews = null, callModel 
     if (!Array.isArray(bars) || bars.length < 200) return { ok: false, reason: "insufficient history", symbol };
     return { ok: true, symbol, d1: metaTest(bars, 7), d5: metaTest(bars, 33) };
   }
-  const newsIntel = (symbol) => analyzeNews(symbol, { getBars });
+  const newsIntel = (symbol) => analyzeNews(symbol, { getBars, newsDaily: (s) => store.newsDailyCounts(s, 12) });
 
   // News event-study: for each logged story aged ≥5d, measure the realized 5-day forward return
   // and group by event type — the empirical payoff of each headline category. Becomes meaningful

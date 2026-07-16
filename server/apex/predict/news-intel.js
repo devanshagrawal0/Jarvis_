@@ -5,7 +5,17 @@
 // Inject { getBars } for the propagation correlations. Uses global fetch (Node 18+).
 
 const { PEERS } = require("./signals");
-const { clamp } = require("./mathx");
+const { clamp, std, mean } = require("./mathx");
+const NB = require("./news-brain");
+
+// Minimal commodity/cross-asset exposure map (Yahoo-servable ETF proxies). Sign = co-move direction.
+const COMMODITY_MAP = {
+  XLE: [{ sym: "USO", kind: "oil", sign: 1 }], XOM: [{ sym: "USO", kind: "oil", sign: 1 }], CVX: [{ sym: "USO", kind: "oil", sign: 1 }],
+  XLK: [{ sym: "SOXX", kind: "semis", sign: 1 }], NVDA: [{ sym: "SOXX", kind: "semis", sign: 1 }], AMD: [{ sym: "SOXX", kind: "semis", sign: 1 }],
+  GLD: [{ sym: "GLD", kind: "gold", sign: 1 }], NEM: [{ sym: "GLD", kind: "gold", sign: 1 }],
+  XLF: [{ sym: "TLT", kind: "rates", sign: -1 }], JPM: [{ sym: "TLT", kind: "rates", sign: -1 }],
+  TSLA: [{ sym: "LIT", kind: "lithium", sign: 1 }], F: [{ sym: "USO", kind: "oil", sign: -1 }],
+};
 
 // ── Event taxonomy: each type has a directional prior + typical magnitude (event-study style) ──
 const EVENTS = [
@@ -95,50 +105,78 @@ async function analyzeNews(symbol, deps = {}) {
   let bull = 0, bear = 0;
   const items = uniq.slice(0, 24).map((it) => {
     const ev = classify(it.title);
-    const lex = lexScore(it.title);
-    // blend event-prior direction with lexicon; event dir dominates when it fired
-    const sentiment = clamp(ev.type !== "general" ? 0.6 * ev.dir + 0.4 * lex : lex, -1, 1);
+    // Grammar-aware LM sentiment (negation/intensifier/modality) replaces the naive lexicon count.
+    const gr = NB.grammarScore(it.title);
+    // blend event-prior direction with grammar sentiment; event dir dominates when it fired
+    const sentiment = clamp(ev.type !== "general" ? 0.6 * ev.dir + 0.4 * gr.score : gr.score, -1, 1);
     const ageH = (now - it.ts) / 3.6e6;
     const recency = Math.exp(-(now - it.ts) / halfLifeMs);
     const novelty = 1 / it.corroboration ** 0.5;            // repeated stories add less new info
-    const weight = recency * (0.6 + 0.4 * Math.min(1, it.corroboration / 3)); // corroboration adds trust
-    const w = ev.mag * weight;                 // attention weight for this story (magnitude × recency×corroboration)
+    // Independence-weighted credibility (noisy-OR across source families) + rumor down-weight.
+    const cred = NB.corroborationConfidence([...it.sources]);
+    const rumorDamp = 1 - 0.4 * gr.modality;                // hedged/rumored language counts less
+    const weight = recency * (0.5 + 0.5 * cred.confidence) * rumorDamp;
+    const w = ev.mag * weight;                 // attention weight (magnitude × recency × credibility × certainty)
     const impact = sentiment * w;
     if (sentiment > 0.1) bull++; else if (sentiment < -0.1) bear++;
     // tickers this headline explicitly names
     const tags = [...known].filter((t) => new RegExp(`\\b${t}\\b`).test(it.title.toUpperCase())).slice(0, 4);
-    return { title: it.title, source: it.source, sources: [...it.sources], corroboration: it.corroboration, ageH: +ageH.toFixed(1), event: ev.type, eventLabel: ev.label, sentiment: +sentiment.toFixed(2), w, impact: +impact.toFixed(2), tags };
+    return { title: it.title, source: it.source, sources: [...it.sources], corroboration: it.corroboration, credibility: cred.confidence, independentSources: cred.independentSources, rumor: +gr.modality.toFixed(2), ageH: +ageH.toFixed(1), ts: it.ts, event: ev.type, eventLabel: ev.label, sentiment: +sentiment.toFixed(2), w, impact: +impact.toFixed(2), tags };
   });
   // aggregate = attention-weighted MEAN of sentiment (naturally in [-1,1]; no saturation).
   const wSum = items.reduce((s, x) => s + x.w, 0) || 1;
   const newsScore = clamp(items.reduce((s, x) => s + x.sentiment * x.w, 0) / wSum, -1, 1);
   const eventCounts = {}; for (const it of items) if (it.event !== "general") eventCounts[it.eventLabel] = (eventCounts[it.eventLabel] || 0) + 1;
 
-  // ── PROPAGATION: how this news ripples to related tickers ──
+  // dominant event magnitude (for reaction-gap expected move)
+  const domMag = items.reduce((m, it) => (it.event !== "general" ? Math.max(m, classify(it.title).mag) : m), 0.5);
+
+  // ── CROSS-ASSET PROPAGATION (transfer-entropy who-moves-whom) + NEWS BRAIN ──
   const cfg = PEERS[sym] || { etf: "SPY", peers: [] };
   const dir = Math.sign(newsScore);
-  const propagation = [];
-  const relList = [
-    ...cfg.peers.slice(0, 4).map((s) => ({ sym: s, kind: "competitor", sign: 0.6 })), // move together, some share-shift
-    { sym: cfg.etf, kind: "sector ETF", sign: 0.4 },
+  const neighborSpecs = [
+    ...cfg.peers.slice(0, 4).map((s) => ({ sym: s, kind: "peer" })),
+    { sym: cfg.etf, kind: "sector ETF" },
+    ...((COMMODITY_MAP[sym] || COMMODITY_MAP[cfg.etf] || []).slice(0, 2).map((c) => ({ sym: c.sym, kind: c.kind }))),
   ];
-  if (deps.getBars && dir !== 0) {
-    const symBars = await deps.getBars(sym, { interval: "1d", range: "3mo" }).catch(() => []);
+  let propagation = neighborSpecs.map((n) => ({ sym: n.sym, kind: n.kind, te: null, rho: null, effect: 0, dir: "flat", lead: null }));
+  let brain = null;
+  if (deps.getBars) {
+    const symBars = await deps.getBars(sym, { interval: "1d", range: "6mo" }).catch(() => []);
     const symR = ret(symBars);
-    for (const rel of relList) {
-      const rb = await deps.getBars(rel.sym, { interval: "1d", range: "3mo" }).catch(() => []);
-      const rho = corr(symR, ret(rb));
-      const effect = clamp(dir * rho * rel.sign, -1, 1);
-      propagation.push({ sym: rel.sym, kind: rel.kind, rho: +rho.toFixed(2), effect: +effect.toFixed(2), dir: effect >= 0 ? "up" : "down" });
+    const spyBars = await deps.getBars("SPY", { interval: "1d", range: "6mo" }).catch(() => []);
+    // neighbor bars in parallel
+    const nbBars = await Promise.all(neighborSpecs.map((n) => deps.getBars(n.sym, { interval: "1d", range: "6mo" }).catch(() => [])));
+    const neighbors = neighborSpecs.map((n, i) => ({ ...n, rets: ret(nbBars[i]) }));
+    if (symR.length >= 20) propagation = NB.propagate(dir, symR, neighbors);
+    // market model + reaction gap ("no movement is information")
+    const mm = NB.marketModel(symBars, spyBars);
+    const reaction = mm ? NB.reactionGap(newsScore, domMag, mm, 0.5) : null;
+    // velocity / reflexivity from story arrival times; abnormal coverage from the REAL PIT archive.
+    const archiveDaily = deps.newsDaily ? (deps.newsDaily(sym) || null) : null;
+    const vel = NB.velocity(items.map((it) => it.ts).filter(Boolean), null, archiveDaily);
+    // compression: abnormal coverage vs realized-vol z (only meaningful once abnCoverage is real)
+    let comp = { score: null, signal: "n/a (coverage baseline building)" };
+    if (vel.abnCoverage != null && symR.length > 25) {
+      const recent = std(symR.slice(-5)); const hist = []; for (let i = 25; i > 5; i--) hist.push(std(symR.slice(-i, -i + 5)));
+      const mh = mean(hist), sh = std(hist) || 1e-6; const realizedVolZ = (recent - mh) / sh;
+      comp = NB.compression(vel.abnCoverage, realizedVolZ);
     }
-  } else {
-    for (const rel of relList) propagation.push({ sym: rel.sym, kind: rel.kind, rho: null, effect: 0, dir: "flat" });
+    // overall credibility of the current news set
+    const allSources = [...new Set(items.flatMap((it) => it.sources))];
+    const overallCred = NB.corroborationConfidence(allSources);
+    brain = {
+      marketModel: mm ? { beta: +mm.beta.toFixed(2), sigmaARpct: +(mm.sigmaAR * 100).toFixed(2), arTodayPct: +(mm.arToday * 100).toFixed(2), car5pct: +(mm.car(5) * 100).toFixed(2) } : null,
+      reaction, velocity: vel, compression: comp,
+      credibility: { confidence: overallCred.confidence, independentSources: overallCred.independentSources },
+      dominantMag: +domMag.toFixed(1),
+    };
   }
 
   return {
     symbol: sym, count: items.length, sources: [...new Set(raw.map((r) => r.source))],
     newsScore: +newsScore.toFixed(2), bull, bear, eventCounts,
-    items, propagation,
+    items, propagation, brain,
     topEvents: Object.entries(eventCounts).sort((a, b) => b[1] - a[1]).slice(0, 5).map(([k, v]) => ({ label: k, n: v })),
   };
 }

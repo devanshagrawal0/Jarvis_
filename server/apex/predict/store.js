@@ -77,6 +77,7 @@ function createOracleStore(runtimeDir) {
     VALUES (@symbol,@title_hash,@first_seen,@title,@source,@event,@sentiment,@impact,@corroboration,@news_score,@spot)`);
   const newsSinceQ = db.prepare(`SELECT * FROM news_log WHERE symbol=? AND first_seen>=? ORDER BY first_seen DESC LIMIT 500`);
   const newsCountQ = db.prepare(`SELECT COUNT(*) n FROM news_log`);
+  const newsFirstSeenQ = db.prepare(`SELECT first_seen FROM news_log WHERE symbol=? AND first_seen>=?`);
 
   return {
     db,
@@ -93,6 +94,14 @@ function createOracleStore(runtimeDir) {
     cacheSet: (symbol, key, val, ts) => cacheSet.run(symbol, key, JSON.stringify(val), ts || Date.now()),
     logNews: (row) => insNews.run(row),
     newsSince: (symbol, sinceMs) => newsSinceQ.all(symbol, sinceMs),
+    // Real per-day story counts from the point-in-time archive: [0]=today … [days-1]=oldest.
+    newsDailyCounts: (symbol, days = 12) => {
+      const dayMs = 86400e3, now = Date.now();
+      const rows = newsFirstSeenQ.all(symbol, now - days * dayMs);
+      const out = new Array(days).fill(0);
+      for (const r of rows) { const d = Math.floor((now - r.first_seen) / dayMs); if (d >= 0 && d < days) out[d]++; }
+      return out;
+    },
     newsLogCount: () => newsCountQ.get().n,
     stats: () => ({ predictions: db.prepare("SELECT COUNT(*) n FROM predictions").get().n, resolved: db.prepare("SELECT COUNT(*) n FROM predictions WHERE resolved=1").get().n, newsLogged: newsCountQ.get().n }),
   };
