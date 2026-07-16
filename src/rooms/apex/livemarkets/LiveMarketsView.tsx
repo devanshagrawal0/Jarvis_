@@ -562,12 +562,18 @@ function simDepth(mid: number, seedT: number) {
   for (let i = 1; i <= 10; i++) { bids.push({ p: mid - i * tick, q: Math.round(400 + nx() * 4200) }); asks.push({ p: mid + i * tick, q: Math.round(400 + nx() * 4200) }); }
   return { bids, asks };
 }
+// Shared truthful data-state badge (research §5): every data panel declares LIVE/DELAYED/DERIVED/SIM/NA.
+function DataBadge({ state, title }: { state: "live" | "delayed" | "derived" | "sim" | "na"; title?: string }) {
+  const map: Record<string, [string, string]> = { live: ["LIVE", POS], delayed: ["DELAYED", WARN], derived: ["DERIVED", CY], sim: ["SIM", PUR], na: ["N/A", "#6b7683"] };
+  const [txt, c] = map[state];
+  return <span title={title} style={{ fontSize: 8, fontWeight: 700, letterSpacing: ".06em", color: c, border: `1px solid ${c}55`, borderRadius: 3, padding: "1px 5px", background: `${c}18` }}>{txt}</span>;
+}
 function TimeSales({ symbol, micro, quote }: { symbol: string; micro: ReturnType<typeof useMicro>; quote: Quote | null }) {
   const crypto = isCrypto(symbol);
   const trades = crypto ? micro.trades.slice(-14).reverse() : simTrades(quote?.last ?? 0, symbol);
   return (
     <div className="axt-bpanel">
-      <div className="axt-bph">TIME & SALES <span>{crypto ? "BTC live" : "sim"}</span></div>
+      <div className="axt-bph">TIME &amp; SALES <DataBadge state={crypto ? "live" : "sim"} title={crypto ? "Live trades over Binance WebSocket" : "No public stock trade tape on the free feed — illustrative sample"} /></div>
       <div className="axt-ts">
         <div className="axt-ts-h"><span>TIME</span><span className="r">PRICE</span><span className="r">SIZE</span><span className="r">SIDE</span></div>
         {trades.map((t, i) => (
@@ -585,11 +591,29 @@ function simTrades(mid: number, sym: string) {
 }
 function OrderBook({ symbol, micro, quote }: { symbol: string; micro: ReturnType<typeof useMicro>; quote: Quote | null }) {
   const crypto = isCrypto(symbol);
-  const book = crypto && micro.book ? micro.book : simDepth(quote?.last ?? 0, Date.now());
+  // Stocks: the free feed has no Level-2 depth. Never fabricate a multi-level book (spec §2.9-B) —
+  // show an honest unavailable state with best-available top-of-book context instead.
+  if (!crypto) {
+    const last = quote?.last ?? 0;
+    return (
+      <div className="axt-bpanel">
+        <div className="axt-bph">ORDER BOOK <DataBadge state="na" title="Level-2 order-book depth is not available on the free stock feed" /></div>
+        <div style={{ padding: "10px 8px", display: "flex", flexDirection: "column", gap: 8, height: "100%" }}>
+          <div style={{ fontSize: 10.5, lineHeight: 1.5, color: "var(--ax-mut,#9aa7b4)" }}>Level-2 depth isn't published on the free stock feed. Showing best-available top-of-book.</div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6 }}>
+            <div style={{ border: "1px solid var(--ax-hair,rgba(255,255,255,.07))", borderRadius: 5, padding: "6px 8px" }}><div style={{ fontSize: 8, letterSpacing: ".08em", color: "var(--ax-dim,#6b7683)", fontWeight: 700 }}>LAST</div><div style={{ fontFamily: "var(--ax-mono)", fontSize: 15, fontWeight: 700 }}>{num(last)}</div></div>
+            <div style={{ border: "1px solid var(--ax-hair,rgba(255,255,255,.07))", borderRadius: 5, padding: "6px 8px" }}><div style={{ fontSize: 8, letterSpacing: ".08em", color: "var(--ax-dim,#6b7683)", fontWeight: 700 }}>SPREAD</div><div style={{ fontFamily: "var(--ax-mono)", fontSize: 15, fontWeight: 700, color: "var(--ax-dim,#6b7683)" }}>—</div></div>
+          </div>
+          <div style={{ fontSize: 9.5, color: "var(--ax-dim,#6b7683)" }}>Tip: switch to a crypto symbol (e.g. BTCUSD) for real live L2 depth.</div>
+        </div>
+      </div>
+    );
+  }
+  const book = micro.book ?? simDepth(quote?.last ?? 0, Date.now());
   const maxQ = Math.max(1, ...book.bids.map((b) => b.q), ...book.asks.map((a) => a.q));
   return (
     <div className="axt-bpanel">
-      <div className="axt-bph">ORDER BOOK <span>{crypto ? "live" : "sim"}</span></div>
+      <div className="axt-bph">ORDER BOOK <DataBadge state={micro.book ? "live" : "na"} title="Live depth over Binance WebSocket" /></div>
       <div className="axt-ob">
         <div className="axt-ob-h"><span>SIZE</span><span className="r">BID</span><span className="r">ASK</span><span className="r">SIZE</span></div>
         {book.bids.slice(0, 9).map((b, i) => { const a = book.asks[i] || { p: 0, q: 0 }; return (
@@ -625,7 +649,7 @@ function OrderFlow({ symbol, micro }: { symbol: string; micro: ReturnType<typeof
   let cum = 0;
   return (
     <div className="axt-bpanel">
-      <div className="axt-bph">ORDER FLOW <span>{crypto && micro.trades.length >= 24 ? "live Δ" : "Δ delta"}</span></div>
+      <div className="axt-bph">ORDER FLOW <DataBadge state={crypto && micro.trades.length >= 24 ? "live" : "derived"} title={crypto && micro.trades.length >= 24 ? "Aggressor side from live trade stream (CVD)" : "Signed volume inferred by tick rule — not exchange-classified aggressor flow"} /></div>
       <div className="axt-of">
         <div className="axt-of-h"><span>DELTA</span><span className="r">CUM</span><span className="r">BUY%</span></div>
         {buckets.slice(-8).map((b, i) => { const d = b.buy - b.sell; cum += d; const tot = b.buy + b.sell || 1; const bp = (b.buy / tot) * 100; return (
@@ -660,7 +684,7 @@ function Correlations({ live, symbol, onPick }: { live: ReturnType<typeof useApe
 function OptionsSnapshot({ snap, symbol }: { snap: ReturnType<typeof optionsFromVol>; symbol: string }) {
   return (
     <div className="axt-bpanel">
-      <div className="axt-bph">VOLATILITY &amp; RISK <span>realized · model-derived</span></div>
+      <div className="axt-bph">VOLATILITY &amp; RISK <DataBadge state="derived" title="Realized-vol and model-implied estimates from real bars — no options-market data" /></div>
       <div className="axt-opt">
         <div className="axt-opt-kpis">
           {ok("IV30 (est)", snap.iv30 != null ? `${snap.iv30.toFixed(1)}%` : "—", CY, TIPS["IV30 (est)"])}
