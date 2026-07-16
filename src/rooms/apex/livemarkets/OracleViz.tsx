@@ -165,9 +165,52 @@ export function TimeMachine({ symbol }: { symbol: string }) {
 }
 
 /* 8. NEWS INTELLIGENCE — multi-source event feed + propagation tree (how a story ripples out). */
-interface NIItem { title: string; source: string; corroboration: number; ageH: number; eventLabel: string; event: string; sentiment: number; impact: number }
-interface NIProp { sym: string; kind: string; rho: number | null; effect: number; dir: string }
-interface NewsIntelData { symbol: string; count: number; sources: string[]; newsScore: number; bull: number; bear: number; items: NIItem[]; propagation: NIProp[]; topEvents: { label: string; n: number }[] }
+interface NIItem { title: string; source: string; corroboration: number; credibility?: number; rumor?: number; ageH: number; eventLabel: string; event: string; sentiment: number; impact: number }
+interface NIProp { sym: string; kind: string; rho: number | null; te?: number | null; lead?: string | null; effect: number; dir: string }
+interface NIReaction { signal: string; expSigma: number; realizedSigma: number; gap: number; tilt: number; note: string }
+interface NIVelocity { count24h: number; abnCoverage: number | null; branchingRatio: number; reflexive: boolean; note: string }
+interface NIBrain { marketModel?: { beta: number; sigmaARpct: number; arTodayPct: number; car5pct: number } | null; reaction?: NIReaction | null; velocity?: NIVelocity | null; compression?: { score: number | null; signal: string } | null; credibility?: { confidence: number; independentSources: number } | null; dominantMag?: number }
+interface NewsIntelData { symbol: string; count: number; sources: string[]; newsScore: number; bull: number; bear: number; items: NIItem[]; propagation: NIProp[]; topEvents: { label: string; n: number }[]; brain?: NIBrain | null }
+// News Brain band — reaction-gap dial, velocity/reflexivity, credibility, market-model (hedge-fund read).
+function NewsBrainBand({ b }: { b: NIBrain }) {
+  const r = b.reaction, v = b.velocity, mm = b.marketModel, cr = b.credibility;
+  const rColor = r ? (r.signal === "UNDER-REACTION" ? POS : r.signal === "OVER-REACTION" ? NEG : "#9aa7b4") : "#6b7683";
+  // reaction dial: expected vs realized in σ (clamped to ±3σ range)
+  const clampS = (x: number) => Math.max(-3, Math.min(3, x));
+  const toX = (s: number) => 50 + (clampS(s) / 3) * 46; // 4..96
+  return (
+    <div className="axv-nb">
+      <div className="axv-nb-cell">
+        <div className="axv-nb-h">REACTION-GAP</div>
+        {r ? <>
+          <div className="axv-nb-sig" style={{ color: rColor }}>{r.signal}</div>
+          <svg viewBox="0 0 100 26" className="axv-nb-dial" preserveAspectRatio="none">
+            <line x1="4" y1="18" x2="96" y2="18" stroke="#2a323d" strokeWidth="1" />
+            <line x1="50" y1="13" x2="50" y2="23" stroke="#3a434f" strokeWidth="1" />
+            <line x1={toX(r.expSigma)} y1="9" x2={toX(r.expSigma)} y2="18" stroke="#8aa0b8" strokeWidth="1.4" />
+            <circle cx={toX(r.realizedSigma)} cy="18" r="3" fill={rColor} />
+            <text x="4" y="7" fill="#6b7683" fontSize="5">expected ▏ realized ●</text>
+          </svg>
+          <div className="axv-nb-note">{r.note}</div>
+        </> : <div className="axv-nb-note">—</div>}
+      </div>
+      <div className="axv-nb-cell">
+        <div className="axv-nb-h">VELOCITY / REFLEXIVITY</div>
+        {v ? <>
+          <div className="axv-nb-row"><span>{v.count24h}<em>/24h</em></span><span style={{ color: v.reflexive ? "#e0a92b" : "#9aa7b4" }}>n={v.branchingRatio}{v.reflexive ? " ⚡" : ""}</span></div>
+          <div className="axv-nb-bar"><span style={{ width: `${Math.min(100, v.branchingRatio * 100)}%`, background: v.reflexive ? "#e0a92b" : "#4a90d9" }} /></div>
+          <div className="axv-nb-note">{v.note}{v.abnCoverage != null ? ` · abn ${v.abnCoverage}σ` : ""}</div>
+        </> : <div className="axv-nb-note">—</div>}
+      </div>
+      <div className="axv-nb-cell">
+        <div className="axv-nb-h">CREDIBILITY · MODEL</div>
+        {cr ? <div className="axv-nb-row"><span style={{ color: cr.confidence > 0.85 ? POS : cr.confidence > 0.6 ? "#9aa7b4" : NEG }}>{(cr.confidence * 100).toFixed(0)}%</span><span><em>{cr.independentSources} indep</em></span></div> : null}
+        {mm ? <div className="axv-nb-note">β {mm.beta} · abn today {mm.arTodayPct >= 0 ? "+" : ""}{mm.arTodayPct}% · CAR5 {mm.car5pct >= 0 ? "+" : ""}{mm.car5pct}%</div> : <div className="axv-nb-note">market model —</div>}
+      </div>
+    </div>
+  );
+}
+
 export function NewsIntel({ symbol, onPick }: { symbol: string; onPick: (s: string) => void }) {
   const [d, setD] = useState<NewsIntelData | null>(null);
   const [busy, setBusy] = useState(false);
@@ -183,6 +226,7 @@ export function NewsIntel({ symbol, onPick }: { symbol: string; onPick: (s: stri
         <div className="axv-ni-meta"><span><b>{d.count}</b> stories · <b>{d.sources.length}</b> sources</span><span className="axv-ni-bb"><i style={{ color: POS }}>{d.bull}▲</i> <i style={{ color: NEG }}>{d.bear}▼</i></span></div>
         <div className="axv-ni-events">{d.topEvents.map((e) => <span key={e.label} className="axv-ni-ev">{e.label}{e.n > 1 ? ` ×${e.n}` : ""}</span>)}</div>
       </div>
+      {d.brain && <NewsBrainBand b={d.brain} />}
       <div className="axv-ni-cols">
         <div className="axv-ni-feed">
           {d.items.slice(0, 10).map((it, i) => (
@@ -259,6 +303,17 @@ export const VIZ_CSS = `
 .axv-ni-meta b { color:var(--ax-tx,#e6edf3); font-family:var(--ax-mono); } .axv-ni-bb i { font-style:normal; font-family:var(--ax-mono); margin-right:6px; }
 .axv-ni-events { display:flex; gap:5px; flex-wrap:wrap; margin-left:auto; }
 .axv-ni-ev { font-size:9px; color:var(--ax-cydim,#4d9fd1); border:1px solid color-mix(in srgb, ${CY} 30%, transparent); border-radius:4px; padding:2px 7px; }
+.axv-nb { display:grid; grid-template-columns:repeat(3,1fr); gap:8px; margin-bottom:10px; }
+.axv-nb-cell { border:1px solid var(--ax-hair,rgba(255,255,255,.06)); border-radius:6px; padding:7px 9px; background:color-mix(in srgb, var(--ax-panel,#0d1117) 60%, transparent); min-width:0; }
+.axv-nb-h { font-size:8px; letter-spacing:.09em; color:var(--ax-dim,#6b7683); font-weight:700; margin-bottom:4px; }
+.axv-nb-sig { font-size:11px; font-weight:800; letter-spacing:.02em; font-family:var(--ax-mono); }
+.axv-nb-dial { width:100%; height:26px; display:block; margin:2px 0; }
+.axv-nb-row { display:flex; justify-content:space-between; align-items:baseline; font-family:var(--ax-mono); font-size:14px; font-weight:800; color:var(--ax-tx,#e6edf3); }
+.axv-nb-row em { font-style:normal; font-size:9px; color:var(--ax-dim,#6b7683); font-weight:600; }
+.axv-nb-row span:last-child { font-size:11px; }
+.axv-nb-bar { height:4px; border-radius:2px; background:var(--ax-hair,rgba(255,255,255,.08)); overflow:hidden; margin:5px 0 4px; }
+.axv-nb-bar span { display:block; height:100%; border-radius:2px; }
+.axv-nb-note { font-size:8.5px; line-height:1.35; color:var(--ax-mut,#9aa7b4); }
 .axv-ni-cols { display:grid; grid-template-columns:1.3fr 1fr; gap:14px; }
 .axv-ni-feed { display:flex; flex-direction:column; max-height:230px; overflow-y:auto; }
 .axv-ni-row { display:grid; grid-template-columns:auto 1fr; gap:5px 8px; padding:5px 2px; border-bottom:1px solid var(--ax-hair,rgba(255,255,255,.05)); align-items:baseline; }
