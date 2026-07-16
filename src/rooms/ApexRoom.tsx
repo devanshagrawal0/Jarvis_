@@ -29,7 +29,11 @@ export function ApexRoom({ onExit }: Props) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const [booted, setBooted] = useState(false);
   const [roomVisible, setRoomVisible] = useState(false);
-  const [progress, setProgress] = useState(0);
+  // HUD is updated imperatively (via refs) so boot progress never re-renders React every frame.
+  const barRef = useRef<HTMLSpanElement | null>(null);
+  const pctRef = useRef<HTMLElement | null>(null);
+  const statusRef = useRef<HTMLSpanElement | null>(null);
+  const lastStatus = useRef<string>("");
 
   // Boot sequence — runs once on mount.
   useEffect(() => {
@@ -50,7 +54,13 @@ export function ApexRoom({ onExit }: Props) {
       enterRoom();
       // Once the fade completes, freeze the boot canvas to save the GPU.
       fadeTimer = setTimeout(() => stop(), 1500);
-    }, (t) => setProgress(t));
+    }, (t) => {
+      const pct = Math.round(t * 100);
+      if (barRef.current) barRef.current.style.width = pct + "%";
+      if (pctRef.current) pctRef.current.textContent = pct + "%";
+      const s = bootStatus(t);
+      if (statusRef.current && s !== lastStatus.current) { statusRef.current.textContent = s; lastStatus.current = s; }
+    });
 
     // Safety net: if requestAnimationFrame is paused (hidden/background tab)
     // or the user prefers reduced motion, the boot's onDone may never fire.
@@ -68,7 +78,6 @@ export function ApexRoom({ onExit }: Props) {
   // Note: Escape handling lives in ApexHome — it closes any open overlay
   // first and only exits the room (onExit) when nothing is open.
 
-  const pct = Math.round(progress * 100);
   return (
     <div className="apex-shell">
       <canvas ref={canvasRef} className="apex-boot-canvas" />
@@ -78,10 +87,10 @@ export function ApexRoom({ onExit }: Props) {
           <span className="abh-corner abh-tl" /><span className="abh-corner abh-tr" />
           <span className="abh-corner abh-bl" /><span className="abh-corner abh-br" />
           <div className="abh-center">
-            <div className="abh-logo" data-text="APEX">APEX</div>
+            <div className="abh-logo">APEX</div>
             <div className="abh-sub">INTELLIGENT&nbsp;&nbsp;TRADING&nbsp;&nbsp;TERMINAL</div>
-            <div className="abh-bar"><span style={{ width: `${pct}%` }} /></div>
-            <div className="abh-status"><span>{bootStatus(progress)}</span><em>{pct}%</em></div>
+            <div className="abh-bar"><span ref={barRef} style={{ width: "0%" }} /></div>
+            <div className="abh-status"><span ref={statusRef}>INITIALIZING CORE</span><em ref={pctRef}>0%</em></div>
           </div>
           <div className="abh-ver">APEX ENGINE · v2.0</div>
         </div>
