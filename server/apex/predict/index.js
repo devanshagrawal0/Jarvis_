@@ -38,6 +38,8 @@ function compileReport(p) {
   const h1 = p.horizons.find((h) => h.horizon === "1d") || p.horizons[0];
   const h5 = p.horizons.find((h) => h.horizon === "5d") || p.horizons[p.horizons.length - 1];
   const q = p.quant || {}; const sd = p.signalDetail || {}; const pk = p.packages || {};
+  const nb = (p.newsIntel && p.newsIntel.brain) || {}; const qx = p.qx || {};
+  const prop = ((p.newsIntel && p.newsIntel.propagation) || []).filter((x) => x.dir && x.dir !== "flat");
   const pUp = h1.pUp * 0.4 + h5.pUp * 0.6;               // blended probability up
   const conf = (h1.confidence + h5.confidence) / 2;
   const bull = (v) => (v > 0.08 ? 1 : v < -0.08 ? -1 : 0);
@@ -50,6 +52,9 @@ function compileReport(p) {
   if (h5.disagreement > 0.14) flags.push("Models disagree — lower conviction");
   if (q.varCvar && Math.abs(q.varCvar.var95) > 4) flags.push(`Elevated tail risk (VaR ${q.varCvar.var95}%/day)`);
   if (Math.abs(pUp - 0.5) < 0.03) flags.push("Edge is thin — close to a coin-flip");
+  if (qx.fragility != null && qx.fragility > 0.35) flags.push(`Regime looks fragile (BOCPD change-prob ${(qx.fragility * 100).toFixed(0)}%) — size down`);
+  if (nb.velocity && nb.velocity.reflexive) flags.push("Self-reflexive news cluster — headlines feeding on themselves, fade froth");
+  if (nb.reaction && nb.reaction.signal === "OVER-REACTION") flags.push("News over-reaction — mean-reversion (fade) risk");
 
   // Signal label (the algo verdict)
   let label, tone;
@@ -70,12 +75,16 @@ function compileReport(p) {
     { title: "TECHNICALS", score: pk.technical ?? 0, bullets: [
       { t: `Regime: ${p.regime.label.replace("_", " ")}${p.regime.adx != null ? ` (ADX ${p.regime.adx.toFixed(0)} — ${p.regime.adx > 25 ? "trending" : "choppy"})` : ""}`, dir: bull(p.regime.trendScore) },
       { t: `Trend persistence: Hurst ${p.regime.hurst.toFixed(2)} — ${p.regime.hurst > 0.55 ? "trend-following favored" : p.regime.hurst < 0.45 ? "mean-reversion favored" : "random walk"}`, dir: p.regime.hurst > 0.55 ? bull(p.regime.trendScore) : 0 },
-      { t: `Technical composite: ${(pk.technical ?? 0).toFixed(2)} on a −1…+1 scale`, dir: bull(pk.technical ?? 0) },
-      { t: `Volatility: ${q.garch ? (q.garch.sigmaNow * 100 * Math.sqrt(6.5 * 252)).toFixed(0) + "% annualized (GARCH)" : "—"}${q.varCvar ? `, 1-day VaR ${q.varCvar.var95}%` : ""}`, dir: 0 },
-    ] },
-    { title: "NEWS & SENTIMENT", score: pk.news ?? 0, bullets: [
-      { t: sd.news ? `${sd.news.count} recent headlines · net tone ${(pk.news ?? 0) >= 0.05 ? "positive" : (pk.news ?? 0) <= -0.05 ? "negative" : "neutral"} (${(pk.news ?? 0).toFixed(2)})` : "No symbol-tagged headlines in the current feed", dir: bull(pk.news ?? 0) },
-    ] },
+      qx.er != null ? { t: `Trend character: efficiency ratio ${qx.er.toFixed(2)} (${qx.er > 0.5 ? "clean directional move" : qx.er < 0.25 ? "choppy / noise" : "mixed"}), DFA-Hurst ${qx.hurst != null ? qx.hurst.toFixed(2) : "—"}`, dir: qx.er > 0.4 ? bull(p.regime.trendScore) : 0 } : null,
+      qx.fragility != null ? { t: `Regime stability: BOCPD change-probability ${(qx.fragility * 100).toFixed(0)}% (${qx.fragility > 0.35 ? "fragile — recent structural break likely" : "stable"}), run-length ~${qx.runLength != null ? Math.round(qx.runLength) : "—"} bars`, dir: qx.fragility > 0.35 ? -1 : 0 } : null,
+      { t: `Volatility: ${qx.yzVolDaily != null ? (qx.yzVolDaily * Math.sqrt(6.5 * 252) * 100).toFixed(0) + "% annualized (Yang-Zhang range)" : q.garch ? (q.garch.sigmaNow * 100 * Math.sqrt(6.5 * 252)).toFixed(0) + "% (GARCH)" : "—"}${q.varCvar ? `, 1-day VaR ${q.varCvar.var95}%` : ""}`, dir: 0 },
+    ].filter(Boolean) },
+    { title: "NEWS BRAIN", score: pk.news ?? 0, bullets: [
+      { t: sd.news ? `${sd.news.count} headlines · net tone ${(pk.news ?? 0) >= 0.05 ? "positive" : (pk.news ?? 0) <= -0.05 ? "negative" : "neutral"} (${(pk.news ?? 0).toFixed(2)}) · credibility ${nb.credibility ? (nb.credibility.confidence * 100).toFixed(0) + "% (" + nb.credibility.independentSources + " independent sources)" : "—"}` : "No symbol-tagged headlines in the current feed", dir: bull(pk.news ?? 0) },
+      nb.reaction ? { t: `Reaction-gap: ${nb.reaction.signal} — ${nb.reaction.note}`, dir: nb.reaction.tilt > 0.05 ? 1 : nb.reaction.tilt < -0.05 ? -1 : 0 } : null,
+      nb.velocity ? { t: `Velocity: ${nb.velocity.count24h} stories/24h, reflexivity (Hawkes branching) ${nb.velocity.branchingRatio}${nb.velocity.abnCoverage != null ? `, abnormal coverage ${nb.velocity.abnCoverage}σ` : " (coverage baseline building)"} — ${nb.velocity.note}`, dir: 0 } : null,
+      prop.length ? { t: `Cross-asset propagation: ${prop.slice(0, 3).map((x) => `${x.sym} ${x.dir}${x.lead === "subject leads" ? " (we lead)" : ""}`).join(", ")}`, dir: 0 } : null,
+    ].filter(Boolean) },
     { title: "PEERS & SECTOR", score: (pk.peer ?? 0) * 0.5 + (pk.sector ?? 0) * 0.5, bullets: [
       { t: sd.sector ? `Sector ETF ${sd.sector.etf}: momentum ${pctTxt(sd.sector.etfMom)}, correlation ${sd.sector.rho.toFixed(2)} — ${sd.sector.etfMom >= 0 ? "tailwind" : "headwind"}` : "Sector data unavailable", dir: bull(pk.sector ?? 0) },
       { t: (sd.peers || []).length ? `Peers: ${(sd.peers || []).slice(0, 3).map((x) => `${x.sym} ${pctTxt(x.mom)}`).join(", ")}` : "No peers mapped", dir: bull(pk.peer ?? 0) },
@@ -191,7 +200,7 @@ function createOracle({ runtimeDir, getBars, priceAt, getNews = null, callModel 
       h.calibrated = !!cal;
     }
     let quant = null; try { quant = computeQuant(bars); } catch { /* optional */ }
-    const payload = { ok: true, symbol, asOf: null, spot: fc.spot, regime, muBar: fc.muBar, sigBar: fc.sigBar, ou: fc.ou, g: fc.g, horizons: fc.horizons, crossScore: sig.crossScore, packages: sig.packages, signalDetail: sig.detail, weights: sig.weights, jarvis: llm, quant, newsIntel, model_ver: MODEL_VER };
+    const payload = { ok: true, symbol, asOf: null, spot: fc.spot, regime, muBar: fc.muBar, sigBar: fc.sigBar, ou: fc.ou, g: fc.g, qx: fc.qx || null, horizons: fc.horizons, crossScore: sig.crossScore, packages: sig.packages, signalDetail: sig.detail, weights: sig.weights, jarvis: llm, quant, newsIntel, model_ver: MODEL_VER };
     try { payload.report = compileReport(payload); } catch { payload.report = null; }
     const sc = selfCheck(payload);
     payload.selfCheck = sc; payload.degraded = !sc.ok;
