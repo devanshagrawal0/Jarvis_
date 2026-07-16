@@ -15,6 +15,7 @@ const { createOracleStore } = require("./store");
 const { buildPackages } = require("./signals");
 const { fuse } = require("./ensemble");
 const { computeQuant } = require("./phd");
+const { metaTest } = require("./metamodel");
 const { bs } = require("./options");
 const { clamp } = require("./mathx");
 
@@ -140,7 +141,10 @@ function createOracle({ runtimeDir, getBars, priceAt, getNews = null, callModel 
     let llm = await synthesize(symbol, regime, fc, sig);
     if (!llm) llm = deterministicThesis(symbol, regime, fc, sig);
     const pCross = clamp(0.5 + 0.5 * sig.crossScore, 0.02, 0.98);
-    // ensemble per horizon (technical GBM view + cross-asset view + LLM view)
+    // NOTE: a learned logistic meta-model (server/apex/predict/metamodel.js) was built and A/B
+    // tested walk-forward. It improved the 5-day horizon ~+2% but was flat on 1-day and overfit
+    // some names — it did NOT clear the 53% ship gate, so it is intentionally NOT wired into the
+    // live ensemble. The module + metaTest harness are kept for future feature/data work.
     for (const h of fc.horizons) {
       const cal = cals[h.key];
       const brierTech = cal ? cal.mean_brier : 0.25;
@@ -299,7 +303,15 @@ function createOracle({ runtimeDir, getBars, priceAt, getNews = null, callModel 
       return { rows };
     } catch { return { rows: [] }; }
   }
-  return { predict, refresh, resolveDue, history, backtest, leaderboard, hindcast, computeForecast, store, model_ver: MODEL_VER };
+  // Meta-model A/B harness — trains the logistic meta-model out-of-sample and compares its
+  // hit-rate to the trend-following baseline. Used to decide whether it's worth wiring in.
+  async function metatest(symbol) {
+    let bars = await getBars(symbol, { interval: "60m", range: "730d" });
+    if (!Array.isArray(bars) || bars.length < 200) bars = await getBars(symbol, { interval: "1d", range: "5y" });
+    if (!Array.isArray(bars) || bars.length < 200) return { ok: false, reason: "insufficient history", symbol };
+    return { ok: true, symbol, d1: metaTest(bars, 7), d5: metaTest(bars, 33) };
+  }
+  return { predict, refresh, resolveDue, history, backtest, leaderboard, hindcast, metatest, computeForecast, store, model_ver: MODEL_VER };
 }
 
 module.exports = { createOracle };

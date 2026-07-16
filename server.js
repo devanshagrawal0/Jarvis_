@@ -6120,7 +6120,7 @@ async function handleApi(req, res, pathname, url) {
           callModel: async (prompt) => { const r = await callGemini({ prompt, mode: "chat", sessionId: "apex-oracle", deviceId: "apex", source: "apex-oracle", history: [] }); return (r && r.response) || ""; },
         });
         if (req.method === "GET" && pathname === "/api/apex/predict/leaderboard") { sendJson(res, 200, apexOracle.leaderboard()); return; }
-        const predM = pathname.match(/^\/api\/apex\/predict\/([^/]+)(\/refresh|\/history|\/backtest|\/hindcast)?$/);
+        const predM = pathname.match(/^\/api\/apex\/predict\/([^/]+)(\/refresh|\/history|\/backtest|\/hindcast|\/metatest)?$/);
         if (predM) {
           const sym = decodeURIComponent(predM[1]).toUpperCase(); const sub = predM[2];
           try {
@@ -6128,6 +6128,7 @@ async function handleApi(req, res, pathname, url) {
             if (req.method === "GET" && sub === "/history") { sendJson(res, 200, apexOracle.history(sym, Number(url.searchParams.get("limit")) || 60)); return; }
             if (req.method === "GET" && sub === "/backtest") { sendJson(res, 200, await apexOracle.backtest(sym)); return; }
             if (req.method === "GET" && sub === "/hindcast") { sendJson(res, 200, await apexOracle.hindcast(sym, Number(url.searchParams.get("daysAgo")) || 20)); return; }
+            if (req.method === "GET" && sub === "/metatest") { sendJson(res, 200, await apexOracle.metatest(sym)); return; }
             if (req.method === "GET" && !sub) { sendJson(res, 200, await apexOracle.predict(sym)); return; }
           } catch (e) { sendJson(res, 200, { ok: false, error: e.message, symbol: sym }); return; }
         }
