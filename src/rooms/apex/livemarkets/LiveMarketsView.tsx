@@ -660,7 +660,7 @@ function Correlations({ live, symbol, onPick }: { live: ReturnType<typeof useApe
 function OptionsSnapshot({ snap, symbol }: { snap: ReturnType<typeof optionsFromVol>; symbol: string }) {
   return (
     <div className="axt-bpanel">
-      <div className="axt-bph">OPTIONS SNAPSHOT <span>IV est · realized</span></div>
+      <div className="axt-bph">VOLATILITY &amp; RISK <span>realized · model-derived</span></div>
       <div className="axt-opt">
         <div className="axt-opt-kpis">
           {ok("IV30 (est)", snap.iv30 != null ? `${snap.iv30.toFixed(1)}%` : "—", CY, TIPS["IV30 (est)"])}
@@ -715,7 +715,7 @@ function StatusStrip({ live }: { live: ReturnType<typeof useApexLive> }) {
   return (
     <div className="axt-status">
       <span className="axt-st-live"><span className={`axt-st-dot${live.live ? " on" : ""}`} />{live.live ? "CONNECTED" : "CONNECTING"}</span>
-      <span className="axt-st-feed">DATA FEED: <b>{live.live ? "REAL-TIME" : "…"}</b></span>
+      <span className="axt-st-feed" title="Crypto streams live over WebSocket; free stock quotes are delayed ~15 min.">DATA FEED: <b>{live.live ? "CRYPTO LIVE · STOCKS DELAYED" : "…"}</b></span>
       <div className="axt-st-items">
         {items.map((it, i) => <span key={i} className="axt-st-item"><em>{it.l}</em> <b>{it.v}</b>{it.c != null && <span style={{ color: col(it.c) }}>{pctA(it.c)}</span>}</span>)}
       </div>
