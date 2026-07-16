@@ -42,6 +42,19 @@ const WATCH: Record<string, string[]> = {
 };
 const DISPLAY: Record<string, string> = { BTCUSDT: "BTC / USD", ETHUSDT: "ETH / USD", SOLUSDT: "SOL / USD", XRPUSDT: "XRP / USD", DOGEUSDT: "DOGE / USD", ADAUSDT: "ADA / USD", "ES=F": "S&P Futures", "NQ=F": "Nasdaq Futures", "YM=F": "Dow Futures", "CL=F": "Crude Oil", "GC=F": "Gold", "SI=F": "Silver" };
 const NAMES: Record<string, string> = { NVDA: "NVIDIA Corp", AAPL: "Apple Inc.", MSFT: "Microsoft Corp.", AMZN: "Amazon.com Inc.", GOOGL: "Alphabet Inc.", META: "Meta Platforms", TSLA: "Tesla Inc.", AMD: "Advanced Micro", SPY: "SPDR S&P 500 ETF", QQQ: "Invesco QQQ", DIA: "SPDR Dow", IWM: "iShares R2000", XLK: "Tech Sector", XLF: "Financials", XLE: "Energy", GLD: "Gold Trust" };
+// Searchable instrument index (symbol · name · asset type · source-state) for the command bar dropdown.
+const SEARCH_INDEX: { sym: string; name: string; type: string; live: boolean }[] = (() => {
+  const seen = new Set<string>(); const out: { sym: string; name: string; type: string; live: boolean }[] = [];
+  for (const [grp, ty] of [["Stocks", "STOCK"], ["ETFs", "ETF"], ["Crypto", "CRYPTO"], ["Futures", "FUT"]] as const)
+    for (const s of WATCH[grp]) { if (seen.has(s)) continue; seen.add(s); out.push({ sym: s, name: DISPLAY[s] || NAMES[s] || s, type: ty, live: grp === "Crypto" }); }
+  return out;
+})();
+function searchInstruments(q: string) {
+  const query = q.trim().toUpperCase(); if (!query) return [];
+  return SEARCH_INDEX
+    .map((it) => { const sym = it.sym.replace("USDT", ""); const symHit = sym.startsWith(query) ? 3 : sym.includes(query) ? 2 : 0; const nameHit = it.name.toUpperCase().includes(query) ? 1 : 0; return { it, score: symHit + nameHit }; })
+    .filter((x) => x.score > 0).sort((a, b) => b.score - a.score).slice(0, 8).map((x) => x.it);
+}
 const isCrypto = (s: string) => /USDT?$/i.test(s);
 
 // Plain-language tooltips for dense abbreviations — a newcomer can hover to learn without leaving the screen.
@@ -81,6 +94,9 @@ export function LiveMarketsView() {
   const [symbol, setSymbol] = useState("NVDA");
   const [tf, setTf] = useState("5m");
   const [search, setSearch] = useState("");
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [searchIdx, setSearchIdx] = useState(0);
+  const searchResults = useMemo(() => searchInstruments(search), [search]);
   const [watchTab, setWatchTab] = useState("Stocks");
   const [leftTab, setLeftTab] = useState<"watch" | "screener" | "heat">("watch");
   const [favorites, setFavorites] = useState<string[]>(["NVDA", "AAPL", "TSLA"]);
@@ -158,10 +174,32 @@ export function LiveMarketsView() {
 
       {/* ── Toolbar ── */}
       <div className="axt-toolbar">
-        <form className="axt-search" onSubmit={searchGo}>
+        <form className="axt-search" onSubmit={(e) => { e.preventDefault(); if (searchOpen && searchResults[searchIdx]) { changeSym(searchResults[searchIdx].sym); setSearch(""); setSearchOpen(false); } else searchGo(e); }}>
           <span className="axt-mag">⌕</span>
-          <input value={search} onChange={(e) => setSearch(e.target.value.toUpperCase())} placeholder="Search stocks, crypto, ETFs, futures…" spellCheck={false} />
+          <input value={search}
+            onChange={(e) => { setSearch(e.target.value.toUpperCase()); setSearchOpen(true); setSearchIdx(0); }}
+            onFocus={() => search && setSearchOpen(true)}
+            onBlur={() => setTimeout(() => setSearchOpen(false), 120)}
+            onKeyDown={(e) => {
+              if (!searchOpen || !searchResults.length) return;
+              if (e.key === "ArrowDown") { e.preventDefault(); setSearchIdx((i) => Math.min(searchResults.length - 1, i + 1)); }
+              else if (e.key === "ArrowUp") { e.preventDefault(); setSearchIdx((i) => Math.max(0, i - 1)); }
+              else if (e.key === "Escape") { setSearchOpen(false); }
+            }}
+            placeholder="Search stocks, crypto, ETFs, futures…" spellCheck={false} />
           <kbd>↵</kbd>
+          {searchOpen && searchResults.length > 0 && (
+            <div className="axt-searchdd">
+              {searchResults.map((r, i) => (
+                <div key={r.sym} className={`axt-sr${i === searchIdx ? " on" : ""}`} onMouseDown={(e) => { e.preventDefault(); changeSym(r.sym); setSearch(""); setSearchOpen(false); }} onMouseEnter={() => setSearchIdx(i)}>
+                  <b>{r.sym.replace("USDT", "")}</b>
+                  <span className="axt-sr-name">{r.name}</span>
+                  <span className="axt-sr-type">{r.type}</span>
+                  <span className="axt-sr-state" style={{ color: r.live ? POS : WARN }}>{r.live ? "LIVE" : "DELAYED"}</span>
+                </div>
+              ))}
+            </div>
+          )}
         </form>
         <div className="axt-popular">
           <span className="axt-pop-l">POPULAR</span>
@@ -795,6 +833,13 @@ const TERM_CSS = `
 .axt-mag { color:var(--ax-mut); font-size:15px; }
 .axt-search input { flex:1; background:none; border:none; outline:none; color:var(--ax-tx); font-size:12px; padding:0 8px; font-family:var(--ax-sans); }
 .axt-search kbd { font-size:9px; color:var(--ax-dim); border:1px solid var(--ax-bdsoft); border-radius:4px; padding:1px 5px; }
+.axt-searchdd { position:absolute; top:calc(100% + 5px); left:0; right:0; z-index:40; background:var(--ax-panel-grad); border:1px solid var(--ax-bd); border-radius:9px; box-shadow:0 14px 40px -12px rgba(0,0,0,.7), var(--ax-panel-glow); overflow:hidden; padding:4px; }
+.axt-sr { display:grid; grid-template-columns:auto 1fr auto auto; gap:9px; align-items:center; padding:6px 9px; border-radius:6px; cursor:pointer; }
+.axt-sr b { font-family:var(--ax-mono); font-size:12px; font-weight:700; color:var(--ax-tx); }
+.axt-sr-name { font-size:10.5px; color:var(--ax-mut); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.axt-sr-type { font-size:8px; font-weight:700; letter-spacing:.06em; color:var(--ax-cydim); border:1px solid var(--ax-bdsoft); border-radius:3px; padding:1px 5px; }
+.axt-sr-state { font-size:8px; font-weight:700; letter-spacing:.05em; }
+.axt-sr.on { background:color-mix(in srgb, ${CY} 14%, transparent); }
 .axt-popular { display:flex; align-items:center; gap:6px; }
 .axt-pop-l { font-size:8.5px; letter-spacing:.1em; color:var(--ax-dim); font-weight:700; }
 .axt-chip { background:var(--ax-elev); border:1px solid var(--ax-bdsoft); color:var(--ax-mut); border-radius:6px; padding:5px 10px; font-size:11px; font-weight:700; font-family:var(--ax-mono); }
