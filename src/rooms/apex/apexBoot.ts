@@ -1,126 +1,173 @@
-// APEX — cinematic loading screen (~4.6s), pure Canvas2D (no WebGL → no GPU lag). A "terminal coming
-// online" montage: a scrolling ticker tape, an APEX-composite candlestick chart (candles + MA + volume
-// + price axis) drawing in, a live order-book depth ladder, regime/VIX/breadth stat tiles counting up,
-// a streaming boot log, and a scan sweep — composed around a centre vignette for the DOM wordmark.
+import * as THREE from "three";
+
+// APEX — "The Singularity" cinematic loading screen (~6.8s). A black void with drifting star dust
+// and a distant pulsing iris ring (the Oracle's eye); the camera accelerates INTO it and it blows
+// past into a hyperspace DATA TUNNEL — a rolling vortex of cyan/violet light streaks with rare
+// green/red price-tick comets rushing the lens — building speed, ending in a white-cyan flash that
+// hands off to the room. Vignette + 2.35:1 letterbox + film grain graded in-shader.
+//
+// ZERO-LAG BY CONSTRUCTION: the entire film is ONE full-screen fragment shader — a single draw call,
+// no geometry, no textures, no post passes, no per-frame JS work beyond three uniform writes. This is
+// demoscene-style rendering; it holds 60fps on integrated GPUs. An adaptive governor still measures
+// the first frames and halves resolution once if the GPU is genuinely slow.
+//
+// HUD (ApexRoom) is updated imperatively via onProgress — no React re-renders.
 // Signature preserved: startApexBoot(canvas, onDone, onProgress?) → stop().
 
-const DURATION = 4600; // ms
+const DURATION = 6800;
 const clamp01 = (x: number) => Math.max(0, Math.min(1, x));
-const easeOut = (x: number) => 1 - Math.pow(1 - clamp01(x), 3);
 
-type Candle = { o: number; h: number; l: number; c: number; v: number };
+const FRAG = `
+precision highp float;
+uniform float uT;     // 0..1 timeline
+uniform float uSec;   // seconds elapsed
+uniform vec2 uRes;
+
+float h1(float n){ return fract(sin(n)*43758.5453123); }
+float h2(vec2 p){ return fract(sin(dot(p, vec2(127.1,311.7)))*43758.5453123); }
+
+vec3 palette(float x){
+  vec3 blue   = vec3(0.10,0.35,0.90);
+  vec3 cyan   = vec3(0.18,0.78,1.00);
+  vec3 violet = vec3(0.48,0.30,1.00);
+  return x < 0.5 ? mix(blue, cyan, x*2.0) : mix(cyan, violet, (x-0.5)*2.0);
+}
+
+void main(){
+  vec2 frag = gl_FragCoord.xy;
+  vec2 uv = (frag - 0.5*uRes)/uRes.y;
+
+  // ---- timeline beats ----
+  float appear   = smoothstep(0.00, 0.10, uT);   // fade from black
+  float approach = smoothstep(0.06, 0.30, uT);   // the eye approaches
+  float tunnelIn = smoothstep(0.24, 0.40, uT);   // ...and blows past into the tunnel
+  float speed    = 0.25 + 4.0*smoothstep(0.28, 0.78, uT) + 7.0*smoothstep(0.82, 0.98, uT);
+  float flash    = smoothstep(0.94, 1.00, uT);   // singularity
+
+  // ---- camera: slow roll + micro shake that grows with speed ----
+  float roll = 0.9*uT*uT + 0.015*sin(uSec*2.2);
+  float cr = cos(roll), sr = sin(roll);
+  uv = mat2(cr,-sr,sr,cr)*uv;
+  uv += tunnelIn*0.006*vec2(sin(uSec*15.0), cos(uSec*19.0));
+
+  float r = length(uv) + 1e-4;
+  float a = atan(uv.y, uv.x);
+
+  vec3 col = vec3(0.0);
+
+  // ---- act I: star dust drifting in the void ----
+  {
+    vec2 sp = uv*14.0 + vec2(0.0, uSec*0.05);
+    vec2 cell = floor(sp);
+    float s = h2(cell);
+    float tw = 0.6 + 0.4*sin(uSec*(1.0+2.0*h2(cell+3.3)) + s*20.0);
+    float star = step(0.994, s) * (0.4+0.6*h2(cell+7.7)) * tw;
+    col += vec3(0.55,0.70,0.85)*star*appear*(1.0-tunnelIn);
+  }
+
+  // ---- act I: the Oracle's iris — a distant ring that approaches and swallows the camera ----
+  {
+    float R0 = mix(0.10, 2.60, approach*approach);
+    float ring = exp(-pow(abs(r-R0)*26.0, 1.4));
+    float pulse = 0.75 + 0.25*sin(uSec*3.0);
+    col += palette(0.55)*ring*pulse*appear*1.6*(1.0-flash);
+    col += palette(0.40)*exp(-r*7.0)*0.25*approach*(1.0-tunnelIn);   // faint pupil halo
+  }
+
+  // ---- act II: the data tunnel ----
+  {
+    float z = 0.22/r;                       // tunnel depth from radius
+    float zz = z + uSec*speed;              // rushing forward
+
+    float swirl = 0.55*sin(z*0.35 + uT*3.0)*tunnelIn;
+    float ang = a + swirl;
+
+    float SEC = 42.0;
+    float sector = floor((ang/6.2831853 + 0.5)*SEC);
+    float sh = h1(sector*13.7);
+
+    // dashes streaming toward the lens — the market's data stream
+    float stripe = fract(zz*(0.35+0.30*sh) + sh*9.0);
+    float dash = smoothstep(0.00,0.05,stripe)*smoothstep(0.30,0.10,stripe);
+    // occasional bright comets
+    float comet = step(0.965, h1(sector*3.1 + floor(zz*0.35 + sh*9.0)*1.7));
+
+    float body = exp(-1.6*r)*(1.0-exp(-9.0*r));       // hide the far void + soften the rim
+    float wall = dash*(0.5+0.9*comet);
+
+    float hueSel = h1(sector*29.3);
+    vec3 wcol = palette(hueSel);
+    if(hueSel > 0.92)      wcol = vec3(0.22,1.00,0.55);  // green tick
+    else if(hueSel < 0.06) wcol = vec3(1.00,0.30,0.42);  // red tick
+
+    float fog = exp(-2.4*r);                           // the black hole ahead stays mysterious
+    vec3 tcol = wcol*wall*body*(1.0-fog*0.85);
+    tcol += palette(0.5)*exp(-r*5.5)*0.045*speed;      // core glow builds with velocity
+
+    col = mix(col, col + tcol*2.1, tunnelIn);
+  }
+
+  // ---- act III: the singularity flash ----
+  col += vec3(0.75,0.92,1.0)*flash*flash*1.6;
+
+  // ---- film grade: vignette, 2.35:1 letterbox, grain, fade ----
+  vec2 q = frag/uRes;
+  col *= smoothstep(1.05, 0.35, length((q-0.5)*vec2(1.9,1.15)));
+  col *= smoothstep(0.070, 0.082, q.y)*smoothstep(0.930, 0.918, q.y);
+  float grain = h2(frag + fract(uSec)*371.0);
+  col += (grain-0.5)*0.03;
+  col *= appear;
+
+  gl_FragColor = vec4(col, 1.0);
+}`;
 
 export function startApexBoot(canvas: HTMLCanvasElement, onDone: () => void, onProgress?: (t: number) => void): () => void {
   const reduced = window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches;
-  const ctx = canvas.getContext("2d");
-  if (!ctx) { const t = setTimeout(() => { onProgress?.(1); onDone(); }, 200); return () => clearTimeout(t); }
+  let renderer: THREE.WebGLRenderer;
+  try { renderer = new THREE.WebGLRenderer({ canvas, antialias: false, alpha: false, powerPreference: "high-performance" }); }
+  catch { const t = setTimeout(() => { onProgress?.(1); onDone(); }, 200); return () => clearTimeout(t); }
+  renderer.setPixelRatio(Math.min(1.5, window.devicePixelRatio || 1));
 
-  const dpr = Math.min(2, window.devicePixelRatio || 1);
-  let W = 0, H = 0;
-  const resize = () => { W = canvas.clientWidth || window.innerWidth; H = canvas.clientHeight || window.innerHeight; canvas.width = Math.round(W * dpr); canvas.height = Math.round(H * dpr); ctx.setTransform(dpr, 0, 0, dpr, 0, 0); };
-  resize(); window.addEventListener("resize", resize);
+  const size = () => ({ w: canvas.clientWidth || window.innerWidth, h: canvas.clientHeight || window.innerHeight });
+  let { w, h } = size(); renderer.setSize(w, h, false);
 
-  let seed = 7654321; const rnd = () => { seed = (seed * 1103515245 + 12345) & 0x7fffffff; return seed / 0x7fffffff; };
+  const scene = new THREE.Scene();
+  const camera = new THREE.PerspectiveCamera();           // unused by the shader; required by render()
+  const uniforms = { uT: { value: 0 }, uSec: { value: 0 }, uRes: { value: new THREE.Vector2(w * renderer.getPixelRatio(), h * renderer.getPixelRatio()) } };
+  const mat = new THREE.ShaderMaterial({ uniforms, vertexShader: `void main(){ gl_Position = vec4(position, 1.0); }`, fragmentShader: FRAG, depthTest: false, depthWrite: false });
+  const quad = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), mat);
+  quad.frustumCulled = false;
+  scene.add(quad);
 
-  const UP = "#3fb489", DN = "#e0566a", ACC = "#63c6ec", MUT = "rgba(140,170,195,0.5)", DIM = "rgba(120,150,175,0.32)";
-
-  // ── candlestick series (APEX composite) ──
-  const NC = 58; const candles: Candle[] = []; let px = 1000;
-  for (let i = 0; i < NC; i++) { const o = px; const mv = (rnd() - 0.44) * 9; const c = o + mv; const h = Math.max(o, c) + rnd() * 5; const l = Math.min(o, c) - rnd() * 5; candles.push({ o, h, l, c, v: 0.3 + rnd() * 0.7 }); px = c; }
-  const ma: number[] = []; for (let i = 0; i < NC; i++) { let s = 0, n = 0; for (let k = -4; k <= 0; k++) { const j = i + k; if (j >= 0) { s += candles[j].c; n++; } } ma.push(s / n); }
-  const lo = Math.min(...candles.map((c) => c.l)), hi = Math.max(...candles.map((c) => c.h)), span = (hi - lo) || 1;
-
-  // ── ticker tape ──
-  const TICK = [["NVDA", 2.41], ["AAPL", 1.08], ["MSFT", -0.21], ["TSLA", -1.27], ["BTC", 1.53], ["SPY", 0.35], ["META", 1.31], ["AMZN", 0.73], ["ETH", 2.12], ["GOOGL", -0.42], ["AMD", 2.15], ["NFLX", 0.66], ["QQQ", 0.51], ["GLD", -0.18]];
-
-  // ── order book ──
-  const book: { bid: number; ask: number }[] = []; for (let i = 0; i < 9; i++) book.push({ bid: 0.2 + rnd() * 0.8, ask: 0.2 + rnd() * 0.8 });
-
-  // ── boot log ──
-  const LOG: [number, string][] = [[0.04, "core online"], [0.16, "market data feeds ....... connected"], [0.30, "regime engine ........... calibrated"], [0.45, "oracle prediction core .. ready"], [0.60, "watchlists + scanners ... loaded"], [0.75, "news intelligence ....... streaming"], [0.90, "terminal ................ rendering"]];
+  const syncRes = () => uniforms.uRes.value.set(w * renderer.getPixelRatio(), h * renderer.getPixelRatio());
+  const onResize = () => { const s = size(); w = s.w; h = s.h; renderer.setSize(w, h, false); syncRes(); };
+  window.addEventListener("resize", onResize);
 
   const start = performance.now(); let raf = 0, done = false;
   const finish = () => { if (done) return; done = true; onProgress?.(1); try { onDone(); } catch { /* noop */ } };
   if (reduced) { onProgress?.(1); const t = setTimeout(finish, 300); return () => { clearTimeout(t); cleanup(); }; }
 
+  // adaptive governor: if the first ~40 frames average slow, halve resolution once — belt & braces.
+  let frames = 0, accum = 0, lastNow = start, degraded = false;
+
   const frame = (now: number) => {
-    const t = clamp01((now - start) / DURATION); onProgress?.(t);
+    const t = clamp01((now - start) / DURATION);
+    onProgress?.(t);
+    const dt = now - lastNow; lastNow = now;
+    if (!degraded && frames < 40) { accum += dt; frames++; if (frames === 40 && accum / frames > 24) { degraded = true; renderer.setPixelRatio(0.85); renderer.setSize(w, h, false); syncRes(); } }
 
-    // backdrop + faint grid
-    const bg = ctx.createLinearGradient(0, 0, 0, H); bg.addColorStop(0, "#03080f"); bg.addColorStop(1, "#01040a");
-    ctx.fillStyle = bg; ctx.fillRect(0, 0, W, H);
-    ctx.strokeStyle = "rgba(90,130,160,0.04)"; ctx.lineWidth = 1;
-    for (let x = 60; x < W; x += 60) { ctx.beginPath(); ctx.moveTo(x, 60); ctx.lineTo(x, H - 60); ctx.stroke(); }
-    for (let y = 90; y < H - 40; y += 54) { ctx.beginPath(); ctx.moveTo(40, y); ctx.lineTo(W - 40, y); ctx.stroke(); }
-
-    // ── ticker tape (top) ──
-    const tyH = 30, ty = 42; ctx.font = "600 12px ui-monospace, monospace"; ctx.textBaseline = "middle"; ctx.textAlign = "left";
-    ctx.fillStyle = "rgba(3,10,18,0.7)"; ctx.fillRect(0, ty - tyH / 2, W, tyH);
-    ctx.strokeStyle = "rgba(90,140,175,0.12)"; ctx.beginPath(); ctx.moveTo(0, ty + tyH / 2); ctx.lineTo(W, ty + tyH / 2); ctx.stroke();
-    const scroll = (t * 260) % 1e9; let tx = 30 - scroll;
-    // draw ticker twice for wrap
-    for (let rep = 0; rep < 3; rep++) {
-      let cx = tx + rep * (TICK.length * 150);
-      for (const [sym, pc] of TICK) { const up = (pc as number) >= 0; ctx.fillStyle = "#cfe0ee"; ctx.fillText(sym as string, cx, ty); const sw = ctx.measureText(sym as string).width; ctx.fillStyle = up ? UP : DN; ctx.fillText(`${up ? "▲" : "▼"}${Math.abs(pc as number).toFixed(2)}%`, cx + sw + 8, ty); cx += 150; }
-    }
-
-    // ── main candlestick chart ──
-    const cpL = 60, cpR = W - 78, cpT = 96, cpB = H - 150;
-    const plotW = cpR - cpL, plotH = (cpB - cpT) * 0.78, volTop = cpT + plotH + 10, volH = (cpB - cpT) * 0.16;
-    const X = (i: number) => cpL + (i + 0.5) / NC * plotW;
-    const Y = (p: number) => cpT + (1 - (p - lo) / span) * plotH;
-    // price axis
-    ctx.font = "10px ui-monospace, monospace"; ctx.textAlign = "left";
-    for (let g = 0; g <= 4; g++) { const yy = cpT + g / 4 * plotH; ctx.strokeStyle = "rgba(120,160,190,0.05)"; ctx.beginPath(); ctx.moveTo(cpL, yy); ctx.lineTo(cpR, yy); ctx.stroke(); ctx.fillStyle = DIM; ctx.fillText((hi - g / 4 * span).toFixed(0), cpR + 8, yy); }
-    const rev = Math.floor(easeOut(t / 0.9) * NC);
-    const cw = Math.max(2, (plotW / NC) * 0.58);
-    // volume
-    for (let i = 0; i < rev; i++) { const c = candles[i]; ctx.fillStyle = (c.c >= c.o ? "rgba(63,180,137,0.35)" : "rgba(224,86,106,0.35)"); const bh = c.v * volH; ctx.fillRect(X(i) - cw / 2, volTop + volH - bh, cw, bh); }
-    // candles
-    for (let i = 0; i < rev; i++) { const c = candles[i]; const up = c.c >= c.o; ctx.strokeStyle = up ? UP : DN; ctx.fillStyle = up ? UP : DN; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(X(i), Y(c.h)); ctx.lineTo(X(i), Y(c.l)); ctx.stroke(); const yO = Y(c.o), yC = Y(c.c); ctx.fillRect(X(i) - cw / 2, Math.min(yO, yC), cw, Math.max(1.5, Math.abs(yC - yO))); }
-    // MA line
-    if (rev > 1) { ctx.beginPath(); ctx.moveTo(X(0), Y(ma[0])); for (let i = 1; i < rev; i++) ctx.lineTo(X(i), Y(ma[i])); ctx.strokeStyle = ACC; ctx.lineWidth = 1.4; ctx.shadowColor = "rgba(99,198,236,0.5)"; ctx.shadowBlur = 6; ctx.stroke(); ctx.shadowBlur = 0; }
-    // leading dot + scan
-    if (rev > 0) { const i = rev - 1; const yy = Y(candles[i].c); ctx.strokeStyle = "rgba(99,198,236,0.14)"; ctx.beginPath(); ctx.moveTo(X(i), cpT); ctx.lineTo(X(i), cpB); ctx.stroke(); ctx.beginPath(); ctx.arc(X(i), yy, 3, 0, 6.283); ctx.fillStyle = "#a9e2f7"; ctx.shadowColor = "#2ec7ff"; ctx.shadowBlur = 12; ctx.fill(); ctx.shadowBlur = 0; }
-    // composite label
-    const priceNow = candles[Math.max(0, rev - 1)].c; const chg = ((priceNow - candles[0].o) / candles[0].o) * 100;
-    ctx.textAlign = "left"; ctx.font = "600 11px ui-monospace, monospace"; ctx.fillStyle = MUT; ctx.fillText("APEX COMPOSITE  ·  1D", cpL, cpT - 20);
-    ctx.font = "700 16px ui-monospace, monospace"; ctx.fillStyle = "#e6f1fa"; ctx.fillText(priceNow.toFixed(2), cpL + 132, cpT - 18); ctx.font = "600 11px ui-monospace, monospace"; ctx.fillStyle = chg >= 0 ? UP : DN; ctx.fillText(`${chg >= 0 ? "▲" : "▼"} ${Math.abs(chg).toFixed(2)}%`, cpL + 132 + ctx.measureText(priceNow.toFixed(2)).width + 12, cpT - 18);
-
-    // ── order-book depth ladder (right) ──
-    const obX = W - 250, obW = 172, obT = cpT + 6, rh = 13, obReveal = clamp01((t - 0.3) / 0.4);
-    ctx.textAlign = "left"; ctx.font = "9px ui-monospace, monospace"; ctx.fillStyle = DIM; ctx.fillText("ORDER BOOK", obX, obT - 8);
-    for (let i = 0; i < book.length; i++) {
-      const yy = obT + i * rh; const b = book[i];
-      const av = Math.min(1, b.ask * obReveal), bv = Math.min(1, b.bid * obReveal);
-      ctx.fillStyle = "rgba(224,86,106,0.16)"; ctx.fillRect(obX + obW / 2, yy, (obW / 2) * av, rh - 3);
-      ctx.fillStyle = "rgba(63,180,137,0.16)"; ctx.fillRect(obX + obW / 2 - (obW / 2) * bv, yy, (obW / 2) * bv, rh - 3);
-      ctx.fillStyle = "rgba(120,150,175,0.45)"; ctx.font = "9px ui-monospace, monospace"; ctx.textAlign = "center"; ctx.fillText((priceNow + (book.length / 2 - i) * 0.12).toFixed(2), obX + obW / 2, yy + rh / 2 - 1);
-    }
-
-    // ── stat tiles (right, under book) ──
-    const stats: [string, string, string][] = [["REGIME", "RISK-ON", UP], ["VIX", (14 + (1 - t) * 4).toFixed(2), MUT], ["BREADTH", `${Math.round(52 + t * 12)}%`, ACC]];
-    const stY = obT + book.length * rh + 20;
-    stats.forEach(([k, v, col], i) => { const yy = stY + i * 30; const rv = clamp01((t - 0.4 - i * 0.06) / 0.2); ctx.globalAlpha = rv; ctx.textAlign = "left"; ctx.font = "9px ui-monospace, monospace"; ctx.fillStyle = DIM; ctx.fillText(k, obX, yy); ctx.font = "700 14px ui-monospace, monospace"; ctx.fillStyle = col; ctx.fillText(v, obX, yy + 16); ctx.globalAlpha = 1; });
-
-    // ── boot log (bottom-left) ──
-    ctx.textAlign = "left"; ctx.font = "11px ui-monospace, monospace";
-    let ly = H - 40 - (LOG.filter(([thr]) => t >= thr).length) * 17;
-    for (const [thr, msg] of LOG) { if (t < thr) continue; const ok = t > thr + 0.05; ctx.fillStyle = "rgba(99,198,236,0.6)"; ctx.fillText("▸", 44, ly); ctx.fillStyle = "rgba(150,175,198,0.75)"; ctx.fillText(msg, 62, ly); if (ok) { ctx.fillStyle = UP; ctx.fillText("OK", 62 + ctx.measureText(msg).width + 12, ly); } ly += 17; }
-
-    // ── centre vignette so the DOM APEX wordmark stays legible ──
-    const vg = ctx.createRadialGradient(W / 2, H / 2, 30, W / 2, H / 2, Math.max(W, H) * 0.42);
-    vg.addColorStop(0, "rgba(1,4,10,0.82)"); vg.addColorStop(0.55, "rgba(1,4,10,0.35)"); vg.addColorStop(1, "rgba(1,4,10,0)");
-    ctx.fillStyle = vg; ctx.fillRect(0, 0, W, H);
-
-    // horizontal scan sweep
-    const sy = ((t * 1.4) % 1) * H; const sg = ctx.createLinearGradient(0, sy - 40, 0, sy + 40); sg.addColorStop(0, "rgba(99,198,236,0)"); sg.addColorStop(0.5, "rgba(99,198,236,0.05)"); sg.addColorStop(1, "rgba(99,198,236,0)"); ctx.fillStyle = sg; ctx.fillRect(0, sy - 40, W, 80);
+    uniforms.uT.value = t;
+    uniforms.uSec.value = (now - start) / 1000;
+    renderer.render(scene, camera);
 
     if (t >= 1) { finish(); return; }
     raf = requestAnimationFrame(frame);
   };
   raf = requestAnimationFrame(frame);
 
-  function cleanup() { cancelAnimationFrame(raf); window.removeEventListener("resize", resize); }
+  function cleanup() {
+    cancelAnimationFrame(raf); window.removeEventListener("resize", onResize);
+    try { quad.geometry.dispose(); mat.dispose(); renderer.dispose(); } catch { /* noop */ }
+  }
   return () => cleanup();
 }
