@@ -85,6 +85,23 @@ export function LiveMarketsView() {
   const [leftTab, setLeftTab] = useState<"watch" | "screener" | "heat">("watch");
   const [favorites, setFavorites] = useState<string[]>(["NVDA", "AAPL", "TSLA"]);
   const [watchlist, setWatchlist] = useState<string[]>(WATCH.Stocks);
+  const [wlQuotes, setWlQuotes] = useState<Record<string, { last: number | null; chg: number | null; vol: number | null }>>({});
+  const [wlSort, setWlSort] = useState<{ key: "sym" | "last" | "chg"; dir: 1 | -1 }>({ key: "sym", dir: 1 });
+  const reportQuote = useCallback((s: string, q: { last: number | null; chg: number | null; vol: number | null }) => setWlQuotes((m) => (m[s]?.last === q.last && m[s]?.chg === q.chg ? m : { ...m, [s]: q })), []);
+  const sortedWatch = useMemo(() => {
+    const arr = [...watchlist];
+    const { key, dir } = wlSort;                 // dir: 1 = ascending, -1 = descending
+    if (key === "sym") return dir === 1 ? arr : arr.reverse();
+    const f = key === "chg" ? "chg" : "last";
+    return arr.sort((a, b) => {
+      const av = wlQuotes[a]?.[f], bv = wlQuotes[b]?.[f];
+      if (av == null && bv == null) return 0;
+      if (av == null) return 1;                  // rows without a quote sink to the bottom
+      if (bv == null) return -1;
+      return (av - bv) * dir;
+    });
+  }, [watchlist, wlSort, wlQuotes]);
+  const toggleSort = (key: "sym" | "last" | "chg") => setWlSort((s) => ({ key, dir: s.key === key ? (s.dir === 1 ? -1 : 1) : (key === "sym" ? 1 : -1) }));
   const [toast, setToast] = useState<string | null>(null);
   const [oracleOpen, setOracleOpen] = useState(false);
   const oracle = useOracle(symbol);
@@ -175,9 +192,14 @@ export function LiveMarketsView() {
                 <button key={g} className={watchTab === g ? "on" : ""} onClick={() => setWatchTab(g)}>{g}</button>
               ))}
             </div>
-            <div className="axt-watchhead"><span>SYMBOL</span><span className="r">LAST</span><span className="r">CHG %</span><span className="r">24H</span></div>
+            <div className="axt-watchhead">
+              <button className={`axt-wsort${wlSort.key === "sym" ? " on" : ""}`} onClick={() => toggleSort("sym")}>SYMBOL{wlSort.key === "sym" ? (wlSort.dir === 1 ? " ▲" : " ▼") : ""}</button>
+              <button className={`axt-wsort r${wlSort.key === "last" ? " on" : ""}`} onClick={() => toggleSort("last")}>LAST{wlSort.key === "last" ? (wlSort.dir === 1 ? " ▲" : " ▼") : ""}</button>
+              <button className={`axt-wsort r${wlSort.key === "chg" ? " on" : ""}`} onClick={() => toggleSort("chg")}>CHG %{wlSort.key === "chg" ? (wlSort.dir === 1 ? " ▲" : " ▼") : ""}</button>
+              <span className="r">24H</span>
+            </div>
             <div className="axt-watchlist">
-              {watchlist.map((s) => <WatchRow key={s} sym={s} active={symbol === s} onPick={() => changeSym(s)} fav={favorites.includes(s)} onFav={() => setFavorites((f) => f.includes(s) ? f.filter((x) => x !== s) : [...f, s])} />)}
+              {sortedWatch.map((s) => <WatchRow key={s} sym={s} active={symbol === s} onPick={() => changeSym(s)} fav={favorites.includes(s)} onFav={() => setFavorites((f) => f.includes(s) ? f.filter((x) => x !== s) : [...f, s])} onQuote={reportQuote} />)}
             </div>
           </>}
           {leftTab === "screener" && <ScreenerPanel live={live} onPick={changeSym} />}
@@ -321,12 +343,12 @@ function optionsFromVol(bars: Bar[]) {
 }
 
 /* ═══════════════ Left column ═══════════════ */
-function WatchRow({ sym, active, onPick, fav, onFav }: { sym: string; active: boolean; onPick: () => void; fav: boolean; onFav: () => void }) {
+function WatchRow({ sym, active, onPick, fav, onFav, onQuote }: { sym: string; active: boolean; onPick: () => void; fav: boolean; onFav: () => void; onQuote?: (s: string, q: { last: number | null; chg: number | null; vol: number | null }) => void }) {
   const [q, setQ] = useState<Quote | null>(null);
   const [spark, setSpark] = useState<number[]>(sparkCache.get(sym) || []);
   useEffect(() => {
     let dead = false;
-    const pull = () => fetchQuote(sym).then((x) => !dead && x && setQ(x));
+    const pull = () => fetchQuote(sym).then((x) => { if (!dead && x) { setQ(x); onQuote?.(sym, { last: x.last ?? null, chg: x.changePct ?? null, vol: (x as { volume?: number }).volume ?? null }); } });
     pull(); const t = window.setInterval(pull, 7000);
     if (!sparkCache.has(sym)) fetchBars(sym, isCrypto(sym) ? "1h" : "1d", isCrypto(sym) ? "5d" : "1mo").then((b) => { const s = b.slice(-24).map((x) => x.c); sparkCache.set(sym, s); if (!dead) setSpark(s); });
     return () => { dead = true; clearInterval(t); };
@@ -799,6 +821,8 @@ const TERM_CSS = `
 .axt-watchcat button { background:none; border:none; color:var(--ax-dim); font-size:10px; font-weight:600; padding:3px 4px; border-bottom:1.5px solid transparent; }
 .axt-watchcat button.on { color:var(--ax-acc); border-bottom-color:var(--ax-acc); }
 .axt-watchhead { display:grid; grid-template-columns:1.5fr .8fr .7fr .6fr; gap:5px; font-size:7.5px; letter-spacing:.05em; color:var(--ax-dim); padding:5px 4px 3px; border-bottom:1px solid var(--ax-bdsoft); }
+.axt-wsort { background:none; border:none; color:var(--ax-dim); font-size:7.5px; letter-spacing:.05em; font-weight:700; font-family:var(--ax-sans); padding:0; text-align:left; }
+.axt-wsort.r { text-align:right; } .axt-wsort:hover { color:var(--ax-mut); } .axt-wsort.on { color:var(--ax-acc); }
 .axt-watchlist { flex:1; overflow-y:auto; overflow-x:hidden; }
 .axt-wrow { display:grid; grid-template-columns:14px 1.5fr .8fr .7fr 46px; gap:5px; align-items:center; padding:5px 3px; border-bottom:1px solid var(--ax-hair); font-size:11px; }
 .axt-wrow:hover { background:color-mix(in srgb, var(--ax-acc) 6%, transparent); }
