@@ -46,10 +46,11 @@ const { createApexIngest } = require("./server/apex-ingest");
 const { loadEnvFile } = require("./server/providers/apex/env-loader");
 // APEX native quant engine — replaces the Vibe-Trading Python sidecar (no more 8899). Fully in-process.
 const { createVibeNativeEngine } = require("./server/apex/quant/vibe-native");
+const { createOracle } = require("./server/apex/predict");
 const { yahooChart: apexYahooChart } = require("./server/providers/apex/adapters");
 const { createApexPaper } = require("./server/apex/apex-paper");
 const { createApexBots } = require("./server/apex/apex-bots");
-let apexEngine = null, apexPaper = null, apexBots = null;
+let apexEngine = null, apexPaper = null, apexBots = null, apexOracle = null;
 const APEX_ENV = loadEnvFile(__dirname); // load .env keys into process.env before ingest init
 const { detectTabType, buildTabData, getProjectClassificationBias } = require("./server/helix-tab-classifier");
 const { PERSONALITY_VERSION, personalityInstruction, evaluatePersonality, polishPersonality } = require("./server/jarvis-personality");
@@ -6092,6 +6093,37 @@ async function handleApi(req, res, pathname, url) {
         if (req.method === "GET" && apexAlphaM) { try { sendJson(res, 200, await apexEngine.get(`/alpha/${apexAlphaM[1]}`)); } catch (e) { sendJson(res, 200, { error: e.message }); } return; }
         if (req.method === "POST" && pathname === "/api/apex/engine/backtest") { try { const b = await parseRequestData(req); sendJson(res, 200, await apexEngine.runBacktest(String((b && b.prompt) || ""), { pinnedCode: (b && b.pinnedCode) || null })); } catch (e) { sendJson(res, 200, { ok: false, error: e.message }); } return; }
         if (req.method === "GET" && pathname === "/api/apex/engine/skills") { try { sendJson(res, 200, await apexEngine.get("/skills")); } catch (e) { sendJson(res, 200, { error: e.message, skills: [] }); } return; }
+      }
+
+      // ── APEX Oracle — native multi-horizon prediction engine ──
+      if (pathname.startsWith("/api/apex/predict/")) {
+        if (!apexOracle) apexOracle = createOracle({
+          runtimeDir: RUNTIME_DIR,
+          getBars: async (symbol, o = {}) => {
+            const sym = String(symbol || "SPY").toUpperCase();
+            const ysym = /^(BTC|ETH|SOL|BNB|XRP|ADA|DOGE|AVAX|LINK|DOT|MATIC|LTC)$/.test(sym) ? `${sym}-USD` : (/USDT$/i.test(sym) ? sym.replace(/USDT$/i, "-USD") : sym);
+            const y = await apexYahooChart(ysym, o.range || "60d", o.interval || "60m");
+            return (y.bars || []).filter((b) => b && b.c != null);
+          },
+          priceAt: async (symbol, targetMs) => {
+            const sym = String(symbol || "SPY").toUpperCase();
+            const ysym = /^(BTC|ETH|SOL|BNB|XRP|ADA|DOGE|AVAX|LINK|DOT|MATIC|LTC)$/.test(sym) ? `${sym}-USD` : (/USDT$/i.test(sym) ? sym.replace(/USDT$/i, "-USD") : sym);
+            const y = await apexYahooChart(ysym, "60d", "60m");
+            const bars = (y.bars || []).filter((b) => b && b.c != null);
+            let best = null; for (const b of bars) { const t = new Date(b.t).getTime(); if (t >= targetMs) { best = b.c; break; } best = b.c; }
+            return best;
+          },
+          callModel: async (prompt) => { const r = await callGemini({ prompt, mode: "chat", sessionId: "apex-oracle", deviceId: "apex", source: "apex-oracle", history: [] }); return (r && r.response) || ""; },
+        });
+        const predM = pathname.match(/^\/api\/apex\/predict\/([^/]+)(\/refresh|\/history)?$/);
+        if (predM) {
+          const sym = decodeURIComponent(predM[1]).toUpperCase(); const sub = predM[2];
+          try {
+            if (req.method === "POST" && sub === "/refresh") { sendJson(res, 200, await apexOracle.refresh(sym)); return; }
+            if (req.method === "GET" && sub === "/history") { sendJson(res, 200, apexOracle.history(sym, Number(url.searchParams.get("limit")) || 60)); return; }
+            if (req.method === "GET" && !sub) { sendJson(res, 200, await apexOracle.predict(sym)); return; }
+          } catch (e) { sendJson(res, 200, { ok: false, error: e.message, symbol: sym }); return; }
+        }
       }
 
       // ── APEX paper-trading desk (virtual, paper-only) — for the Paper Trading tab ──

@@ -26,12 +26,13 @@ interface Props {
   onReplayStats?: (r: ReplayResult | null) => void;
 }
 
+// Institutional palette — TradingView-desaturated candles, muted study lines, near-invisible grid.
 const COL = {
-  up: "#26c281", down: "#f4556b",
-  ema20: "#3fd0ff", ema50: "#f5a742", ema200: "#a98bff",
-  vwap: "#e6edf5", bb: "rgba(63,208,255,.45)", bbMid: "rgba(150,190,225,.35)",
-  rsi: "#a98bff", macd: "#3fd0ff", signal: "#f5a742",
-  equity: "#26c281", grid: "rgba(90,120,150,.08)", text: "#93a7bd",
+  up: "#26a69a", down: "#ef5350",
+  ema20: "#4d9fd1", ema50: "#e0952b", ema200: "#9a86d4",
+  vwap: "#c9d4e0", bb: "rgba(77,159,209,.35)", bbMid: "rgba(150,170,195,.28)",
+  rsi: "#9a86d4", macd: "#4d9fd1", signal: "#e0952b",
+  equity: "#26a69a", grid: "rgba(255,255,255,.04)", text: "#6b7683",
 };
 
 const toSec = (t: string): UTCTimestamp => Math.floor(new Date(t).getTime() / 1000) as UTCTimestamp;
@@ -62,7 +63,7 @@ export function ChartPro({ bars, up, indicators, replayActive, replaySpeed, repl
     const chart = createChart(el, {
       layout: { background: { type: ColorType.Solid, color: "transparent" }, textColor: COL.text, fontSize: 10, fontFamily: "var(--ax-mono, ui-monospace)", panes: { separatorColor: "rgba(90,120,150,.16)", separatorHoverColor: "rgba(63,208,255,.3)" } },
       grid: { vertLines: { color: COL.grid }, horzLines: { color: COL.grid } },
-      crosshair: { mode: CrosshairMode.Normal, vertLine: { color: "rgba(63,208,255,.4)", labelBackgroundColor: "#12324a" }, horzLine: { color: "rgba(63,208,255,.4)", labelBackgroundColor: "#12324a" } },
+      crosshair: { mode: CrosshairMode.Magnet, vertLine: { color: "rgba(255,255,255,.28)", width: 1, style: LineStyle.Dashed, labelBackgroundColor: "#1b232e" }, horzLine: { color: "rgba(255,255,255,.28)", width: 1, style: LineStyle.Dashed, labelBackgroundColor: "#1b232e" } },
       rightPriceScale: { borderColor: "rgba(90,120,150,.2)", scaleMargins: { top: 0.08, bottom: 0.08 } },
       timeScale: { borderColor: "rgba(90,120,150,.2)", timeVisible: true, secondsVisible: false, rightOffset: 4 },
       autoSize: true,

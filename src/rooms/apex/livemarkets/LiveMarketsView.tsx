@@ -14,7 +14,8 @@ import type { ReplayResult } from "./indicators";
 // and a scanner. No paid feeds — everything is derived from public market data, and
 // microstructure for equities is clearly labelled as a simulation.
 
-const POS = "#26c281", NEG = "#f4556b", CY = "#3fd0ff", WARN = "#f5a742", PUR = "#a98bff", MUT = "rgba(150,190,225,.55)";
+// Institutional palette (research: TradingView desaturated greens/reds, one calm accent — no neon).
+const POS = "#26a69a", NEG = "#ef5350", CY = "#4d9fd1", WARN = "#e0952b", PUR = "#9a86d4", MUT = "rgba(150,175,200,.60)";
 
 const col = (n: number | null | undefined) => (n == null || n === 0) ? "var(--ax-tx)" : n > 0 ? POS : NEG;
 const pct = (n: number | null | undefined, dp = 2) => n == null || !Number.isFinite(n) ? "—" : `${n >= 0 ? "+" : ""}${n.toFixed(dp)}%`;
@@ -231,7 +232,7 @@ export function LiveMarketsView() {
         <OrderFlow symbol={symbol} micro={micro} />
         <Correlations live={live} symbol={symbol} onPick={changeSym} />
         <OptionsSnapshot snap={optionsSnap} symbol={symbol} />
-        <ScannerHits live={live} onPick={changeSym} />
+        <ScannerHits live={live} symbol={symbol} onPick={changeSym} />
       </div>
 
       {/* ── Status strip ── */}
@@ -621,16 +622,18 @@ function OrderFlow({ symbol, micro }: { symbol: string; micro: ReturnType<typeof
 }
 function Correlations({ live, symbol, onPick }: { live: ReturnType<typeof useApexLive>; symbol: string; onPick: (s: string) => void }) {
   const corr = live.correlation;
+  const tk = isCrypto(symbol) ? symbol.replace("USDT", "") : symbol;
+  const inSet = !!corr?.symbols?.includes(tk);
   const rows = useMemo(() => {
     if (!corr?.symbols?.length) return [];
-    const tk = isCrypto(symbol) ? symbol.replace("USDT", "") : symbol;
-    let idx = corr.symbols.indexOf(tk); if (idx < 0) idx = 0;
-    return corr.symbols.map((s, j) => ({ sym: s, v: corr.matrix?.[idx]?.[j] ?? null })).filter((r) => r.sym !== corr.symbols[idx]).sort((a, b) => Math.abs(b.v ?? 0) - Math.abs(a.v ?? 0)).slice(0, 7);
-  }, [corr, symbol]);
+    const idx = corr.symbols.indexOf(tk); const base = idx < 0 ? 0 : idx; // fall back to majors, clearly labelled (not the symbol's row)
+    return corr.symbols.map((s, j) => ({ sym: s, v: corr.matrix?.[base]?.[j] ?? null })).filter((r) => r.sym !== corr.symbols[base]).sort((a, b) => Math.abs(b.v ?? 0) - Math.abs(a.v ?? 0)).slice(0, 7);
+  }, [corr, tk]);
   return (
     <div className="axt-bpanel">
-      <div className="axt-bph">CORRELATIONS <span>30D</span></div>
+      <div className="axt-bph">CORRELATIONS <span>{inSet ? `${tk} · 30D` : "30D"}</span></div>
       <div className="axt-corr">
+        {corr?.symbols?.length && !inSet ? <div className="axt-empty-mini">{tk} isn't in the tracked correlation set — showing majors below.</div> : null}
         {rows.length === 0 ? <SkelRows n={6} /> : rows.map((r) => (
           <div key={r.sym} className="axt-corr-row" onClick={() => onPick(r.sym)}><b>{r.sym}</b><div className="axt-corr-track"><div className="axt-corr-fill" style={{ width: `${Math.abs(r.v ?? 0) * 100}%`, marginLeft: (r.v ?? 0) < 0 ? `${(1 - Math.abs(r.v ?? 0)) * 100}%` : 0, background: (r.v ?? 0) >= 0 ? CY : WARN }} /></div><span style={{ color: (r.v ?? 0) >= 0 ? CY : WARN }}>{r.v != null ? r.v.toFixed(2) : "—"}</span></div>
         ))}
@@ -662,16 +665,20 @@ function ok(l: string, v: string, c: string, tip?: string) { return <div classNa
 function SkelRows({ n = 6 }: { n?: number }) {
   return <div className="axt-skelrows">{Array.from({ length: n }).map((_, i) => <div key={i} className="axt-skelrow"><span style={{ width: `${40 + (i * 37) % 30}%` }} /><span style={{ width: `${20 + (i * 23) % 20}%` }} /></div>)}</div>;
 }
-function ScannerHits({ live, onPick }: { live: ReturnType<typeof useApexLive>; onPick: (s: string) => void }) {
+function ScannerHits({ live, symbol, onPick }: { live: ReturnType<typeof useApexLive>; symbol: string; onPick: (s: string) => void }) {
+  const tk = isCrypto(symbol) ? symbol.replace("USDT", "") : symbol;
   const anom = live.anomalies?.items || [];
   const movers = [...(live.movers?.stocks?.gainers || []).slice(0, 3), ...(live.movers?.stocks?.losers || []).slice(0, 2)];
-  const hits = anom.length ? anom.slice(0, 8).map((a) => ({ tk: a.sym, label: a.z >= 0 ? "Unusual Upside" : "Unusual Downside", v: `${a.sigma.toFixed(1)}σ`, up: a.z >= 0 })) : movers.map((m) => ({ tk: m.ticker, label: (m.changePct ?? 0) >= 0 ? "Top Gainer" : "Top Loser", v: pct(m.changePct), up: (m.changePct ?? 0) >= 0 }));
+  const raw = anom.length ? anom.slice(0, 10).map((a) => ({ tk: a.sym, label: a.z >= 0 ? "Unusual Upside" : "Unusual Downside", v: `${a.sigma.toFixed(1)}σ`, up: a.z >= 0 })) : movers.map((m) => ({ tk: m.ticker, label: (m.changePct ?? 0) >= 0 ? "Top Gainer" : "Top Loser", v: pct(m.changePct), up: (m.changePct ?? 0) >= 0 }));
+  // Pin the searched symbol to the top if it's flagged; otherwise show market-wide hits.
+  const hits = raw.slice().sort((a, b) => (b.tk === tk ? 1 : 0) - (a.tk === tk ? 1 : 0)).slice(0, 8);
+  const onSym = raw.some((h) => h.tk === tk);
   return (
     <div className="axt-bpanel">
-      <div className="axt-bph">SCANNER HITS & ALERTS <span>unusual</span></div>
+      <div className="axt-bph">SCANNER HITS & ALERTS <span>{onSym ? `${tk} flagged` : "market-wide"}</span></div>
       <div className="axt-scan">
         {hits.length === 0 ? <SkelRows n={7} /> : hits.map((h, i) => (
-          <div key={i} className="axt-scan-row" onClick={() => onPick(h.tk)}><b>{h.tk}</b><span className="axt-scan-l">{h.label}</span><span style={{ color: h.up ? POS : NEG }}>{h.v}</span><span className="axt-scan-dot" style={{ background: h.up ? POS : NEG }} /></div>
+          <div key={i} className={`axt-scan-row${h.tk === tk ? " on" : ""}`} onClick={() => onPick(h.tk)}><b>{h.tk}</b><span className="axt-scan-l">{h.label}</span><span style={{ color: h.up ? POS : NEG }}>{h.v}</span><span className="axt-scan-dot" style={{ background: h.up ? POS : NEG }} /></div>
         ))}
       </div>
     </div>
@@ -703,11 +710,11 @@ function StatusStrip({ live }: { live: ReturnType<typeof useApexLive> }) {
 
 const TERM_CSS = `
 .ax-term { position:relative; flex:1 1 auto; min-height:0; display:flex; flex-direction:column; gap:7px; padding:8px; font-family:var(--ax-sans); color:var(--ax-tx); overflow:hidden;
-  background:#0b0f16; font-variant-numeric:tabular-nums;
-  /* solid, opaque terminal surfaces — override the room's translucent tokens so the 3D city can't bleed through.
-     Text tokens are lifted to clear WCAG AA (4.5:1 body / 3:1 large & lines) on this dark surface. */
-  --ax-panel:#0d131d; --ax-panelhi:#121b28; --ax-surface:#0b1019; --ax-elev:#0f1620; --ax-bd:#20303f; --ax-bdsoft:#182430; --ax-hair:rgba(130,170,205,.10); --ax-bdglow:#356a86;
-  --ax-tx:#e8eef6; --ax-mut:#9db2c7; --ax-dim:#7d92a6; --ax-cydim:#68c2e6; --ax-acc:#3fd0ff; }
+  background:#0a0e14; font-variant-numeric:tabular-nums;
+  /* Institutional dark ramp (near-black, slight cool bias — GitHub-dark style). Solid & opaque so the
+     3D city can't bleed through. Text lifted to WCAG AA; ONE rationed accent, hairline borders, no glow. */
+  --ax-panel:#0d1117; --ax-panelhi:#141a22; --ax-surface:#0b0f16; --ax-elev:#1b232e; --ax-bd:rgba(255,255,255,.07); --ax-bdsoft:rgba(255,255,255,.05); --ax-hair:rgba(255,255,255,.045); --ax-bdglow:#2c5a74;
+  --ax-tx:#e6edf3; --ax-mut:#9aa7b4; --ax-dim:#6b7683; --ax-cydim:#4d9fd1; --ax-acc:#4d9fd1; }
 .ax-term *:focus-visible { outline:2px solid var(--ax-bdglow); outline-offset:1px; border-radius:4px; }
 .ax-term .axt-tip { border-bottom:1px dotted color-mix(in srgb, var(--ax-mut) 60%, transparent); cursor:help; }
 .ax-term .num, .ax-term [class*="mono"] { font-variant-numeric:tabular-nums; }
@@ -898,6 +905,7 @@ const TERM_CSS = `
 .axt-opt-bar { display:inline-block; height:5px; background:${CY}; border-radius:2px; }
 .axt-scan-row { display:grid; grid-template-columns:.7fr 1.3fr .6fr 8px; gap:5px; align-items:center; padding:3.5px 0; border-bottom:1px solid var(--ax-hair); }
 .axt-scan-row:hover { background:color-mix(in srgb, var(--ax-acc) 6%, transparent); }
+.axt-scan-row.on { box-shadow:inset 2px 0 0 var(--ax-acc); background:color-mix(in srgb, var(--ax-acc) 8%, transparent); }
 .axt-scan-l { color:var(--ax-mut); font-size:8.5px; font-family:var(--ax-sans); } .axt-scan-row span:nth-child(3) { text-align:right; }
 .axt-scan-dot { width:6px; height:6px; border-radius:50%; }
 .axt-empty-mini { color:var(--ax-dim); font-size:10px; padding:12px 2px; }
