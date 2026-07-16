@@ -36,19 +36,53 @@ const COL = {
   ema20: "#4d9fd1", ema50: "#e0952b", ema200: "#9a86d4",
   vwap: "#c9d4e0", bb: "rgba(77,159,209,.35)", bbMid: "rgba(150,170,195,.28)",
   rsi: "#9a86d4", macd: "#4d9fd1", signal: "#e0952b",
-  equity: "#26a69a", grid: "rgba(255,255,255,.04)", text: "#6b7683",
+  equity: "#26a69a", grid: "rgba(90,140,180,.06)", text: "#7d93a6",
 };
 
 const toSec = (t: string): UTCTimestamp => Math.floor(new Date(t).getTime() / 1000) as UTCTimestamp;
 
-// Trim trailing zero-volume flat bars (after-hours padding on intraday feeds) and
-// dedupe/sort by time so lightweight-charts accepts the series.
+const DEFAULT_VISIBLE = 130;   // bars framed on load so candles have real amplitude (not a thin ribbon)
+
+// Data hygiene BEFORE the chart sees it (research §2.7-A): drop malformed bars, repair OHLC
+// consistency, dedupe/sort, trim after-hours padding, and neutralise single-bar provider spikes
+// that would otherwise blow autoscale — without deleting legitimate gaps.
 function cleanBars(bars: Bar[]): Bar[] {
+  // trim trailing zero-volume flat bars (after-hours padding on intraday feeds)
   let end = bars.length;
   while (end > 1) { const b = bars[end - 1]; if ((b.v ?? 0) === 0 && b.o === b.h && b.h === b.l && b.l === b.c) end--; else break; }
   const seen = new Set<number>(); const out: Bar[] = [];
-  for (const b of bars.slice(0, end)) { const s = toSec(b.t); if (b.c == null || seen.has(s)) continue; seen.add(s); out.push(b); }
-  return out.sort((a, z) => toSec(a.t) - toSec(z.t));
+  for (const b of bars.slice(0, end)) {
+    const s = toSec(b.t);
+    // reject non-finite / non-positive / duplicate timestamps
+    if (![b.o, b.h, b.l, b.c].every((v) => Number.isFinite(v) && (v as number) > 0) || seen.has(s)) continue;
+    seen.add(s);
+    // repair OHLC: high must bound all, low must bound all (guards bad wicks)
+    const hi = Math.max(b.o, b.h, b.l, b.c), lo = Math.min(b.o, b.h, b.l, b.c);
+    out.push({ ...b, h: hi, l: lo });
+  }
+  out.sort((a, z) => toSec(a.t) - toSec(z.t));
+  // Spike guard: flag bars whose close-to-close move is a gross outlier (>10× MAD) AND immediately
+  // reverts (classic bad tick). Winsorise that bar toward its neighbours instead of nuking the scale.
+  if (out.length > 8) {
+    const rets: number[] = [];
+    for (let i = 1; i < out.length; i++) rets.push(Math.abs(Math.log(out[i].c / out[i - 1].c)));
+    const sorted = [...rets].sort((a, b) => a - b);
+    const med = sorted[Math.floor(sorted.length / 2)] || 1e-4;
+    const madArr = rets.map((r) => Math.abs(r - med)).sort((a, b) => a - b);
+    const mad = (madArr[Math.floor(madArr.length / 2)] || med) * 1.4826 || 1e-4;
+    const thresh = Math.max(med + 10 * mad, 0.18); // at least an 18% single-bar move to qualify
+    for (let i = 1; i < out.length - 1; i++) {
+      const r = Math.log(out[i].c / out[i - 1].c);
+      const rNext = Math.log(out[i + 1].c / out[i].c);
+      if (Math.abs(r) > thresh && Math.sign(r) !== Math.sign(rNext) && Math.abs(rNext) > thresh * 0.6) {
+        const fix = (out[i - 1].c + out[i + 1].c) / 2;
+        const b = out[i];
+        out[i] = { ...b, o: fix, c: fix, h: Math.max(fix, out[i - 1].c, out[i + 1].c), l: Math.min(fix, out[i - 1].c, out[i + 1].c) };
+        if (typeof console !== "undefined") console.debug("[ChartPro] winsorised spike bar", b.t, b.c, "→", fix);
+      }
+    }
+  }
+  return out;
 }
 
 export function ChartPro({ bars, up, indicators, replayActive, replaySpeed, replayStrategy, forecast, onReplayProgress, onReplayStats }: Props) {
@@ -75,8 +109,8 @@ export function ChartPro({ bars, up, indicators, replayActive, replaySpeed, repl
       layout: { background: { type: ColorType.Solid, color: "transparent" }, textColor: COL.text, fontSize: 10, fontFamily: "var(--ax-mono, ui-monospace)", panes: { separatorColor: "rgba(90,120,150,.16)", separatorHoverColor: "rgba(63,208,255,.3)" } },
       grid: { vertLines: { color: COL.grid }, horzLines: { color: COL.grid } },
       crosshair: { mode: CrosshairMode.Magnet, vertLine: { color: "rgba(255,255,255,.28)", width: 1, style: LineStyle.Dashed, labelBackgroundColor: "#1b232e" }, horzLine: { color: "rgba(255,255,255,.28)", width: 1, style: LineStyle.Dashed, labelBackgroundColor: "#1b232e" } },
-      rightPriceScale: { borderColor: "rgba(90,120,150,.2)", scaleMargins: { top: 0.08, bottom: 0.08 } },
-      timeScale: { borderColor: "rgba(90,120,150,.2)", timeVisible: true, secondsVisible: false, rightOffset: 4 },
+      rightPriceScale: { borderColor: "rgba(90,120,150,.2)", scaleMargins: { top: 0.12, bottom: 0.12 } },
+      timeScale: { borderColor: "rgba(90,120,150,.2)", timeVisible: true, secondsVisible: false, rightOffset: 6, barSpacing: 8, minBarSpacing: 2 },
       autoSize: true,
     });
     chartRef.current = chart;
@@ -148,9 +182,14 @@ export function ChartPro({ bars, up, indicators, replayActive, replaySpeed, repl
     const clean = cleanBars(bars);
     dataRef.current = clean;
     recomputeIndicators();
-    if (!replayActive) renderUpTo(clean.length);
-    // fit
-    if (!replayActive) chartRef.current.timeScale().fitContent();
+    if (!replayActive) {
+      renderUpTo(clean.length);
+      // Frame the most recent window so candles have amplitude (not a thin ribbon across 300 bars).
+      const ts = chartRef.current.timeScale();
+      const n = clean.length;
+      if (n > DEFAULT_VISIBLE) ts.setVisibleLogicalRange({ from: n - DEFAULT_VISIBLE, to: n + 6 });
+      else ts.fitContent();
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [bars]);
 
@@ -268,7 +307,7 @@ export function ChartPro({ bars, up, indicators, replayActive, replaySpeed, repl
   }, [replayActive, replaySpeed, replayStrategy]);
 
   return (
-    <div className="axcp-wrap" style={{ position: "absolute", inset: 0 }}>
+    <div className="axcp-wrap" style={{ position: "absolute", inset: 0, background: "radial-gradient(120% 80% at 50% 0%, rgba(20,70,110,.10), transparent 60%), linear-gradient(180deg, #04101a 0%, #020a12 100%)" }}>
       <div ref={wrapRef} style={{ position: "absolute", inset: 0 }} />
       <div ref={legendRef} className="axcp-legend" />
       <style>{`
