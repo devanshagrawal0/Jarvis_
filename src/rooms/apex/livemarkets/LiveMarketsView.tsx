@@ -245,7 +245,7 @@ export function LiveMarketsView() {
 
       {toast && <div className="axt-toast">{toast}</div>}
       <style>{ORACLE_CARD_CSS}</style>
-      {oracleOpen && <OracleOverlay o={oracle.data} hist={oracle.hist} loading={oracle.loading} resolvedNote={oracle.resolvedNote} onClose={() => setOracleOpen(false)} onRefresh={oracle.refresh} onPick={changeSym} />}
+      {oracleOpen && <OracleOverlay o={oracle.data} hist={oracle.hist} bars={bars} loading={oracle.loading} resolvedNote={oracle.resolvedNote} onClose={() => setOracleOpen(false)} onRefresh={oracle.refresh} onPick={changeSym} />}
     </div>
   );
 }
@@ -443,15 +443,24 @@ function hud(l: string, v: string, color: string) { return <div className="axt-h
 function MarketStats({ quote, fund, bars, atr, rv, iv }: { quote: Quote | null; fund: Fundamentals | null; bars: Bar[]; atr: number | null; rv: number | null; iv: number | null }) {
   const last = quote?.last ?? bars[bars.length - 1]?.c ?? null;
   const day = bars[bars.length - 1];
-  const rows: [string, string, string?][] = [
+  const crypto = /USDT?$/i.test((quote?.ticker || "") + "") || fund == null && bars.length > 0 && (bars[bars.length - 1]?.c ?? 0) > 5000;
+  // realized annualized vol from bars (crypto has no equity fundamentals)
+  const realizedVol = useMemo(() => { const c = bars.map((b) => b.c); if (c.length < 20) return null; const r: number[] = []; for (let i = 1; i < c.length; i++) if (c[i - 1] > 0) r.push(Math.log(c[i] / c[i - 1])); const m = r.reduce((a, b) => a + b, 0) / (r.length || 1); const v = r.reduce((a, b) => a + (b - m) ** 2, 0) / (r.length || 1); return Math.sqrt(v * 252 * 6.5) * 100; }, [bars]);
+  const rows: [string, string, string?][] = crypto ? [
+    ["Open", num(quote?.open ?? day?.o)], ["High", num(quote?.high ?? day?.h)], ["Low", num(quote?.low ?? day?.l)],
+    ["Prev Close", num(quote?.prev)], ["Volume", compact(day?.v)], ["Realized Vol", realizedVol != null ? `${realizedVol.toFixed(0)}%` : "—"],
+    ["ATR (14)", atr != null ? atr.toFixed(2) : "—"], ["IV (est)", iv != null ? `${iv.toFixed(0)}%` : "—"],
+    ["Rel Volume", rv != null ? `${rv.toFixed(2)}×` : "—"], ["Range (bars)", num(Math.max(...bars.map((b) => b.h)) - Math.min(...bars.map((b) => b.l)))],
+  ] : [
     ["Open", num(quote?.open ?? day?.o)], ["High", num(quote?.high ?? day?.h)], ["Low", num(quote?.low ?? day?.l)],
     ["Prev Close", num(quote?.prev)], ["Volume", compact(day?.v)], ["Market Cap", compact(fund?.marketCap)],
     ["Beta (5Y)", fund?.beta != null ? fund.beta.toFixed(2) : "—"], ["ATR (14)", atr != null ? atr.toFixed(2) : "—"],
     ["IV Rank (est)", iv != null ? `${(iv).toFixed(0)}` : "—"], ["Rel Volume", rv != null ? `${rv.toFixed(2)}×` : "—"],
     ["P/E (TTM)", fund?.pe != null ? fund.pe.toFixed(2) : "—"], ["EPS (TTM)", fund?.eps != null ? fund.eps.toFixed(2) : "—"],
   ];
-  // 52-week range position — context beside the bare 52W hi/lo values (NN/g: never a number without its comparator).
-  const lo = fund?.low52, hi = fund?.high52;
+  // 52-week range position — context beside the bare hi/lo (falls back to the loaded bars for crypto).
+  const barLo = bars.length ? Math.min(...bars.map((b) => b.l)) : null, barHi = bars.length ? Math.max(...bars.map((b) => b.h)) : null;
+  const lo = fund?.low52 ?? barLo, hi = fund?.high52 ?? barHi;
   const posPct = last != null && lo != null && hi != null && hi > lo ? Math.max(0, Math.min(100, ((last - lo) / (hi - lo)) * 100)) : null;
   return (
     <div className="axt-panel">

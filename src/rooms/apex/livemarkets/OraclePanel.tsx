@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import type { Bar } from "../apex-data";
+import { MonteCarloFan, ContagionGraph, RegimeRibbon, ReliabilityCurve, EdgeDecay, WhatIf, VIZ_CSS } from "./OracleViz";
 
 // APEX Oracle Panel — the prediction cockpit. Fetches /api/apex/predict/:symbol (regime,
 // multi-horizon forecast, options, signal packages, Jarvis synthesis), renders a compact
@@ -9,7 +11,7 @@ const POS = "#26a69a", NEG = "#ef5350", CY = "#4d9fd1", WARN = "#e0952b", PUR = 
 export interface OracleOption { type: string; strike: number; expiryDays: number; premium: number; impliedVol: number; delta: number; gamma: number; vega: number; theta: number; rho: number; ev: number; roi: number; pITM: number; breakeven: number }
 export interface OracleHorizon { horizon: string; tau: number; spot: number; p05: number; p25: number; p50: number; p75: number; p95: number; predRet: number; dir: string; pUp: number; pUpModel: number; edge: number; size: number; disagreement: number; confidence: number; sigmaH: number; var95: number; cvar95: number; option: OracleOption | null }
 export interface OraclePayload {
-  ok: boolean; reason?: string; symbol: string; spot: number; degraded?: boolean;
+  ok: boolean; reason?: string; symbol: string; spot: number; degraded?: boolean; muBar?: number; sigBar?: number;
   regime: { label: string; confidence: number; hurst: number; adx: number | null; volPct: number };
   crossScore: number; packages: Record<string, number>;
   signalDetail: { peers?: { sym: string; rho: number; mom: number; kind: string }[]; sector?: { etf: string; rho: number; etfMom: number } | null; news?: { count: number; score: number } | null };
@@ -89,7 +91,7 @@ export function OracleCard({ o, loading, onExpand, onRefresh }: { o: OraclePaylo
 }
 
 /* Full-screen expandable overlay. */
-export function OracleOverlay({ o, hist, loading, resolvedNote, onClose, onRefresh, onPick }: { o: OraclePayload | null; hist: OracleHistory | null; loading: boolean; resolvedNote: string | null; onClose: () => void; onRefresh: () => void; onPick: (s: string) => void }) {
+export function OracleOverlay({ o, hist, bars, loading, resolvedNote, onClose, onRefresh, onPick }: { o: OraclePayload | null; hist: OracleHistory | null; bars?: Bar[]; loading: boolean; resolvedNote: string | null; onClose: () => void; onRefresh: () => void; onPick: (s: string) => void }) {
   const [sel, setSel] = useState("1d");
   const h = o?.horizons.find((x) => x.horizon === sel) || o?.horizons[0];
   const rc = o ? regimeColor(o.regime.label) : PUR;
@@ -141,9 +143,14 @@ export function OracleOverlay({ o, hist, loading, resolvedNote, onClose, onRefre
                       </div>
                       <div className="axo-opt-sub">PAYOFF AT EXPIRY</div>
                       <PayoffDiagram opt={h.option} spot={o.spot} p05={h.p05} p50={h.p50} p95={h.p95} />
+                      <button className="axo-ticket" onClick={() => window.dispatchEvent(new CustomEvent("apex:open-paper", { detail: { symbol: o.symbol, option: h.option } }))}>▤ Send to Paper Trade →</button>
                       <div className="axo-opt-note">Paper-proof: premium priced at model IV; EV computed under the forecast distribution. Paper trading only — not advice.</div>
                     </div>
                   )}
+                  <div className="axo-sec">MONTE-CARLO PATHS <em>{h.horizon} · GBM</em></div>
+                  {o.muBar != null && o.sigBar != null ? <MonteCarloFan spot={o.spot} muBar={o.muBar * h.tau / 32} sigBar={o.sigBar * Math.sqrt(h.tau / 32)} /> : null}
+                  <div className="axo-sec">WHAT-IF SCENARIO <em>drag vol / drift</em></div>
+                  <WhatIf h={h} />
                 </div>
               )}
             </div>
@@ -163,6 +170,8 @@ export function OracleOverlay({ o, hist, loading, resolvedNote, onClose, onRefre
               ) : null}
               {o.jarvis?.thesis && (<><div className="axo-sec">JARVIS SYNTHESIS <em style={{ color: regimeColor(o.jarvis.bias === "bullish" ? "TREND_UP" : o.jarvis.bias === "bearish" ? "TREND_DOWN" : "X") }}>{o.jarvis.bias}</em></div><p className="axo-jarvis">{o.jarvis.thesis}</p></>)}
               {o.quant && o.quant.ok && (<><div className="axo-sec">QUANT LAB <em>14 PhD-level models</em></div><QuantLab q={o.quant} /></>)}
+              {o.signalDetail?.peers?.length ? (<><div className="axo-sec">CROSS-ASSET CONTAGION <em>ρ network</em></div><ContagionGraph symbol={o.symbol} peers={[...o.signalDetail.peers, ...(o.signalDetail.sector ? [{ sym: o.signalDetail.sector.etf, rho: o.signalDetail.sector.rho, mom: o.signalDetail.sector.etfMom, kind: "sector" }] : [])]} /></>) : null}
+              {bars && bars.length > 40 ? (<><div className="axo-sec">REGIME TIMELINE <em>trend history</em></div><RegimeRibbon bars={bars} /></>) : null}
               <div className="axo-sec">TRACK RECORD <em>predictions vs actual</em></div>
               <div className="axo-score">
                 {sc("HIT RATE", hist?.summary.hitRate != null ? `${(hist.summary.hitRate * 100).toFixed(0)}%` : "—", hist?.summary.hitRate != null && hist.summary.hitRate >= 0.5 ? POS : WARN)}
@@ -170,11 +179,15 @@ export function OracleOverlay({ o, hist, loading, resolvedNote, onClose, onRefre
                 {sc("TRACKED", `${hist?.summary.total ?? 0}`, PUR)}
                 {sc("MAPE", hist?.summary.mape != null ? `${(hist.summary.mape * 100).toFixed(1)}%` : "—", WARN)}
               </div>
+              <div className="axo-curves">
+                <div className="axo-curve"><div className="axo-curve-t">RELIABILITY (calibration)</div><ReliabilityCurve hist={hist} /></div>
+                <div className="axo-curve"><div className="axo-curve-t">EDGE DECAY</div><EdgeDecay hist={hist} /></div>
+              </div>
               <div className="axo-hint">Click ↻ Refresh on the next session to resolve these calls against realized prices and self-correct.</div>
             </div>
           </div>
         )}
-        <style>{OVERLAY_CSS}</style>
+        <style>{OVERLAY_CSS}{VIZ_CSS}</style>
       </div>
     </div>
   );
@@ -287,6 +300,11 @@ const OVERLAY_CSS = `
 .axo-opt-sub { font-size:8px; font-weight:700; letter-spacing:.06em; color:var(--ax-dim,#6b7683); margin:10px 0 4px; }
 .axo-payoff { width:100%; height:120px; display:block; }
 .axo-opt-note { font-size:8.5px; color:var(--ax-dim,#6b7683); margin-top:9px; line-height:1.4; }
+.axo-ticket { width:100%; margin-top:9px; background:color-mix(in srgb, ${POS} 14%, transparent); border:1px solid color-mix(in srgb, ${POS} 40%, transparent); color:${POS}; border-radius:5px; padding:7px; font-size:11px; font-weight:600; cursor:pointer; font-family:var(--ax-sans,inherit); }
+.axo-ticket:hover { background:color-mix(in srgb, ${POS} 22%, transparent); }
+.axo-curves { display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-top:6px; }
+.axo-curve { background:#0b0f16; border:1px solid var(--ax-bd,#20303f); border-radius:6px; padding:6px; }
+.axo-curve-t { font-size:7.5px; color:var(--ax-dim,#6b7683); letter-spacing:.04em; margin-bottom:2px; text-align:center; }
 .axo-quant { display:grid; grid-template-columns:1fr 1fr; gap:3px 10px; }
 .axo-ql { display:flex; justify-content:space-between; align-items:baseline; padding:3px 0; border-bottom:1px solid var(--ax-hair,rgba(255,255,255,.05)); font-size:10px; }
 .axo-ql span { color:var(--ax-mut,#9aa7b4); } .axo-ql b { font-family:var(--ax-mono); font-size:10.5px; font-weight:600; }

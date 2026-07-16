@@ -1,0 +1,140 @@
+import { useMemo, useState } from "react";
+import type { Bar } from "../apex-data";
+import type { OracleHorizon, OracleHistory } from "./OraclePanel";
+
+// APEX Oracle — advanced visualizations (the "mind-blowing" set): Monte-Carlo path fan,
+// cross-asset contagion graph, regime-timeline ribbon, reliability curve, edge-decay meter,
+// and an interactive what-if scenario panel. All self-contained SVG, no deps.
+
+const POS = "#26a69a", NEG = "#ef5350", CY = "#4d9fd1", WARN = "#e0952b", PUR = "#9a86d4";
+const normInv = (p: number) => { // Acklam
+  if (p <= 0) return -3.5; if (p >= 1) return 3.5;
+  const a = [-39.69683, 220.9461, -275.9285, 138.357, -30.66479, 2.506628], b = [-54.47609, 161.5858, -155.6989, 66.80131, -13.28068], c = [-0.007784894, -0.3223964, -2.400758, -2.549732, 4.374664, 2.938164], d = [0.007784695, 0.3224671, 2.445134, 3.754408];
+  const pl = 0.02425; let q, r;
+  if (p < pl) { q = Math.sqrt(-2 * Math.log(p)); return (((((c[0] * q + c[1]) * q + c[2]) * q + c[3]) * q + c[4]) * q + c[5]) / ((((d[0] * q + d[1]) * q + d[2]) * q + d[3]) * q + 1); }
+  if (p <= 1 - pl) { q = p - 0.5; r = q * q; return (((((a[0] * r + a[1]) * r + a[2]) * r + a[3]) * r + a[4]) * r + a[5]) * q / (((((b[0] * r + b[1]) * r + b[2]) * r + b[3]) * r + b[4]) * r + 1); }
+  q = Math.sqrt(-2 * Math.log(1 - p)); return -(((((c[0] * q + c[1]) * q + c[2]) * q + c[3]) * q + c[4]) * q + c[5]) / ((((d[0] * q + d[1]) * q + d[2]) * q + d[3]) * q + 1);
+};
+
+/* 1. MONTE-CARLO PATH FAN — GBM sample paths + percentile band, projected forward. */
+export function MonteCarloFan({ spot, muBar, sigBar }: { spot: number; muBar: number; sigBar: number }) {
+  const W = 320, H = 130, steps = 32, paths = 48;
+  const sim = useMemo(() => {
+    let seed = Math.floor(spot * 100) ^ 12345; const rnd = () => { seed = (seed * 1103515245 + 12345) & 0x7fffffff; return seed / 0x7fffffff; };
+    const gauss = () => Math.sqrt(-2 * Math.log(rnd() + 1e-9)) * Math.cos(2 * Math.PI * rnd());
+    const all: number[][] = [];
+    for (let p = 0; p < paths; p++) { const path = [spot]; let s = spot; for (let t = 0; t < steps; t++) { s = s * Math.exp((muBar - 0.5 * sigBar * sigBar) + sigBar * gauss()); path.push(s); } all.push(path); }
+    return all;
+  }, [spot, muBar, sigBar]);
+  const flat = sim.flat(); const lo = Math.min(...flat), hi = Math.max(...flat), rg = hi - lo || 1;
+  const X = (t: number) => (t / steps) * W, Y = (v: number) => H - ((v - lo) / rg) * (H - 4) - 2;
+  // percentile band per step
+  const band = useMemo(() => Array.from({ length: steps + 1 }, (_, t) => { const col = sim.map((p) => p[t]).sort((a, b) => a - b); return { p05: col[Math.floor(col.length * 0.05)], p50: col[Math.floor(col.length * 0.5)], p95: col[Math.floor(col.length * 0.95)] }; }), [sim]);
+  const bandPath = band.map((b, t) => `${t ? "L" : "M"}${X(t).toFixed(1)},${Y(b.p95).toFixed(1)}`).join(" ") + " " + band.slice().reverse().map((b, i) => `L${X(steps - i).toFixed(1)},${Y(b.p05).toFixed(1)}`).join(" ") + " Z";
+  return (
+    <svg viewBox={`0 0 ${W} ${H}`} className="axv" preserveAspectRatio="none">
+      <path d={bandPath} fill="rgba(77,159,209,.10)" stroke="none" />
+      {sim.slice(0, 24).map((p, i) => <polyline key={i} points={p.map((v, t) => `${X(t)},${Y(v)}`).join(" ")} fill="none" stroke="rgba(150,170,195,.13)" strokeWidth="0.6" />)}
+      <polyline points={band.map((b, t) => `${X(t)},${Y(b.p50)}`).join(" ")} fill="none" stroke={WARN} strokeWidth="1.6" />
+      <line x1={0} y1={Y(spot)} x2={W} y2={Y(spot)} stroke="rgba(255,255,255,.15)" strokeDasharray="3 3" />
+    </svg>
+  );
+}
+
+/* 2. CROSS-ASSET CONTAGION GRAPH — radial: center=symbol, peers around, edge=|ρ|, color by momentum. */
+export function ContagionGraph({ symbol, peers }: { symbol: string; peers: { sym: string; rho: number; mom: number; kind: string }[] }) {
+  const W = 320, H = 200, cx = W / 2, cy = H / 2, R = 74;
+  const list = peers.slice(0, 7);
+  return (
+    <svg viewBox={`0 0 ${W} ${H}`} className="axv">
+      {list.map((p, i) => { const a = (i / list.length) * 2 * Math.PI - Math.PI / 2; const x = cx + R * Math.cos(a), y = cy + R * Math.sin(a); const w = 0.5 + Math.abs(p.rho) * 3; const col = p.rho >= 0 ? "rgba(77,159,209," : "rgba(224,149,43,"; return (
+        <line key={"e" + i} x1={cx} y1={cy} x2={x} y2={y} stroke={`${col}${(0.15 + Math.abs(p.rho) * 0.5).toFixed(2)})`} strokeWidth={w} />
+      ); })}
+      {list.map((p, i) => { const a = (i / list.length) * 2 * Math.PI - Math.PI / 2; const x = cx + R * Math.cos(a), y = cy + R * Math.sin(a); const c = p.mom >= 0 ? POS : NEG; return (
+        <g key={"n" + i}><circle cx={x} cy={y} r={9} fill={`${c}22`} stroke={c} strokeWidth="1.2" /><text x={x} y={y - 12} fill="#c9d4e0" fontSize="8" textAnchor="middle" fontFamily="var(--ax-mono,monospace)">{p.sym}</text><text x={x} y={y + 3} fill={c} fontSize="7" textAnchor="middle" fontFamily="var(--ax-mono,monospace)">{p.rho.toFixed(2)}</text></g>
+      ); })}
+      <circle cx={cx} cy={cy} r={16} fill="#141a22" stroke={CY} strokeWidth="1.6" /><text x={cx} y={cy + 3} fill="#e6edf3" fontSize="9" textAnchor="middle" fontWeight="700" fontFamily="var(--ax-mono,monospace)">{symbol}</text>
+    </svg>
+  );
+}
+
+/* 3. REGIME-TIMELINE RIBBON — rolling regime color under the price (EMA-slope + vol). */
+export function RegimeRibbon({ bars }: { bars: Bar[] }) {
+  const seg = useMemo(() => {
+    const c = bars.map((b) => b.c); if (c.length < 40) return [];
+    const ema = (n: number) => { const k = 2 / (n + 1); let p = c[0]; return c.map((x) => (p = x * k + p * (1 - k))); };
+    const e12 = ema(12), e26 = ema(26); const out: { up: number; regime: string }[] = [];
+    for (let i = 30; i < c.length; i++) { const slope = e12[i] - e12[i - 5]; const above = e12[i] > e26[i]; const r = above && slope > 0 ? "up" : !above && slope < 0 ? "down" : "chop"; out.push({ up: i / c.length, regime: r }); }
+    return out;
+  }, [bars]);
+  const W = 320, H = 22;
+  const col = (r: string) => r === "up" ? POS : r === "down" ? NEG : PUR;
+  return <svg viewBox={`0 0 ${W} ${H}`} className="axv" preserveAspectRatio="none" style={{ height: 22 }}>{seg.map((s, i) => <rect key={i} x={(i / seg.length) * W} y={0} width={W / seg.length + 0.6} height={H} fill={col(s.regime)} opacity="0.5" />)}</svg>;
+}
+
+/* 4. RELIABILITY CURVE — predicted P(up) deciles vs observed frequency (calibration). */
+export function ReliabilityCurve({ hist }: { hist: OracleHistory | null }) {
+  const W = 150, H = 130, pad = 14;
+  const resolved = (hist?.rows || []).filter((r) => r.hit != null);
+  const pts = useMemo(() => {
+    if (resolved.length < 4) return null;
+    const buckets = Array.from({ length: 5 }, () => ({ n: 0, hit: 0, pSum: 0 }));
+    for (const r of resolved as unknown as { p_up?: number; hit: number }[]) { const p = r.p_up ?? 0.5; const b = Math.min(4, Math.floor(p * 5)); buckets[b].n++; buckets[b].hit += r.hit; buckets[b].pSum += p; }
+    return buckets.filter((b) => b.n > 0).map((b) => ({ pred: b.pSum / b.n, obs: b.hit / b.n }));
+  }, [resolved]);
+  const X = (v: number) => pad + v * (W - 2 * pad), Y = (v: number) => H - pad - v * (H - 2 * pad);
+  return (
+    <svg viewBox={`0 0 ${W} ${H}`} className="axv">
+      <rect x={pad} y={pad} width={W - 2 * pad} height={H - 2 * pad} fill="none" stroke="rgba(255,255,255,.08)" />
+      <line x1={X(0)} y1={Y(0)} x2={X(1)} y2={Y(1)} stroke="rgba(255,255,255,.2)" strokeDasharray="3 3" />
+      {pts ? <polyline points={pts.map((p) => `${X(p.pred)},${Y(p.obs)}`).join(" ")} fill="none" stroke={CY} strokeWidth="1.6" /> : null}
+      {pts ? pts.map((p, i) => <circle key={i} cx={X(p.pred)} cy={Y(p.obs)} r="2.5" fill={CY} />) : <text x={W / 2} y={H / 2} fill="#6b7683" fontSize="8" textAnchor="middle">needs resolved calls</text>}
+      <text x={W / 2} y={H - 2} fill="#6b7683" fontSize="7" textAnchor="middle">predicted →</text>
+    </svg>
+  );
+}
+
+/* 5. EDGE-DECAY METER — rolling hit-rate over the last N resolved calls. */
+export function EdgeDecay({ hist }: { hist: OracleHistory | null }) {
+  const resolved = (hist?.rows || []).filter((r) => r.hit != null).slice().reverse();
+  const W = 150, H = 130, pad = 14;
+  const roll = useMemo(() => { const win = 8; const out: number[] = []; for (let i = 0; i < resolved.length; i++) { const s = resolved.slice(Math.max(0, i - win + 1), i + 1); out.push(s.reduce((a, r) => a + (r.hit || 0), 0) / s.length); } return out; }, [resolved]);
+  const X = (i: number) => pad + (roll.length > 1 ? i / (roll.length - 1) : 0) * (W - 2 * pad), Y = (v: number) => H - pad - v * (H - 2 * pad);
+  return (
+    <svg viewBox={`0 0 ${W} ${H}`} className="axv">
+      <line x1={pad} y1={Y(0.5)} x2={W - pad} y2={Y(0.5)} stroke="rgba(255,255,255,.15)" strokeDasharray="3 3" /><text x={W - pad} y={Y(0.5) - 2} fill="#6b7683" fontSize="6" textAnchor="end">50%</text>
+      {roll.length > 1 ? <polyline points={roll.map((v, i) => `${X(i)},${Y(v)}`).join(" ")} fill="none" stroke={roll[roll.length - 1] >= 0.5 ? POS : NEG} strokeWidth="1.6" /> : <text x={W / 2} y={H / 2} fill="#6b7683" fontSize="8" textAnchor="middle">needs history</text>}
+      <text x={W / 2} y={H - 2} fill="#6b7683" fontSize="7" textAnchor="middle">rolling hit-rate →</text>
+    </svg>
+  );
+}
+
+/* 6. WHAT-IF SCENARIO — drag vol× and drift shift; recompute the horizon's band + P(up) live. */
+export function WhatIf({ h }: { h: OracleHorizon }) {
+  const [volMul, setVolMul] = useState(1); const [driftBp, setDriftBp] = useState(0);
+  const s0 = Math.log(h.p95 / h.p05) / (2 * 1.6449) || 0.02; // reconstruct sigma from the band
+  const m0 = Math.log(h.p50);
+  const s = s0 * volMul; const m = m0 + driftBp / 10000;
+  const q = (p: number) => Math.exp(m + s * normInv(p));
+  const pUp = 1 - (0.5 * (1 + erf((Math.log(h.spot) - m) / (s * Math.SQRT2))));
+  return (
+    <div className="axv-whatif">
+      <div className="axv-wi-row"><span>Vol ×{volMul.toFixed(2)}</span><input type="range" min={0.5} max={2} step={0.05} value={volMul} onChange={(e) => setVolMul(+e.target.value)} /></div>
+      <div className="axv-wi-row"><span>Drift {driftBp >= 0 ? "+" : ""}{driftBp}bp</span><input type="range" min={-500} max={500} step={10} value={driftBp} onChange={(e) => setDriftBp(+e.target.value)} /></div>
+      <div className="axv-wi-out">
+        <span>p05 <b>{q(0.05).toFixed(2)}</b></span><span>p50 <b>{Math.exp(m).toFixed(2)}</b></span><span>p95 <b>{q(0.95).toFixed(2)}</b></span>
+        <span>P(up) <b style={{ color: pUp >= 0.5 ? POS : NEG }}>{(pUp * 100).toFixed(0)}%</b></span>
+      </div>
+    </div>
+  );
+}
+function erf(x: number) { const t = 1 / (1 + 0.3275911 * Math.abs(x)); const y = 1 - (((((1.061405429 * t - 1.453152027) * t) + 1.421413741) * t - 0.284496736) * t + 0.254829592) * t * Math.exp(-x * x); return x >= 0 ? y : -y; }
+
+export const VIZ_CSS = `
+.axv { width:100%; display:block; }
+.axv-whatif { background:#0b0f16; border:1px solid var(--ax-bd,#20303f); border-radius:6px; padding:9px 11px; }
+.axv-wi-row { display:flex; align-items:center; gap:10px; margin-bottom:7px; font-size:10px; color:var(--ax-mut,#9aa7b4); font-family:var(--ax-mono); }
+.axv-wi-row span { width:96px; } .axv-wi-row input { flex:1; accent-color:${CY}; }
+.axv-wi-out { display:flex; gap:14px; flex-wrap:wrap; font-size:10px; color:var(--ax-dim,#6b7683); font-family:var(--ax-mono); padding-top:6px; border-top:1px solid var(--ax-hair,rgba(255,255,255,.05)); }
+.axv-wi-out b { color:var(--ax-tx,#e6edf3); }
+`;

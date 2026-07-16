@@ -60,6 +60,13 @@ export function ChartPro({ bars, up, indicators, replayActive, replaySpeed, repl
   const replayTimer = useRef<number | null>(null);
   const legendRef = useRef<HTMLDivElement | null>(null);
   const lastVals = useRef<Record<string, number>>({});
+  // Precomputed indicator arrays (computed ONCE per data load — replay slices these, no O(n²) recompute).
+  const indRef = useRef<{ e20: number[]; e50: number[]; e200: number[]; vwap: number[]; bbU: number[]; bbM: number[]; bbL: number[]; rsi: number[]; macd: number[]; signal: number[]; hist: number[]; t: UTCTimestamp[] }>({ e20: [], e50: [], e200: [], vwap: [], bbU: [], bbM: [], bbL: [], rsi: [], macd: [], signal: [], hist: [], t: [] });
+  const recomputeIndicators = () => {
+    const all = dataRef.current; const c = closes(all);
+    const bb = bollinger(c, 20, 2); const m = calcMacd(c);
+    indRef.current = { e20: ema(c, 20), e50: ema(c, 50), e200: ema(c, 200), vwap: calcVwap(all), bbU: bb.upper, bbM: bb.mid, bbL: bb.lower, rsi: calcRsi(c, 14), macd: m.macd, signal: m.signal, hist: m.hist, t: all.map((b) => toSec(b.t)) };
+  };
 
   // ── Build the chart + all series ONCE ──
   useEffect(() => {
@@ -140,6 +147,7 @@ export function ChartPro({ bars, up, indicators, replayActive, replaySpeed, repl
     if (!chartRef.current || !S.current.candle) return;
     const clean = cleanBars(bars);
     dataRef.current = clean;
+    recomputeIndicators();
     if (!replayActive) renderUpTo(clean.length);
     // fit
     if (!replayActive) chartRef.current.timeScale().fitContent();
@@ -189,24 +197,23 @@ export function ChartPro({ bars, up, indicators, replayActive, replaySpeed, repl
   // ── Compute + render everything up to index `n` (for replay reveal) ──
   function renderUpTo(n: number, replay?: ReplayResult) {
     const s = S.current; const all = dataRef.current; if (!all.length || !s.candle) return;
+    const I = indRef.current; if (I.t.length !== all.length) recomputeIndicators();
     const sub = all.slice(0, n);
-    const c = closes(all);
-    const t = all.map((b) => toSec(b.t));
+    const t = I.t;
     const line = (arr: number[]) => sub.map((_, i) => (Number.isFinite(arr[i]) ? { time: t[i], value: arr[i] } : null)).filter(Boolean) as { time: UTCTimestamp; value: number }[];
 
     s.candle.setData(sub.map((b) => ({ time: toSec(b.t), open: b.o, high: b.h, low: b.l, close: b.c })));
 
-    const e20 = ema(c, 20), e50 = ema(c, 50), e200 = ema(c, 200);
+    const e20 = I.e20, e50 = I.e50, e200 = I.e200, bb = { mid: I.bbM };
     s.ema20.setData(line(e20)); s.ema50.setData(line(e50)); s.ema200.setData(line(e200));
-    s.vwap.setData(line(calcVwap(all)));
-    const bb = bollinger(c, 20, 2);
-    s.bbU.setData(line(bb.upper)); s.bbM.setData(line(bb.mid)); s.bbL.setData(line(bb.lower));
+    s.vwap.setData(line(I.vwap));
+    s.bbU.setData(line(I.bbU)); s.bbM.setData(line(I.bbM)); s.bbL.setData(line(I.bbL));
 
     s.vol.setData(sub.map((b) => ({ time: toSec(b.t), value: b.v || 0, color: b.c >= b.o ? "rgba(38,194,129,.5)" : "rgba(244,85,107,.5)" })));
 
-    s.rsi.setData(line(calcRsi(c, 14)));
-    const m = calcMacd(c);
-    s.macd.setData(line(m.macd)); s.signal.setData(line(m.signal));
+    s.rsi.setData(line(I.rsi));
+    const m = { hist: I.hist };
+    s.macd.setData(line(I.macd)); s.signal.setData(line(I.signal));
     s.macdHist.setData(sub.map((_, i) => (Number.isFinite(m.hist[i]) ? { time: t[i], value: m.hist[i], color: m.hist[i] >= 0 ? "rgba(38,194,129,.55)" : "rgba(244,85,107,.55)" } : null)).filter(Boolean) as { time: UTCTimestamp; value: number; color: string }[]);
 
     // Replay overlays
@@ -229,7 +236,7 @@ export function ChartPro({ bars, up, indicators, replayActive, replaySpeed, repl
     const li = n - 1; const lastFin = (arr: number[], from: number) => { for (let i = from; i >= 0; i--) if (Number.isFinite(arr[i])) return arr[i]; return NaN; };
     const lb = all[li];
     if (lb) {
-      lastVals.current = { o: lb.o, h: lb.h, l: lb.l, c: lb.c, ema20: lastFin(e20, li), ema50: lastFin(e50, li), ema200: lastFin(e200, li), vwap: lastFin(calcVwap(all), li), bbM: lastFin(bb.mid, li) };
+      lastVals.current = { o: lb.o, h: lb.h, l: lb.l, c: lb.c, ema20: lastFin(e20, li), ema50: lastFin(e50, li), ema200: lastFin(e200, li), vwap: lastFin(I.vwap, li), bbM: lastFin(bb.mid, li) };
       renderLegend({ open: lb.o, high: lb.h, low: lb.l, close: lb.c }, (k) => lastVals.current[k]);
     }
   }

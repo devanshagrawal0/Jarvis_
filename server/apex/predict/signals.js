@@ -88,6 +88,20 @@ async function buildPackages(symbol, bars, deps = {}) {
     }
   }
 
+  // Macro package — VIX (risk), 10y yield trend, dollar. Free via Yahoo index symbols (no FRED key).
+  if (getBars) {
+    try {
+      const [vix, tnx, dxy] = await Promise.allSettled([getBars("^VIX", { interval: "1d", range: "3mo" }), getBars("^TNX", { interval: "1d", range: "3mo" }), getBars("DX-Y.NYB", { interval: "1d", range: "3mo" })]);
+      const series = (r) => (r.status === "fulfilled" && Array.isArray(r.value) ? r.value.map((b) => b.c) : []);
+      const vc = series(vix), tc = series(tnx), dc = series(dxy);
+      const level = vc.length ? vc[vc.length - 1] : null;
+      const vixRisk = level != null ? clamp(-(level - 18) / 12, -1, 1) : 0; // high VIX → risk-off (negative)
+      const trend = (a) => (a.length > 10 ? Math.tanh((a[a.length - 1] / a[a.length - 11] - 1) * 8) : 0);
+      pkg.macro = clamp(0.5 * vixRisk - 0.25 * trend(tc) - 0.25 * trend(dc), -1, 1);
+      detail.macro = { vix: level != null ? +level.toFixed(1) : null, tnxTrend: +trend(tc).toFixed(2), usdTrend: +trend(dc).toFixed(2), score: +pkg.macro.toFixed(2) };
+    } catch { /* skip */ }
+  }
+
   // News (optional injected)
   if (getNews) {
     try {
