@@ -25,6 +25,36 @@
   will-change: transform;
 }
 
+/* ── Boot HUD overlay (crisp DOM, over the 3D canvas) ─────── */
+.apex-boot-hud {
+  position: absolute; inset: 0; z-index: 5; pointer-events: none;
+  display: flex; align-items: center; justify-content: center;
+  opacity: 1; transition: opacity .6s ease;
+}
+.apex-boot-hud--out { opacity: 0; }
+.apex-boot-hud .abh-center { display: flex; flex-direction: column; align-items: center; gap: 14px; transform: translateY(14vh); }
+.abh-logo {
+  position: relative;
+  font-weight: 800; font-size: clamp(64px, 12vw, 168px); letter-spacing: .14em; line-height: 1;
+  color: #eaf6ff; padding-left: .14em;
+  text-shadow: 0 0 8px rgba(46,199,255,.55), 0 0 40px rgba(46,199,255,.4), 0 0 90px rgba(46,199,255,.25);
+  animation: abhGlow 2.4s ease-in-out infinite;
+}
+@keyframes abhGlow { 0%,100% { opacity: .96; } 50% { opacity: 1; text-shadow: 0 0 10px rgba(46,199,255,.7), 0 0 54px rgba(46,199,255,.5), 0 0 120px rgba(46,199,255,.3); } }
+.abh-sub { font-size: clamp(9px, 1vw, 13px); letter-spacing: .5em; color: #6fa6c8; font-weight: 600; padding-left: .5em; }
+.abh-bar { width: min(420px, 42vw); height: 2px; margin-top: 10px; background: rgba(120,170,205,.16); border-radius: 2px; overflow: hidden; }
+.abh-bar > span { display: block; height: 100%; background: linear-gradient(90deg, #1c7fb0, #2ec7ff); box-shadow: 0 0 12px #2ec7ff; border-radius: 2px; transition: width .12s linear; }
+.abh-status { width: min(420px, 42vw); display: flex; justify-content: space-between; font-family: "JetBrains Mono", ui-monospace, monospace; font-size: 10.5px; letter-spacing: .12em; color: #7fa6c0; }
+.abh-status em { font-style: normal; color: #eaf6ff; font-weight: 700; }
+/* corner reticle brackets */
+.abh-corner { position: absolute; width: 34px; height: 34px; border: 1.5px solid rgba(46,199,255,.5); }
+.abh-tl { top: 26px; left: 26px; border-right: 0; border-bottom: 0; }
+.abh-tr { top: 26px; right: 26px; border-left: 0; border-bottom: 0; }
+.abh-bl { bottom: 26px; left: 26px; border-right: 0; border-top: 0; }
+.abh-br { bottom: 26px; right: 26px; border-left: 0; border-top: 0; }
+.abh-ver { position: absolute; bottom: 30px; left: 50%; transform: translateX(-50%); font-family: "JetBrains Mono", ui-monospace, monospace; font-size: 9.5px; letter-spacing: .3em; color: #4c6f86; }
+@media (prefers-reduced-motion: reduce) { .abh-logo { animation: none; } }
+
 /* ── Room ────────────────────────────────────────────────── */
 .apex-room {
   position: absolute;

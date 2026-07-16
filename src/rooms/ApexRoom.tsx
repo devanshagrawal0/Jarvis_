@@ -15,10 +15,21 @@ interface Props {
  * lockup — the same boot→room handoff HELIX uses. For now the room is a
  * single backdrop image (public/apex/room-bg.png); real panels come next.
  */
+const BOOT_STATUS = [
+  [0.0, "INITIALIZING CORE"],
+  [0.2, "SYNCING LIVE MARKET DATA"],
+  [0.42, "CALIBRATING REGIME ENGINE"],
+  [0.62, "BOOTING ORACLE PREDICTION CORE"],
+  [0.82, "RENDERING TERMINAL"],
+  [0.99, "READY"],
+] as const;
+const bootStatus = (p: number): string => { let s: string = BOOT_STATUS[0][1]; for (const [thr, label] of BOOT_STATUS) if (p >= thr) s = label; return s; };
+
 export function ApexRoom({ onExit }: Props) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const [booted, setBooted] = useState(false);
   const [roomVisible, setRoomVisible] = useState(false);
+  const [progress, setProgress] = useState(0);
 
   // Boot sequence — runs once on mount.
   useEffect(() => {
@@ -39,7 +50,7 @@ export function ApexRoom({ onExit }: Props) {
       enterRoom();
       // Once the fade completes, freeze the boot canvas to save the GPU.
       fadeTimer = setTimeout(() => stop(), 1500);
-    });
+    }, (t) => setProgress(t));
 
     // Safety net: if requestAnimationFrame is paused (hidden/background tab)
     // or the user prefers reduced motion, the boot's onDone may never fire.
@@ -57,9 +68,24 @@ export function ApexRoom({ onExit }: Props) {
   // Note: Escape handling lives in ApexHome — it closes any open overlay
   // first and only exits the room (onExit) when nothing is open.
 
+  const pct = Math.round(progress * 100);
   return (
     <div className="apex-shell">
       <canvas ref={canvasRef} className="apex-boot-canvas" />
+
+      {!roomVisible && (
+        <div className={`apex-boot-hud${booted ? " apex-boot-hud--out" : ""}`} aria-hidden>
+          <span className="abh-corner abh-tl" /><span className="abh-corner abh-tr" />
+          <span className="abh-corner abh-bl" /><span className="abh-corner abh-br" />
+          <div className="abh-center">
+            <div className="abh-logo" data-text="APEX">APEX</div>
+            <div className="abh-sub">INTELLIGENT&nbsp;&nbsp;TRADING&nbsp;&nbsp;TERMINAL</div>
+            <div className="abh-bar"><span style={{ width: `${pct}%` }} /></div>
+            <div className="abh-status"><span>{bootStatus(progress)}</span><em>{pct}%</em></div>
+          </div>
+          <div className="abh-ver">APEX ENGINE · v2.0</div>
+        </div>
+      )}
 
       {booted && (
         <div className={`apex-room${roomVisible ? " apex-room--visible" : ""}`}>
