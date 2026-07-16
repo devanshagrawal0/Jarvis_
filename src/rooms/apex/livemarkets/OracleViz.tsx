@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { Bar } from "../apex-data";
 import type { OracleHorizon, OracleHistory } from "./OraclePanel";
 
@@ -130,7 +130,48 @@ export function WhatIf({ h }: { h: OracleHorizon }) {
 }
 function erf(x: number) { const t = 1 / (1 + 0.3275911 * Math.abs(x)); const y = 1 - (((((1.061405429 * t - 1.453152027) * t) + 1.421413741) * t - 0.284496736) * t + 0.254829592) * t * Math.exp(-x * x); return x >= 0 ? y : -y; }
 
+/* 7. TIME MACHINE — hindcast: forecast as-of N days ago, then animate the actual path vs the cone. */
+interface Hindcast { ok: boolean; asOf: string; spot: number; dir: string; predRet5d: number; realizedRet5d: number | null; hit: number | null; cone: { barsAhead: number; p05: number; p50: number; p95: number }[]; actual: { i: number; c: number }[] }
+export function TimeMachine({ symbol }: { symbol: string }) {
+  const [hc, setHc] = useState<Hindcast | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [reveal, setReveal] = useState(0);
+  const [days, setDays] = useState(20);
+  const run = async (d = days) => { setBusy(true); setHc(null); setReveal(0); try { const r = await fetch(`/api/apex/predict/${encodeURIComponent(symbol)}/hindcast?daysAgo=${d}`).then((x) => x.json()); if (r.ok) { setHc(r); } } catch { /* ignore */ } setBusy(false); };
+  useEffect(() => { if (!hc) return; setReveal(0); const iv = setInterval(() => setReveal((n) => { if (n >= hc.actual.length) { clearInterval(iv); return n; } return n + 1; }), 90); return () => clearInterval(iv); }, [hc]);
+  const W = 320, H = 150, pad = 6, maxBar = 34;
+  const all = hc ? [hc.spot, ...hc.actual.map((a) => a.c), ...hc.cone.flatMap((c) => [c.p05, c.p95])] : [1];
+  const lo = Math.min(...all), hi = Math.max(...all), rg = hi - lo || 1;
+  const X = (i: number) => pad + (i / maxBar) * (W - 2 * pad), Y = (v: number) => H - pad - ((v - lo) / rg) * (H - 2 * pad);
+  return (
+    <div className="axv-tm">
+      {!hc ? <button className="axv-tm-run" onClick={() => run()} disabled={busy}>{busy ? "Loading hindcast…" : `⏪ Time-machine: forecast from ${days}d ago`}</button> : (
+        <>
+          <div className="axv-tm-h"><span>AS OF {hc.asOf?.slice(0, 10)}</span><span className="axv-tm-hit" style={{ color: hc.hit ? POS : NEG }}>{hc.hit ? "✓ HIT" : "✗ MISS"}</span></div>
+          <svg viewBox={`0 0 ${W} ${H}`} className="axv" preserveAspectRatio="none">
+            {(() => { const c5 = hc.cone.find((c) => c.barsAhead >= 30) || hc.cone[hc.cone.length - 1]; const bx = X(c5.barsAhead); return (<>
+              <path d={`M${X(0)},${Y(hc.spot)} L${bx},${Y(c5.p95)} L${bx},${Y(c5.p05)} Z`} fill="rgba(224,149,43,.10)" />
+              <line x1={X(0)} y1={Y(hc.spot)} x2={bx} y2={Y(c5.p50)} stroke={WARN} strokeWidth="1.4" strokeDasharray="4 3" />
+            </>); })()}
+            <polyline points={hc.actual.slice(0, reveal).map((a) => `${X(a.i)},${Y(a.c)}`).join(" ")} fill="none" stroke={hc.hit ? POS : NEG} strokeWidth="1.8" />
+            {reveal > 0 && reveal <= hc.actual.length ? <circle cx={X(hc.actual[Math.min(reveal, hc.actual.length) - 1].i)} cy={Y(hc.actual[Math.min(reveal, hc.actual.length) - 1].c)} r="3" fill="#fff" /> : null}
+            <line x1={X(0)} y1={Y(hc.spot)} x2={W - pad} y2={Y(hc.spot)} stroke="rgba(255,255,255,.12)" strokeDasharray="2 2" />
+          </svg>
+          <div className="axv-tm-foot"><span>pred 5d <b style={{ color: hc.predRet5d >= 0 ? POS : NEG }}>{hc.predRet5d >= 0 ? "+" : ""}{hc.predRet5d}%</b></span><span>actual <b style={{ color: (hc.realizedRet5d ?? 0) >= 0 ? POS : NEG }}>{hc.realizedRet5d != null ? (hc.realizedRet5d >= 0 ? "+" : "") + hc.realizedRet5d + "%" : "—"}</b></span><button className="axv-tm-re" onClick={() => run(days)}>↻</button><button className="axv-tm-re" onClick={() => { const d = days === 20 ? 60 : days === 60 ? 120 : 20; setDays(d); run(d); }}>{days}d</button></div>
+        </>
+      )}
+    </div>
+  );
+}
+
 export const VIZ_CSS = `
+.axv-tm-run, .axv-tm-re { background:color-mix(in srgb, ${PUR} 14%, transparent); border:1px solid color-mix(in srgb, ${PUR} 40%, transparent); color:${PUR}; border-radius:5px; padding:7px; font-size:11px; font-weight:600; cursor:pointer; font-family:inherit; }
+.axv-tm-run { width:100%; } .axv-tm-run:disabled { opacity:.6; }
+.axv-tm-re { padding:3px 8px; font-size:10px; }
+.axv-tm-h { display:flex; justify-content:space-between; font-size:8.5px; letter-spacing:.05em; color:var(--ax-dim,#6b7683); font-family:var(--ax-mono); margin-bottom:3px; }
+.axv-tm-hit { font-weight:700; }
+.axv-tm-foot { display:flex; align-items:center; gap:12px; font-size:10px; color:var(--ax-mut,#9aa7b4); font-family:var(--ax-mono); margin-top:3px; }
+.axv-tm-foot b { } .axv-tm-foot .axv-tm-re { margin-left:auto; }
 .axv { width:100%; display:block; }
 .axv-whatif { background:#0b0f16; border:1px solid var(--ax-bd,#20303f); border-radius:6px; padding:9px 11px; }
 .axv-wi-row { display:flex; align-items:center; gap:10px; margin-bottom:7px; font-size:10px; color:var(--ax-mut,#9aa7b4); font-family:var(--ax-mono); }

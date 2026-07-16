@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { Bar } from "../apex-data";
-import { MonteCarloFan, ContagionGraph, RegimeRibbon, ReliabilityCurve, EdgeDecay, WhatIf, VIZ_CSS } from "./OracleViz";
+import { MonteCarloFan, ContagionGraph, RegimeRibbon, ReliabilityCurve, EdgeDecay, WhatIf, TimeMachine, VIZ_CSS } from "./OracleViz";
 
 // APEX Oracle Panel — the prediction cockpit. Fetches /api/apex/predict/:symbol (regime,
 // multi-horizon forecast, options, signal packages, Jarvis synthesis), renders a compact
@@ -183,6 +183,8 @@ export function OracleOverlay({ o, hist, bars, loading, resolvedNote, onClose, o
                 <div className="axo-curve"><div className="axo-curve-t">RELIABILITY (calibration)</div><ReliabilityCurve hist={hist} /></div>
                 <div className="axo-curve"><div className="axo-curve-t">EDGE DECAY</div><EdgeDecay hist={hist} /></div>
               </div>
+              <div className="axo-sec">TIME MACHINE <em>hindcast: predicted vs actual</em></div>
+              <TimeMachine symbol={o.symbol} />
               <div className="axo-sec">MODEL VALIDATION <em>out-of-sample</em></div>
               <BacktestPanel symbol={o.symbol} />
               <div className="axo-hint">Click ↻ Refresh on the next session to resolve these calls against realized prices and self-correct.</div>

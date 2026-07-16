@@ -52,10 +52,11 @@ function createOracle({ runtimeDir, getBars, priceAt, getNews = null, callModel 
       forecast1d: { dir: fc.horizons.find((h) => h.horizon === "1d")?.dir, pUp: +(fc.horizons.find((h) => h.horizon === "1d")?.pUp || 0.5).toFixed(2), ret5d: +(fc.horizons.find((h) => h.horizon === "5d")?.predRet || 0).toFixed(2) },
     };
     try {
-      const out = await callModel(`You are APEX Oracle's synthesis layer. Given this numeric brief for a stock, reply with ONLY compact JSON {"pUp":<0..1 probability the stock is higher in 1 day>,"bias":"bullish|bearish|neutral","thesis":"<=2 sentence rationale citing the strongest signals"}. Brief: ${JSON.stringify(brief)}`);
-      const j = JSON.parse(String(out).match(/\{[\s\S]*\}/)?.[0] || "{}");
-      if (Number.isFinite(j.pUp)) return { pUp: clamp(j.pUp, 0.02, 0.98), bias: j.bias || "neutral", thesis: String(j.thesis || "").slice(0, 400) };
-    } catch { /* fall through */ }
+      const raw = await callModel(`You are APEX Oracle's quant synthesis layer. Given this numeric brief, reply with ONLY raw compact JSON (no prose, no code fences): {"pUp":<0..1 prob the stock is higher in 1 day>,"bias":"bullish|bearish|neutral","thesis":"<=2 sentence rationale citing the strongest signals"}. Brief: ${JSON.stringify(brief)}`);
+      const cleaned = String(raw || "").replace(/```(?:json)?/gi, "").trim();
+      const m = cleaned.match(/\{[\s\S]*\}/);
+      if (m) { const j = JSON.parse(m[0]); if (Number.isFinite(j.pUp)) return { pUp: clamp(j.pUp, 0.02, 0.98), bias: j.bias || "neutral", thesis: String(j.thesis || "").slice(0, 400), source: "jarvis" }; }
+    } catch { /* fall through to deterministic */ }
     return null;
   }
 
@@ -181,6 +182,26 @@ function createOracle({ runtimeDir, getBars, priceAt, getNews = null, callModel 
     return { ok: true, horizons: out, gate, model_ver: MODEL_VER };
   }
 
+  // Time machine (hindcast): forecast as-of N trading days ago using ONLY past bars, then
+  // return the realized path since — so the UI can animate prediction-vs-actual immediately.
+  async function hindcast(symbol, daysAgo = 20) {
+    let bars = await getBars(symbol, { interval: "60m", range: "730d" }); let barsPerDay = 6.5;
+    if (!Array.isArray(bars) || bars.length < 120) { bars = await getBars(symbol, { interval: "1d", range: "5y" }); barsPerDay = 1; }
+    if (!Array.isArray(bars) || bars.length < 80) return { ok: false, reason: "insufficient history", symbol };
+    const ahead = Math.round(32.5 * (barsPerDay / 6.5)); // ~5 trading days of realized path
+    const cut = Math.max(60, bars.length - Math.round(daysAgo * barsPerDay) - ahead);
+    const past = bars.slice(0, cut + 1);
+    const regime = detectRegime(past); const fc = forecast(past, regime, {});
+    if (!fc.ok) return { ok: false, reason: fc.reason, symbol };
+    const cone = fc.horizons.map((h) => ({ horizon: h.horizon, p05: h.p05, p50: h.p50, p95: h.p95, barsAhead: Math.round(h.tau * (barsPerDay / 6.5)) }));
+    const actual = bars.slice(cut, cut + ahead + 1).map((b, i) => ({ i, t: b.t, c: b.c }));
+    const finalPx = actual.length ? actual[actual.length - 1].c : null; const spot = past[past.length - 1].c;
+    const oneDay = fc.horizons.find((h) => h.horizon === "1d"); const realizedDir = finalPx != null ? Math.sign(finalPx - spot) : 0;
+    return { ok: true, symbol, asOf: past[past.length - 1].t, spot, regime: regime.label, dir: oneDay?.dir,
+      predRet5d: +((fc.horizons.find((h) => h.horizon === "5d")?.predRet) || 0).toFixed(2), realizedRet5d: finalPx != null ? +((finalPx / spot - 1) * 100).toFixed(2) : null,
+      hit: oneDay ? ((oneDay.dir === "LONG" ? 1 : -1) === realizedDir ? 1 : 0) : null, cone, actual, barsPerDay };
+  }
+
   function history(symbol, limit = 60) {
     const rows = store.history(symbol, limit);
     const scored = rows.filter((r) => r.hit != null);
@@ -197,7 +218,7 @@ function createOracle({ runtimeDir, getBars, priceAt, getNews = null, callModel 
       return { rows };
     } catch { return { rows: [] }; }
   }
-  return { predict, refresh, resolveDue, history, backtest, leaderboard, computeForecast, store, model_ver: MODEL_VER };
+  return { predict, refresh, resolveDue, history, backtest, leaderboard, hindcast, computeForecast, store, model_ver: MODEL_VER };
 }
 
 module.exports = { createOracle };

@@ -19,6 +19,25 @@ const PEERS = {
   SPY: { etf: "SPY", peers: ["QQQ", "DIA", "IWM"] },
 };
 
+// Suppliers / customers (complements) for common names — cross-industry supply chain.
+const COMPLEMENTS = {
+  NVDA: ["TSM", "ASML", "MSFT", "META", "AMZN"], AMD: ["TSM", "MSFT", "DELL"], AAPL: ["TSM", "QCOM", "AVGO", "SWKS"],
+  MSFT: ["NVDA", "AMD", "ASML"], TSLA: ["PANW", "ALB", "PCC"], AMZN: ["UPS", "FDX", "NVDA"], META: ["NVDA", "ASML"],
+  GOOGL: ["NVDA", "TSM"], XOM: ["SLB", "HAL", "BKR"], JPM: ["V", "MA"],
+};
+
+// Lead-lag cross-correlation: find the lag ℓ (in bars) that maximizes corr(T_t, X_{t-ℓ}).
+// ℓ>0 → X leads T (supplier signal); ℓ<0 → T leads X (customer).
+function leadLag(t, x, maxLag = 5) {
+  let best = { lag: 0, rho: 0 };
+  for (let l = -maxLag; l <= maxLag; l++) {
+    const a = [], b = [];
+    for (let i = Math.max(0, l); i < Math.min(t.length, x.length + l); i++) { const xi = i - l; if (xi >= 0 && xi < x.length) { a.push(t[i]); b.push(x[xi]); } }
+    const r = corr(a, b); if (Math.abs(r) > Math.abs(best.rho)) best = { lag: l, rho: r };
+  }
+  return best;
+}
+
 // Pearson correlation of two aligned return series.
 function corr(a, b) {
   const n = Math.min(a.length, b.length); if (n < 5) return 0;
@@ -58,12 +77,13 @@ async function buildPackages(symbol, bars, deps = {}) {
   const pkg = { technical: tech.score, news: 0, peer: 0, sector: 0, macro: 0 };
   const detail = { technical: tech.parts, peers: [], sector: null, news: null };
 
-  // Peers + sector (best-effort, parallel, tolerant of failures)
+  // Peers (substitutes) + complements (suppliers/customers) + sector — best-effort, parallel.
   const cfg = PEERS[tk] || { etf: "SPY", peers: [] };
+  const comps = (COMPLEMENTS[tk] || []).filter((c) => !cfg.peers.includes(c));
   if (getBars) {
-    const targets = [...cfg.peers.slice(0, 5), cfg.etf];
+    const targets = [...cfg.peers.slice(0, 5), ...comps.slice(0, 4), cfg.etf];
+    const compSet = new Set(comps);
     const results = await Promise.allSettled(targets.map((s) => getBars(s, { interval: "1d", range: "6mo" })));
-    const symDaily = null; // we compare on daily returns; fetch symbol daily too
     let symD = [];
     try { const sb = await getBars(tk, { interval: "1d", range: "6mo" }); symD = logRets(sb.map((b) => b.c)); } catch { symD = cRets; }
     const peerScores = [];
@@ -75,6 +95,11 @@ async function buildPackages(symbol, bars, deps = {}) {
         const symMom = momentum(bars.map((b) => b.c), 20 * 6.5 | 0) || momentum(bars.map((b) => b.c), 20);
         detail.sector = { etf: name, rho: +rho.toFixed(2), etfMom: +(pm * 100).toFixed(2) };
         pkg.sector = clamp(0.5 * Math.sign(pm) + 0.5 * Math.tanh((symMom - pm) * 6), -1, 1);
+      } else if (compSet.has(name)) {
+        const ll = leadLag(symD, pr, 5); // ℓ>0 → complement leads the stock (supplier lead signal)
+        const kind = ll.lag > 0 ? "supplier (leads)" : ll.lag < 0 ? "customer (lags)" : "complement";
+        detail.peers.push({ sym: name, rho: +rho.toFixed(2), mom: +(pm * 100).toFixed(2), kind, leadLag: ll.lag });
+        peerScores.push({ sym: name, rho, mom: pm, lead: ll.lag > 0 });
       } else {
         peerScores.push({ sym: name, rho, mom: pm });
         detail.peers.push({ sym: name, rho: +rho.toFixed(2), mom: +(pm * 100).toFixed(2), kind: rho > 0.4 ? "substitute" : "related" });
