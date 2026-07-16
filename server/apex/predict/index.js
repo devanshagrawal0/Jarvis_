@@ -15,6 +15,7 @@ const { createOracleStore } = require("./store");
 const { buildPackages } = require("./signals");
 const { fuse } = require("./ensemble");
 const { computeQuant } = require("./phd");
+const { bs } = require("./options");
 const { clamp } = require("./mathx");
 
 const MODEL_VER = "oracle-1.0";
@@ -24,6 +25,71 @@ const MS = { "1h": 3.6e6, "5h": 1.8e7, "12h": 4.32e7, "1d": 8.64e7, "5d": 4.32e8
 function horizonScaleLLM(pUp1d, tau) {
   const k = Math.sqrt(tau / 6.5); // 1d = tau 6.5 → k=1
   return clamp(0.5 + (pUp1d - 0.5) * clamp(k, 0.4, 1.4), 0.02, 0.98);
+}
+
+// ── The Verdict Compiler — aggregates every engine output into a labelled buy/sell signal
+// with bullet-point proof (numbers). This is the "algo" that decides. ──
+function compileReport(p) {
+  const h1 = p.horizons.find((h) => h.horizon === "1d") || p.horizons[0];
+  const h5 = p.horizons.find((h) => h.horizon === "5d") || p.horizons[p.horizons.length - 1];
+  const q = p.quant || {}; const sd = p.signalDetail || {}; const pk = p.packages || {};
+  const pUp = h1.pUp * 0.4 + h5.pUp * 0.6;               // blended probability up
+  const conf = (h1.confidence + h5.confidence) / 2;
+  const bull = (v) => (v > 0.08 ? 1 : v < -0.08 ? -1 : 0);
+  const pctTxt = (v) => `${v >= 0 ? "+" : ""}${(v).toFixed(1)}%`;
+
+  // Caution flags
+  const flags = [];
+  if (p.regime.label === "HIGH_VOL") flags.push("High-volatility regime — expect wider swings");
+  if (q.changePoint && q.changePoint.alarm) flags.push("Regime-change alarm (CUSUM) — market structure is shifting");
+  if (h5.disagreement > 0.14) flags.push("Models disagree — lower conviction");
+  if (q.varCvar && Math.abs(q.varCvar.var95) > 4) flags.push(`Elevated tail risk (VaR ${q.varCvar.var95}%/day)`);
+  if (Math.abs(pUp - 0.5) < 0.03) flags.push("Edge is thin — close to a coin-flip");
+
+  // Signal label (the algo verdict)
+  let label, tone;
+  if (pUp >= 0.60 && conf > 0.45 && flags.length === 0) { label = "STRONG BUY"; tone = "pos"; }
+  else if (pUp >= 0.55) { label = "BUY"; tone = "pos"; }
+  else if (pUp >= 0.515) { label = "ACCUMULATE"; tone = "pos"; }
+  else if (pUp > 0.485) { label = "HOLD / NEUTRAL"; tone = "neutral"; }
+  else if (pUp > 0.45) { label = "CAUTION"; tone = "warn"; }
+  else if (pUp > 0.40) { label = "REDUCE"; tone = "neg"; }
+  else { label = "STRONG SELL"; tone = "neg"; }
+  // downgrade a bullish call when multiple red flags fire
+  if (flags.length >= 2 && tone === "pos") { label = "CAUTION — mixed signals"; tone = "warn"; }
+
+  const dirMag = h5.predRet;
+  const direction = dirMag > 1 ? "UP" : dirMag < -1 ? "DOWN" : "STABLE";
+
+  const sections = [
+    { title: "TECHNICALS", score: pk.technical ?? 0, bullets: [
+      { t: `Regime: ${p.regime.label.replace("_", " ")}${p.regime.adx != null ? ` (ADX ${p.regime.adx.toFixed(0)} — ${p.regime.adx > 25 ? "trending" : "choppy"})` : ""}`, dir: bull(p.regime.trendScore) },
+      { t: `Trend persistence: Hurst ${p.regime.hurst.toFixed(2)} — ${p.regime.hurst > 0.55 ? "trend-following favored" : p.regime.hurst < 0.45 ? "mean-reversion favored" : "random walk"}`, dir: p.regime.hurst > 0.55 ? bull(p.regime.trendScore) : 0 },
+      { t: `Technical composite: ${(pk.technical ?? 0).toFixed(2)} on a −1…+1 scale`, dir: bull(pk.technical ?? 0) },
+      { t: `Volatility: ${q.garch ? (q.garch.sigmaNow * 100 * Math.sqrt(6.5 * 252)).toFixed(0) + "% annualized (GARCH)" : "—"}${q.varCvar ? `, 1-day VaR ${q.varCvar.var95}%` : ""}`, dir: 0 },
+    ] },
+    { title: "NEWS & SENTIMENT", score: pk.news ?? 0, bullets: [
+      { t: sd.news ? `${sd.news.count} recent headlines · net tone ${(pk.news ?? 0) >= 0.05 ? "positive" : (pk.news ?? 0) <= -0.05 ? "negative" : "neutral"} (${(pk.news ?? 0).toFixed(2)})` : "No symbol-tagged headlines in the current feed", dir: bull(pk.news ?? 0) },
+    ] },
+    { title: "PEERS & SECTOR", score: (pk.peer ?? 0) * 0.5 + (pk.sector ?? 0) * 0.5, bullets: [
+      { t: sd.sector ? `Sector ETF ${sd.sector.etf}: momentum ${pctTxt(sd.sector.etfMom)}, correlation ${sd.sector.rho.toFixed(2)} — ${sd.sector.etfMom >= 0 ? "tailwind" : "headwind"}` : "Sector data unavailable", dir: bull(pk.sector ?? 0) },
+      { t: (sd.peers || []).length ? `Peers: ${(sd.peers || []).slice(0, 3).map((x) => `${x.sym} ${pctTxt(x.mom)}`).join(", ")}` : "No peers mapped", dir: bull(pk.peer ?? 0) },
+      { t: `Cross-asset signal: ${(pk.peer ?? 0).toFixed(2)} (convergence pressure vs peers)`, dir: bull(pk.peer ?? 0) },
+    ] },
+    { title: "MACRO & RISK", score: pk.macro ?? 0, bullets: [
+      { t: sd.macro ? `VIX ${sd.macro.vix ?? "—"}, 10y-yield trend ${sd.macro.tnxTrend}, USD trend ${sd.macro.usdTrend} → macro ${(pk.macro ?? 0).toFixed(2)}` : `Macro score ${(pk.macro ?? 0).toFixed(2)}`, dir: bull(pk.macro ?? 0) },
+      { t: q.varCvar ? `Downside: 5% of days lose more than ${q.varCvar.var95}%; worst-case (CVaR) ${q.varCvar.cvar95}%` : "Risk metrics unavailable", dir: -1 },
+    ] },
+  ];
+
+  return {
+    signal: { label, tone },
+    verdict: { direction, magnitudePct: +Math.abs(dirMag).toFixed(1), horizon: "5-day", pUp: +(pUp * 100).toFixed(0), confidence: +(conf * 100).toFixed(0) },
+    forecast: { d1: { dir: h1.dir, pUp: +(h1.pUp * 100).toFixed(0), ret: +h1.predRet.toFixed(1) }, d5: { dir: h5.dir, pUp: +(h5.pUp * 100).toFixed(0), ret: +h5.predRet.toFixed(1) } },
+    crossScore: +(p.crossScore ?? 0).toFixed(2),
+    sections, flags,
+    summary: `${p.symbol}: ${label}. The model sees ${direction === "STABLE" ? "roughly flat" : direction.toLowerCase()} price action ~${pctTxt(dirMag)} over 5 days (${(pUp * 100).toFixed(0)}% chance up, ${(conf * 100).toFixed(0)}% confidence). ${flags.length ? "Watch: " + flags[0] + "." : "Signals are aligned."}`,
+  };
 }
 
 // Deterministic synthesis when the LLM is unavailable — a real read from the numeric signals.
@@ -93,6 +159,7 @@ function createOracle({ runtimeDir, getBars, priceAt, getNews = null, callModel 
     }
     let quant = null; try { quant = computeQuant(bars); } catch { /* optional */ }
     const payload = { ok: true, symbol, asOf: null, spot: fc.spot, regime, muBar: fc.muBar, sigBar: fc.sigBar, ou: fc.ou, g: fc.g, horizons: fc.horizons, crossScore: sig.crossScore, packages: sig.packages, signalDetail: sig.detail, weights: sig.weights, jarvis: llm, quant, model_ver: MODEL_VER };
+    try { payload.report = compileReport(payload); } catch { payload.report = null; }
     const sc = selfCheck(payload);
     payload.selfCheck = sc; payload.degraded = !sc.ok;
     return payload;
@@ -196,10 +263,24 @@ function createOracle({ runtimeDir, getBars, priceAt, getNews = null, callModel 
     const cone = fc.horizons.map((h) => ({ horizon: h.horizon, p05: h.p05, p50: h.p50, p95: h.p95, barsAhead: Math.round(h.tau * (barsPerDay / 6.5)) }));
     const actual = bars.slice(cut, cut + ahead + 1).map((b, i) => ({ i, t: b.t, c: b.c }));
     const finalPx = actual.length ? actual[actual.length - 1].c : null; const spot = past[past.length - 1].c;
-    const oneDay = fc.horizons.find((h) => h.horizon === "1d"); const realizedDir = finalPx != null ? Math.sign(finalPx - spot) : 0;
-    return { ok: true, symbol, asOf: past[past.length - 1].t, spot, regime: regime.label, dir: oneDay?.dir,
-      predRet5d: +((fc.horizons.find((h) => h.horizon === "5d")?.predRet) || 0).toFixed(2), realizedRet5d: finalPx != null ? +((finalPx / spot - 1) * 100).toFixed(2) : null,
-      hit: oneDay ? ((oneDay.dir === "LONG" ? 1 : -1) === realizedDir ? 1 : 0) : null, cone, actual, barsPerDay };
+    const h5 = fc.horizons.find((h) => h.horizon === "5d") || fc.horizons[fc.horizons.length - 1];
+    const realizedDir = finalPx != null ? Math.sign(finalPx - spot) : 0;
+    const dir = h5.dir;
+    // recommended option as-of the past date, then its realized worth 5 trading days later
+    let option = null;
+    const rec = recommendContract(h5, { r: 0.045, q: 0 });
+    if (rec && finalPx != null) {
+      const o = rec; const sigAnn = (o.impliedVol || 40) / 100; const Trem = Math.max(1, o.expiryDays - 5) / 365;
+      const val = bs(finalPx, o.strike, 0.045, 0, sigAnn, Trem, o.type).price;
+      const pnl = (val - o.premium) * 100; const pnlPct = o.premium > 0 ? (val / o.premium - 1) * 100 : 0;
+      option = { action: o.type === "call" ? "BUY CALL" : "BUY PUT", type: o.type, strike: o.strike, premium: o.premium, expiryDays: o.expiryDays,
+        exitValue: +val.toFixed(2), pnlPerContract: +pnl.toFixed(0), pnlPct: +pnlPct.toFixed(0), win: pnl > 0 };
+    }
+    return { ok: true, symbol, asOf: past[past.length - 1].t, spot: +spot.toFixed(2), finalPx: finalPx != null ? +finalPx.toFixed(2) : null,
+      regime: regime.label, dir, action: dir === "LONG" ? "BUY / LONG" : "SELL / SHORT",
+      predRet5d: +(h5.predRet || 0).toFixed(2), realizedRet5d: finalPx != null ? +((finalPx / spot - 1) * 100).toFixed(2) : null,
+      directionRight: h5 ? ((dir === "LONG" ? 1 : -1) === realizedDir ? 1 : 0) : null, hit: h5 ? ((dir === "LONG" ? 1 : -1) === realizedDir ? 1 : 0) : null,
+      option, cone, actual, barsPerDay };
   }
 
   function history(symbol, limit = 60) {

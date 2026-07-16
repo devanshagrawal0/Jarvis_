@@ -17,9 +17,44 @@ export interface OraclePayload {
   signalDetail: { peers?: { sym: string; rho: number; mom: number; kind: string }[]; sector?: { etf: string; rho: number; etfMom: number } | null; news?: { count: number; score: number } | null };
   jarvis: { pUp: number; bias: string; thesis: string } | null;
   quant?: Record<string, Record<string, unknown>> | null;
+  report?: OracleReport | null;
   horizons: OracleHorizon[]; asOf: number; selfCheck?: { ok: boolean; issues: string[] };
 }
 export interface OracleHistory { rows: { horizon: string; hit: number | null; abs_pct_err: number | null; made_at: number }[]; summary: { total: number; resolved: number; hitRate: number | null; mape: number | null } }
+export interface OracleReport {
+  signal: { label: string; tone: string };
+  verdict: { direction: string; magnitudePct: number; horizon: string; pUp: number; confidence: number };
+  crossScore: number; summary: string; flags: string[];
+  sections: { title: string; score: number; bullets: { t: string; dir: number }[] }[];
+}
+const toneColor = (t: string) => t === "pos" ? POS : t === "neg" ? NEG : t === "warn" ? WARN : "#9aa7b4";
+
+// The algo verdict card — labelled signal + up/down/stable + bullet-point proof per source.
+function AlgoReport({ r }: { r: OracleReport }) {
+  const sc = toneColor(r.signal.tone);
+  const dirColor = r.verdict.direction === "UP" ? POS : r.verdict.direction === "DOWN" ? NEG : WARN;
+  return (
+    <div className="axo-report">
+      <div className="axo-rp-hero">
+        <div className="axo-rp-signal" style={{ color: sc, borderColor: sc }}>{r.signal.label}</div>
+        <div className="axo-rp-verdict">
+          <div className="axo-rp-dir" style={{ color: dirColor }}>{r.verdict.direction === "UP" ? "▲" : r.verdict.direction === "DOWN" ? "▼" : "▬"} {r.verdict.direction} ~{r.verdict.magnitudePct}%<span> / {r.verdict.horizon}</span></div>
+          <div className="axo-rp-meta"><span>{r.verdict.pUp}% chance up</span><span className="axo-rp-conf">confidence <b>{r.verdict.confidence}%</b></span></div>
+        </div>
+      </div>
+      <p className="axo-rp-summary">{r.summary}</p>
+      <div className="axo-rp-sections">
+        {r.sections.map((s) => (
+          <div key={s.title} className="axo-rp-sec">
+            <div className="axo-rp-sec-h"><span>{s.title}</span><b style={{ color: s.score > 0.08 ? POS : s.score < -0.08 ? NEG : "#9aa7b4" }}>{s.score >= 0 ? "+" : ""}{s.score.toFixed(2)}</b></div>
+            {s.bullets.map((b, i) => <div key={i} className="axo-rp-bullet"><span className="axo-rp-mk" style={{ color: b.dir > 0 ? POS : b.dir < 0 ? NEG : "#6b7683" }}>{b.dir > 0 ? "▲" : b.dir < 0 ? "▼" : "•"}</span>{b.t}</div>)}
+          </div>
+        ))}
+      </div>
+      {r.flags.length ? <div className="axo-rp-flags"><span className="axo-rp-flags-h">⚠ WATCH</span>{r.flags.map((f, i) => <div key={i} className="axo-rp-flag">{f}</div>)}</div> : null}
+    </div>
+  );
+}
 
 const money = (n: number | null | undefined, d = 2) => n == null || !Number.isFinite(n) ? "—" : n.toLocaleString(undefined, { minimumFractionDigits: d, maximumFractionDigits: d });
 const pctS = (n: number | null | undefined, d = 1) => n == null || !Number.isFinite(n) ? "—" : `${n >= 0 ? "+" : ""}${n.toFixed(d)}%`;
@@ -66,6 +101,7 @@ export function OracleCard({ o, loading, onExpand, onRefresh }: { o: OraclePaylo
       </div>
       {!o ? <div className="axo-empty">{loading ? "Computing forecast…" : "No forecast."}</div> : (
         <>
+          {o.report ? <div className="axo-signal-chip" style={{ color: toneColor(o.report.signal.tone), borderColor: toneColor(o.report.signal.tone) }}>{o.report.signal.label} · {o.report.verdict.direction} ~{o.report.verdict.magnitudePct}% / 5d</div> : null}
           <div className="axo-regime"><span className="axo-reg-dot" style={{ background: rc }} /><b style={{ color: rc }}>{o.regime.label.replace("_", " ")}</b><em>conf {(o.regime.confidence * 100).toFixed(0)}%</em>{o.degraded && <span className="axo-degraded">degraded</span>}</div>
           {oneDay && (
             <div className="axo-call">
@@ -106,6 +142,8 @@ export function OracleOverlay({ o, hist, bars, loading, resolvedNote, onClose, o
         </div>
         {resolvedNote && <div className="axo-resolved">✓ {resolvedNote}</div>}
         {!o ? <div className="axo-empty" style={{ padding: 40 }}>{loading ? "Computing…" : "No forecast."}</div> : (
+          <div className="axo-full-scroll">
+          {o.report ? <AlgoReport r={o.report} /> : null}
           <div className="axo-full-body">
             {/* left: horizon table + detail */}
             <div className="axo-col">
@@ -189,6 +227,7 @@ export function OracleOverlay({ o, hist, bars, loading, resolvedNote, onClose, o
               <BacktestPanel symbol={o.symbol} />
               <div className="axo-hint">Click ↻ Refresh on the next session to resolve these calls against realized prices and self-correct.</div>
             </div>
+          </div>
           </div>
         )}
         <style>{OVERLAY_CSS}{VIZ_CSS}</style>
@@ -274,6 +313,7 @@ export const ORACLE_CARD_CSS = `
 .axo-mini { background:var(--ax-surface); border:1px solid var(--ax-bd); color:var(--ax-mut); border-radius:4px; padding:2px 7px; font-size:11px; cursor:pointer; font-family:var(--ax-sans); }
 .axo-mini:hover { border-color:var(--ax-acc); color:var(--ax-acc); }
 .axo-empty { color:var(--ax-mut); font-size:11px; padding:10px 2px; }
+.axo-signal-chip { display:inline-block; font-family:var(--ax-mono); font-size:11px; font-weight:700; letter-spacing:.03em; border:1px solid; border-radius:5px; padding:4px 9px; margin-bottom:8px; }
 .axo-regime { display:flex; align-items:center; gap:7px; margin-bottom:8px; font-size:12px; }
 .axo-reg-dot { width:8px; height:8px; border-radius:2px; }
 .axo-regime b { font-weight:700; letter-spacing:.02em; } .axo-regime em { font-style:normal; color:var(--ax-dim); font-size:10px; }
@@ -301,7 +341,25 @@ const OVERLAY_CSS = `
 .axo-full-actions { margin-left:auto; display:flex; align-items:center; gap:10px; }
 .axo-x { cursor:pointer; color:var(--ax-mut,#9aa7b4); font-size:15px; } .axo-x:hover { color:${NEG}; }
 .axo-resolved { padding:8px 16px; background:color-mix(in srgb, ${POS} 12%, transparent); color:${POS}; font-size:11.5px; border-bottom:1px solid var(--ax-bd,#20303f); }
-.axo-full-body { display:grid; grid-template-columns:1fr 1fr; gap:16px; padding:16px; overflow-y:auto; }
+.axo-full-scroll { overflow-y:auto; }
+.axo-full-body { display:grid; grid-template-columns:1fr 1fr; gap:16px; padding:16px; }
+/* Algo verdict report */
+.axo-report { padding:16px 16px 4px; }
+.axo-rp-hero { display:flex; align-items:stretch; gap:16px; margin-bottom:10px; }
+.axo-rp-signal { flex:0 0 auto; display:flex; align-items:center; padding:0 20px; font-family:var(--ax-disp,inherit); font-size:22px; font-weight:800; letter-spacing:.04em; border:1.5px solid; border-radius:8px; text-align:center; line-height:1.05; }
+.axo-rp-verdict { flex:1; display:flex; flex-direction:column; justify-content:center; gap:5px; }
+.axo-rp-dir { font-family:var(--ax-mono); font-size:20px; font-weight:800; } .axo-rp-dir span { color:var(--ax-dim,#6b7683); font-size:12px; font-weight:400; }
+.axo-rp-meta { display:flex; gap:18px; font-size:12px; color:var(--ax-mut,#9aa7b4); font-family:var(--ax-mono); }
+.axo-rp-conf b { color:var(--ax-tx,#e6edf3); }
+.axo-rp-summary { font-size:12px; line-height:1.5; color:var(--ax-tx,#e6edf3); margin:0 0 12px; background:#0b0f16; border-left:2px solid ${CY}; padding:9px 12px; border-radius:0 4px 4px 0; }
+.axo-rp-sections { display:grid; grid-template-columns:1fr 1fr; gap:10px 18px; }
+.axo-rp-sec-h { display:flex; justify-content:space-between; align-items:baseline; font-size:9px; font-weight:700; letter-spacing:.08em; color:var(--ax-cydim,#4d9fd1); margin-bottom:4px; border-bottom:1px solid var(--ax-hair,rgba(255,255,255,.05)); padding-bottom:3px; }
+.axo-rp-sec-h b { font-family:var(--ax-mono); }
+.axo-rp-bullet { display:flex; gap:7px; font-size:11px; line-height:1.45; color:var(--ax-mut,#9aa7b4); padding:2px 0; }
+.axo-rp-mk { flex:0 0 auto; font-size:9px; }
+.axo-rp-flags { margin-top:11px; background:color-mix(in srgb, ${WARN} 8%, transparent); border:1px solid color-mix(in srgb, ${WARN} 30%, transparent); border-radius:6px; padding:8px 11px; }
+.axo-rp-flags-h { font-size:9px; font-weight:700; letter-spacing:.06em; color:${WARN}; }
+.axo-rp-flag { font-size:10.5px; color:var(--ax-mut,#9aa7b4); margin-top:3px; }
 .axo-col { min-width:0; display:flex; flex-direction:column; gap:6px; }
 .axo-sec { font-size:9px; font-weight:700; letter-spacing:.09em; color:var(--ax-cydim,#4d9fd1); margin:8px 0 4px; display:flex; justify-content:space-between; align-items:baseline; }
 .axo-sec:first-child { margin-top:0; }
