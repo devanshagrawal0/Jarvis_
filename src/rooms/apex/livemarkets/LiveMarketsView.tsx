@@ -460,6 +460,7 @@ function MarketStats({ quote, fund, bars, atr, rv, iv }: { quote: Quote | null; 
   ];
   // 52-week range position — context beside the bare hi/lo (falls back to the loaded bars for crypto).
   const barLo = bars.length ? Math.min(...bars.map((b) => b.l)) : null, barHi = bars.length ? Math.max(...bars.map((b) => b.h)) : null;
+  const has52 = fund?.low52 != null && fund?.high52 != null;   // only label "52-week" when we truly have it
   const lo = fund?.low52 ?? barLo, hi = fund?.high52 ?? barHi;
   const posPct = last != null && lo != null && hi != null && hi > lo ? Math.max(0, Math.min(100, ((last - lo) / (hi - lo)) * 100)) : null;
   return (
@@ -467,7 +468,7 @@ function MarketStats({ quote, fund, bars, atr, rv, iv }: { quote: Quote | null; 
       <div className="axt-ph">MARKET STATS</div>
       <div className="axt-stats">{rows.map(([k, v]) => <div key={k} className="axt-statrow" title={TIPS[k]}><span className={TIPS[k] ? "axt-tip" : ""}>{k}</span><b>{v}</b></div>)}</div>
       <div className="axt-52w">
-        <div className="axt-52w-h"><span>52-WEEK RANGE</span>{posPct != null && <em>{posPct.toFixed(0)}% of range</em>}</div>
+        <div className="axt-52w-h"><span title={has52 ? undefined : "52-week data unavailable on the free feed — showing the range of loaded bars"}>{has52 ? "52-WEEK RANGE" : "RANGE · LOADED BARS"}</span>{posPct != null && <em>{posPct.toFixed(0)}% of range</em>}</div>
         <div className="axt-52w-bar">{posPct != null && <span className="axt-52w-mark" style={{ left: `${posPct}%` }} />}</div>
         <div className="axt-52w-ends"><b>{num(lo)}</b><b>{num(hi)}</b></div>
       </div>
@@ -836,7 +837,7 @@ const TERM_CSS = `
 .axt-shs span { font-size:7.5px; letter-spacing:.05em; color:var(--ax-dim); }
 .axt-shs b { font-family:var(--ax-mono); font-size:12px; font-weight:700; }
 
-.axt-chartbar { display:flex; align-items:center; gap:10px; background:var(--ax-panel); border:1px solid var(--ax-bd); border-radius:9px; padding:5px 9px; flex-shrink:0; }
+.axt-chartbar { display:flex; align-items:center; gap:10px; background:var(--ax-panel-grad); border:1px solid var(--ax-bd); border-radius:9px; padding:5px 9px; flex-shrink:0; box-shadow:var(--ax-panel-glow); }
 .axt-tfs, .axt-indtoggles { display:flex; gap:2px; }
 .axt-tfs button, .axt-indtoggles button { background:none; border:1px solid transparent; color:var(--ax-dim); border-radius:5px; min-width:26px; min-height:26px; padding:4px 8px; font-size:10.5px; font-weight:700; font-family:var(--ax-mono); }
 .axt-tfs button:hover, .axt-indtoggles button:hover { color:var(--ax-tx); background:var(--ax-surface); }
@@ -848,7 +849,7 @@ const TERM_CSS = `
 .axt-replay { background:color-mix(in srgb, ${PUR} 14%, transparent); border:1px solid color-mix(in srgb, ${PUR} 45%, transparent); color:${PUR}; border-radius:7px; padding:6px 12px; font-size:11px; font-weight:700; }
 .axt-replay.on { background:${PUR}; color:#120a24; }
 
-.axt-chartzone { flex:1; min-height:0; display:flex; gap:6px; background:var(--ax-panel); border:1px solid var(--ax-bd); border-radius:11px; padding:8px; }
+.axt-chartzone { flex:1; min-height:0; display:flex; gap:6px; background:var(--ax-panel-grad); border:1px solid var(--ax-bd); border-radius:10px; padding:8px; box-shadow:var(--ax-panel-glow); }
 .axt-drawtools { display:flex; flex-direction:column; gap:3px; }
 .axt-drawtools button { width:26px; height:26px; background:var(--ax-surface); border:1px solid var(--ax-bdsoft); color:var(--ax-mut); border-radius:6px; font-size:12px; display:flex; align-items:center; justify-content:center; }
 .axt-drawtools button:hover { border-color:var(--ax-bdglow); color:var(--ax-acc); }

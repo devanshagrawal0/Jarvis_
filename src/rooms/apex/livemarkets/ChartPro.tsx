@@ -128,10 +128,12 @@ export function ChartPro({ bars, up, indicators, replayActive, replaySpeed, repl
     S.current.equity = chart.addSeries(LineSeries, { color: COL.equity, lineWidth: 2, priceScaleId: "eq", priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false }, 0);
     chart.priceScale("eq").applyOptions({ scaleMargins: { top: 0.05, bottom: 0.55 }, visible: false });
 
-    // Oracle forecast cones — p05 / p50 / p95 projected forward (share the price scale).
-    S.current.coneHi = chart.addSeries(LineSeries, { color: "rgba(224,149,43,.45)", lineWidth: 1, lineStyle: LineStyle.Dotted, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false }, 0);
-    S.current.coneMid = chart.addSeries(LineSeries, { color: "rgba(224,149,43,.9)", lineWidth: 2, lineStyle: LineStyle.Dashed, priceLineVisible: false, lastValueVisible: true, crosshairMarkerVisible: false }, 0);
-    S.current.coneLo = chart.addSeries(LineSeries, { color: "rgba(224,149,43,.45)", lineWidth: 1, lineStyle: LineStyle.Dotted, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false }, 0);
+    // Oracle forecast cones — p05 / p50 / p95 projected forward (share the price scale, but do NOT
+    // drive autoscale: the 5d p95 would otherwise stretch the y-range and compress the candles).
+    const noScale = { autoscaleInfoProvider: () => null };
+    S.current.coneHi = chart.addSeries(LineSeries, { color: "rgba(224,149,43,.45)", lineWidth: 1, lineStyle: LineStyle.Dotted, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false, ...noScale }, 0);
+    S.current.coneMid = chart.addSeries(LineSeries, { color: "rgba(224,149,43,.9)", lineWidth: 2, lineStyle: LineStyle.Dashed, priceLineVisible: false, lastValueVisible: true, crosshairMarkerVisible: false, ...noScale }, 0);
+    S.current.coneLo = chart.addSeries(LineSeries, { color: "rgba(224,149,43,.45)", lineWidth: 1, lineStyle: LineStyle.Dotted, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false, ...noScale }, 0);
 
     // Volume pane (1)
     S.current.vol = chart.addSeries(HistogramSeries, { priceFormat: { type: "volume" }, priceScaleId: "", priceLineVisible: false, lastValueVisible: false }, 1);
