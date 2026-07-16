@@ -266,7 +266,7 @@ function createOracle({ runtimeDir, getBars, priceAt, getNews = null, callModel 
       const tau = Math.round(h.tau); let n = 0, hits = 0, cov = 0, brier = 0, mape = 0, pin = 0;
       const warm = 60; const step = Math.max(1, Math.floor((bars.length - warm - tau) / 120));
       for (let i = warm; i + tau < bars.length; i += step) {
-        const past = bars.slice(0, i + 1); const regime = detectRegime(past); const fc = forecast(past, regime, {});
+        const past = bars.slice(0, i + 1); const regime = detectRegime(past); const fc = forecast(past, regime, {}, { withQx: false });
         if (!fc.ok) continue; const hf = fc.horizons.find((x) => Math.abs(x.tau - h.tau) < 0.01) || fc.horizons[0];
         const realized = bars[i + tau].c; const S0 = past[past.length - 1].c;
         n++; if (Math.sign(hf.p50 - S0) === Math.sign(realized - S0)) hits++;

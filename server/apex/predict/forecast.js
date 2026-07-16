@@ -3,6 +3,7 @@
 // Horizons on hourly bars: 1h/5h/12h/1d/5d → tau 1/5/12/6.5/32.5.
 
 const { normCdf, normInv, normPdf, logRets, ema, std, clamp, nz } = require("./mathx");
+const { rangeVol, kaufmanER, dfaHurst, bocpd } = require("./quantx");
 
 const HORIZONS = [
   { key: "1h", tau: 1, overnights: 0 },
@@ -78,8 +79,24 @@ function horizonForecast(S0, muBar, sigBar, h, regime, cal) {
   };
 }
 
+// Quant Brain v2 feature block — cheap, causal (uses only bars up to now), computed once per forecast
+// so the walk-forward backtest exercises exactly what live prediction sees. Caps keep it fast.
+function computeQx(bars, closes, rets) {
+  const rv = rangeVol(bars, 30);                       // Yang-Zhang / Rogers-Satchell range vol
+  const er = kaufmanER(closes, 20);                    // trend efficiency 0..1 (1=clean trend)
+  const H = dfaHurst(rets.slice(-256)).hurst;          // DFA Hurst (>0.5 trending, <0.5 mean-reverting)
+  const bo = bocpd(rets.slice(-300), 150);             // regime-fragility posterior
+  return {
+    rangeVarBar: rv ? rv.rs : null,                    // per-bar variance, drift-independent
+    yzVolDaily: rv ? rv.yzVolDaily : null,
+    er, hurst: H,
+    fragility: clamp(nz(bo.changepointProb), 0, 1),    // P(regime just broke)
+    runLength: bo.expectedRunLength,
+  };
+}
+
 // Full forecast across all horizons. regime from regime.js; cals: {horizonKey: calibrationRow}.
-function forecast(bars, regime, cals = {}) {
+function forecast(bars, regime, cals = {}, opts = {}) {
   const closes = bars.map((b) => b.c);
   const rets = logRets(closes);
   if (rets.length < 20) return { ok: false, reason: "insufficient history", horizons: [] };
@@ -94,8 +111,15 @@ function forecast(bars, regime, cals = {}) {
   const DRIFT_HAIRCUT = 0.45;
   const muBar = (g * muMom + (1 - g) * muMr) * DRIFT_HAIRCUT;
   const sigBar = Math.sqrt(ewmaVar(rets, 0.97)) || std(rets);
+  // Quant Brain v2 feature block (Yang-Zhang vol, trend character, BOCPD fragility, liquidity).
+  // A/B-tested feeding these into drift/vol: an ER/Hurst/fragility *drift* gate REGRESSED the
+  // walk-forward hit-rate (1d 53.6%→52.0%) and a vol blend was a wash — so per the ship-only-if-it-
+  // improves gate they do NOT touch the (proven, near-efficient-ceiling) price forecast. They are
+  // surfaced in the report and drive trust-scaled sizing + the news/cross-asset layer instead, which
+  // is where free-data edge actually lives.
+  const qx = opts.withQx === false ? null : computeQx(bars, closes, rets);
   const horizons = HORIZONS.map((h) => horizonForecast(S0, muBar, sigBar, h, regime, cals[h.key]));
-  return { ok: true, spot: S0, muBar, sigBar, ou, g, horizons };
+  return { ok: true, spot: S0, muBar, sigBar, ou, g, qx, horizons };
 }
 
 module.exports = { forecast, horizonForecast, ewmaVar, ouHalfLife, HORIZONS };
