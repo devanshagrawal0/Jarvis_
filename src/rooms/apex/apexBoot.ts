@@ -1,127 +1,109 @@
-import * as THREE from "three";
+// APEX — loading screen (~4s), pure Canvas2D (no WebGL → no GPU lag). On-brand for a trading
+// terminal: an "APEX COMPOSITE" market line draws itself left→right over a faint grid with a live
+// price ticker and a leading glow dot, on near-black. The APEX wordmark + progress HUD live in the
+// DOM overlay (ApexRoom), updated imperatively via onProgress.
+// Signature preserved: startApexBoot(canvas, onDone, onProgress?) → stop().
 
-// APEX — 3D cinematic loading screen (~5s), premium/institutional. A globe of market nodes assembles
-// from scattered points and rotates slowly under thin great-circle arcs — monochrome ice-blue on pure
-// black, restrained (no neon). Smooth: the point cloud assembles then only the group rotates; the HUD
-// (ApexRoom) is updated imperatively via onProgress, never through per-frame React state.
-// Signature: startApexBoot(canvas, onDone, onProgress?) → stop().
+const DURATION = 4000; // ms
+const PTS = 260;
 
-const DURATION = 5000; // ms
-const N = 1700;        // globe nodes
-const R = 11;          // globe radius
-
-const easeInOut = (t: number) => (t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2);
 const clamp01 = (x: number) => Math.max(0, Math.min(1, x));
 
 export function startApexBoot(canvas: HTMLCanvasElement, onDone: () => void, onProgress?: (t: number) => void): () => void {
   const reduced = window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) { const t = setTimeout(() => { onProgress?.(1); onDone(); }, 200); return () => clearTimeout(t); }
 
-  let renderer: THREE.WebGLRenderer;
-  try {
-    renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: false, powerPreference: "high-performance" });
-  } catch { const t = setTimeout(() => { onProgress?.(1); onDone(); }, 200); return () => clearTimeout(t); }
-  renderer.setPixelRatio(Math.min(1.75, window.devicePixelRatio || 1));
-  renderer.setClearColor(0x000104, 1);
+  const dpr = Math.min(2, window.devicePixelRatio || 1);
+  let W = 0, H = 0;
+  const resize = () => {
+    W = canvas.clientWidth || window.innerWidth; H = canvas.clientHeight || window.innerHeight;
+    canvas.width = Math.round(W * dpr); canvas.height = Math.round(H * dpr);
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  };
+  resize();
+  window.addEventListener("resize", resize);
 
-  const size = () => ({ w: canvas.clientWidth || window.innerWidth, h: canvas.clientHeight || window.innerHeight });
-  let { w, h } = size();
-  renderer.setSize(w, h, false);
-
-  const scene = new THREE.Scene();
-  const camera = new THREE.PerspectiveCamera(46, w / h, 0.1, 200);
-
-  let seed = 20240716;
+  // deterministic APEX-composite series: gentle up-drifting random walk, smoothed
+  let seed = 7654321;
   const rnd = () => { seed = (seed * 1103515245 + 12345) & 0x7fffffff; return seed / 0x7fffffff; };
-
-  const group = new THREE.Group();
-  scene.add(group);
-
-  // ── globe nodes: Fibonacci sphere targets, scattered starts (assemble animation) ──
-  const target = new Float32Array(N * 3), startP = new Float32Array(N * 3);
-  const positions = new Float32Array(N * 3);
-  for (let i = 0; i < N; i++) {
-    const y = 1 - (i / (N - 1)) * 2, r = Math.sqrt(Math.max(0, 1 - y * y)), th = i * 2.399963229;
-    target[i * 3] = Math.cos(th) * r * R; target[i * 3 + 1] = y * R; target[i * 3 + 2] = Math.sin(th) * r * R;
-    const sr = 26 + rnd() * 20, sa = rnd() * 6.283, sb = Math.acos(2 * rnd() - 1);
-    startP[i * 3] = Math.sin(sb) * Math.cos(sa) * sr; startP[i * 3 + 1] = Math.cos(sb) * sr; startP[i * 3 + 2] = Math.sin(sb) * Math.sin(sa) * sr;
-    positions[i * 3] = startP[i * 3]; positions[i * 3 + 1] = startP[i * 3 + 1]; positions[i * 3 + 2] = startP[i * 3 + 2];
-  }
-  const pgeo = new THREE.BufferGeometry();
-  const posAttr = new THREE.BufferAttribute(positions, 3);
-  pgeo.setAttribute("position", posAttr);
-  const pmat = new THREE.PointsMaterial({ color: 0xbcdcf0, size: 0.085, sizeAttenuation: true, transparent: true, opacity: 0, depthWrite: false });
-  const nodes = new THREE.Points(pgeo, pmat);
-  group.add(nodes);
-
-  // ── thin great-circle arcs between random nodes (static, faint) ──
-  const arcSegs: number[] = [];
-  const va = new THREE.Vector3(), vb = new THREE.Vector3(), vp = new THREE.Vector3();
-  for (let k = 0; k < 90; k++) {
-    const i = (rnd() * N) | 0, j = (rnd() * N) | 0; if (i === j) continue;
-    va.set(target[i * 3], target[i * 3 + 1], target[i * 3 + 2]);
-    vb.set(target[j * 3], target[j * 3 + 1], target[j * 3 + 2]);
-    const STEPS = 18; let prev: THREE.Vector3 | null = null;
-    for (let s = 0; s <= STEPS; s++) {
-      const u = s / STEPS;
-      vp.copy(va).lerp(vb, u).normalize().multiplyScalar(R * (1 + 0.12 * Math.sin(u * Math.PI)));
-      if (prev) arcSegs.push(prev.x, prev.y, prev.z, vp.x, vp.y, vp.z);
-      prev = vp.clone();
-    }
-  }
-  const agEo = new THREE.BufferGeometry();
-  agEo.setAttribute("position", new THREE.BufferAttribute(new Float32Array(arcSegs), 3));
-  const amat = new THREE.LineBasicMaterial({ color: 0x3f86ac, transparent: true, opacity: 0 });
-  const arcs = new THREE.LineSegments(agEo, amat);
-  group.add(arcs);
-
-  // faint outer halo ring (equator), subtle
-  const halo = new THREE.Mesh(new THREE.RingGeometry(R * 1.28, R * 1.30, 128), new THREE.MeshBasicMaterial({ color: 0x2ec7ff, transparent: true, opacity: 0, side: THREE.DoubleSide }));
-  halo.rotation.x = Math.PI / 2; group.add(halo);
-
-  group.rotation.x = 0.32;
-
-  const onResize = () => { const s = size(); w = s.w; h = s.h; camera.aspect = w / h; camera.updateProjectionMatrix(); renderer.setSize(w, h, false); };
-  window.addEventListener("resize", onResize);
+  const raw: number[] = []; let v = 0;
+  for (let i = 0; i < PTS; i++) { v += (rnd() - 0.44) * 1.0 + 0.05; raw.push(v); }
+  // smooth
+  const series: number[] = [];
+  for (let i = 0; i < PTS; i++) { let s = 0, n = 0; for (let k = -3; k <= 3; k++) { const j = i + k; if (j >= 0 && j < PTS) { s += raw[j]; n++; } } series.push(s / n); }
+  const lo = Math.min(...series), hi = Math.max(...series), span = hi - lo || 1;
+  const norm = series.map((x) => (x - lo) / span); // 0..1
+  const base = 1000, priceOf = (n01: number) => base + n01 * 148; // "index" price range ~1000-1148
 
   const start = performance.now();
-  let raf = 0; let done = false;
+  let raf = 0, done = false;
   const finish = () => { if (done) return; done = true; onProgress?.(1); try { onDone(); } catch { /* noop */ } };
   if (reduced) { onProgress?.(1); const t = setTimeout(finish, 300); return () => { clearTimeout(t); cleanup(); }; }
+
+  const AX_R = 66; // right price-axis gutter
 
   const frame = (now: number) => {
     const t = clamp01((now - start) / DURATION);
     onProgress?.(t);
 
-    // assemble the globe over the first ~62%, then hold
-    const a = easeInOut(clamp01(t / 0.62));
-    if (a < 1) { for (let i = 0; i < N * 3; i++) positions[i] = startP[i] + (target[i] - startP[i]) * a; posAttr.needsUpdate = true; }
-    else if (positions[0] !== target[0]) { positions.set(target); posAttr.needsUpdate = true; }
+    ctx.clearRect(0, 0, W, H);
+    // backdrop
+    const bg = ctx.createLinearGradient(0, 0, 0, H);
+    bg.addColorStop(0, "#03080f"); bg.addColorStop(1, "#01040a");
+    ctx.fillStyle = bg; ctx.fillRect(0, 0, W, H);
 
-    // slow cinematic rotation + gentle push-in
-    group.rotation.y = t * 0.9;
-    const push = easeInOut(t);
-    camera.position.set(Math.sin(t * 0.5) * 3, 3.5 - push * 1.5, 42 - push * 12);
-    camera.lookAt(0, 0.5, 0);
+    const padL = 40, padR = AX_R, padT = H * 0.16, padB = H * 0.16;
+    const plotW = W - padL - padR, plotH = H - padT - padB;
+    const X = (i: number) => padL + (i / (PTS - 1)) * plotW;
+    const Y = (n01: number) => padT + (1 - n01) * plotH;
 
-    // fades
-    pmat.opacity = 0.15 + 0.75 * clamp01(t / 0.25);
-    amat.opacity = 0.16 * clamp01((t - 0.35) / 0.3);
-    (halo.material as THREE.MeshBasicMaterial).opacity = 0.5 * clamp01((t - 0.55) / 0.25);
+    // faint grid + right price scale
+    ctx.lineWidth = 1; ctx.font = "10px ui-monospace, monospace"; ctx.textBaseline = "middle";
+    for (let g = 0; g <= 4; g++) {
+      const yy = padT + (g / 4) * plotH;
+      ctx.strokeStyle = "rgba(120,160,190,0.06)"; ctx.beginPath(); ctx.moveTo(padL, yy); ctx.lineTo(W - padR, yy); ctx.stroke();
+      const price = priceOf(1 - g / 4);
+      ctx.fillStyle = "rgba(120,150,175,0.45)"; ctx.textAlign = "left";
+      ctx.fillText(price.toFixed(0), W - padR + 10, yy);
+    }
 
-    renderer.render(scene, camera);
+    const rev = Math.max(1, Math.floor(t * (PTS - 1)));
+    // area fill under the revealed line
+    ctx.beginPath(); ctx.moveTo(X(0), Y(norm[0]));
+    for (let i = 1; i <= rev; i++) ctx.lineTo(X(i), Y(norm[i]));
+    ctx.lineTo(X(rev), H - padB); ctx.lineTo(X(0), H - padB); ctx.closePath();
+    const area = ctx.createLinearGradient(0, padT, 0, H - padB);
+    area.addColorStop(0, "rgba(46,199,255,0.14)"); area.addColorStop(1, "rgba(46,199,255,0.0)");
+    ctx.fillStyle = area; ctx.fill();
+
+    // the line
+    ctx.beginPath(); ctx.moveTo(X(0), Y(norm[0]));
+    for (let i = 1; i <= rev; i++) ctx.lineTo(X(i), Y(norm[i]));
+    ctx.strokeStyle = "#63c6ec"; ctx.lineWidth = 1.6; ctx.lineJoin = "round";
+    ctx.shadowColor = "rgba(46,199,255,0.5)"; ctx.shadowBlur = 8; ctx.stroke(); ctx.shadowBlur = 0;
+
+    // leading glow dot + a vertical scan line
+    const lx = X(rev), ly = Y(norm[rev]);
+    ctx.strokeStyle = "rgba(99,198,236,0.16)"; ctx.beginPath(); ctx.moveTo(lx, padT); ctx.lineTo(lx, H - padB); ctx.stroke();
+    ctx.beginPath(); ctx.arc(lx, ly, 3.4, 0, 6.283); ctx.fillStyle = "#a9e2f7"; ctx.shadowColor = "#2ec7ff"; ctx.shadowBlur = 12; ctx.fill(); ctx.shadowBlur = 0;
+
+    // APEX composite label + live-ish price near the dot
+    const price = priceOf(norm[rev]);
+    const chg = (norm[rev] - norm[0]) * (span / (base)) * 100 + norm[rev] * 1.2; // small positive-ish %
+    ctx.textAlign = "left"; ctx.font = "600 11px ui-monospace, monospace";
+    ctx.fillStyle = "rgba(150,180,205,0.7)"; ctx.fillText("APEX COMPOSITE", padL, padT - 14);
+    ctx.font = "700 15px ui-monospace, monospace"; ctx.fillStyle = "#dcecf7";
+    const label = price.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    ctx.fillText(label, padL, padT - 32);
+    ctx.font = "600 11px ui-monospace, monospace"; ctx.fillStyle = "#4fd39a";
+    ctx.fillText("▲ " + chg.toFixed(2) + "%", padL + ctx.measureText(label).width + 12, padT - 30);
+
     if (t >= 1) { finish(); return; }
     raf = requestAnimationFrame(frame);
   };
   raf = requestAnimationFrame(frame);
 
-  function cleanup() {
-    cancelAnimationFrame(raf);
-    window.removeEventListener("resize", onResize);
-    try {
-      pgeo.dispose(); pmat.dispose(); agEo.dispose(); amat.dispose();
-      (halo.geometry as THREE.BufferGeometry).dispose(); (halo.material as THREE.Material).dispose();
-      renderer.dispose();
-    } catch { /* noop */ }
-  }
+  function cleanup() { cancelAnimationFrame(raf); window.removeEventListener("resize", resize); }
   return () => cleanup();
 }
