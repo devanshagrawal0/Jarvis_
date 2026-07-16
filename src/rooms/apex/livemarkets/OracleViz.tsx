@@ -213,7 +213,45 @@ export function NewsIntel({ symbol, onPick }: { symbol: string; onPick: (s: stri
   );
 }
 
+/* 9. NEWS STUDY — empirical payoff of each event type (fills in as the archive ages). */
+interface StudyRow { event: string; n: number; avgFwd5d: number; sentimentHit: number }
+interface StudyData { logged: number; aged: number; note?: string; byEvent: StudyRow[] }
+export function NewsStudy({ symbol }: { symbol: string }) {
+  const [d, setD] = useState<StudyData | null>(null);
+  useEffect(() => { let dead = false; setD(null); fetch(`/api/apex/predict/${encodeURIComponent(symbol)}/newsstudy`).then((r) => r.json()).then((j) => { if (!dead && j && j.ok) setD(j); }).catch(() => {}); return () => { dead = true; }; }, [symbol]);
+  if (!d) return null;
+  return (
+    <div className="axv-ns">
+      <div className="axv-ns-h">EVENT PAYOFF STUDY <em>{d.logged} logged · {d.aged} aged</em></div>
+      {d.byEvent.length === 0 ? (
+        <div className="axv-ns-acc">
+          <div className="axv-ns-bar"><span style={{ width: `${Math.min(100, (d.aged / 10) * 100)}%` }} /></div>
+          <div className="axv-ns-note">{d.note || "Accumulating…"}</div>
+        </div>
+      ) : (
+        <div className="axv-ns-tbl">
+          <div className="axv-ns-tr axv-ns-th"><span>EVENT</span><span className="r">N</span><span className="r">AVG 5D</span><span className="r">HIT</span></div>
+          {d.byEvent.slice(0, 8).map((e) => (
+            <div key={e.event} className="axv-ns-tr"><span>{e.event.replace(/_/g, " ")}</span><span className="r">{e.n}</span><span className="r" style={{ color: e.avgFwd5d >= 0 ? POS : NEG }}>{e.avgFwd5d >= 0 ? "+" : ""}{e.avgFwd5d}%</span><span className="r" style={{ color: e.sentimentHit >= 55 ? POS : e.sentimentHit <= 45 ? NEG : "#9aa7b4" }}>{e.sentimentHit}%</span></div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export const VIZ_CSS = `
+.axv-ns { background:#0b0f16; border:1px solid var(--ax-bd,#20303f); border-radius:6px; padding:9px 11px; }
+.axv-ns-h { font-size:8.5px; font-weight:700; letter-spacing:.06em; color:var(--ax-cydim,#4d9fd1); display:flex; justify-content:space-between; align-items:baseline; margin-bottom:7px; }
+.axv-ns-h em { font-style:normal; color:var(--ax-dim,#6b7683); font-family:var(--ax-mono); font-weight:500; }
+.axv-ns-acc { }
+.axv-ns-bar { height:5px; background:var(--ax-surface,#0b0f16); border:1px solid var(--ax-bd,#20303f); border-radius:3px; overflow:hidden; margin-bottom:6px; }
+.axv-ns-bar span { display:block; height:100%; background:${CY}; transition:width .3s; }
+.axv-ns-note { font-size:10px; color:var(--ax-dim,#6b7683); line-height:1.4; }
+.axv-ns-tbl { font-family:var(--ax-mono); font-size:10.5px; }
+.axv-ns-tr { display:grid; grid-template-columns:1.6fr .5fr .8fr .6fr; gap:6px; padding:3px 2px; border-bottom:1px solid var(--ax-hair,rgba(255,255,255,.05)); }
+.axv-ns-tr .r { text-align:right; } .axv-ns-th { color:var(--ax-dim,#6b7683); font-size:8px; }
+.axv-ns-tr span:first-child { text-transform:capitalize; color:var(--ax-mut,#9aa7b4); }
 .axv-ni-empty { padding:14px; color:var(--ax-dim,#6b7683); font-size:11px; }
 .axv-ni-hero { display:flex; align-items:center; gap:14px; flex-wrap:wrap; margin-bottom:9px; }
 .axv-ni-score { font-family:var(--ax-mono); font-size:22px; font-weight:800; }

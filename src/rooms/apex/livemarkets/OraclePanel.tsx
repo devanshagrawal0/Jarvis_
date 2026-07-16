@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { Bar } from "../apex-data";
-import { MonteCarloFan, ContagionGraph, RegimeRibbon, ReliabilityCurve, EdgeDecay, WhatIf, TimeMachine, NewsIntel, VIZ_CSS } from "./OracleViz";
+import { MonteCarloFan, ContagionGraph, RegimeRibbon, ReliabilityCurve, EdgeDecay, WhatIf, TimeMachine, NewsIntel, NewsStudy, VIZ_CSS } from "./OracleViz";
 
 // APEX Oracle Panel — the prediction cockpit. Fetches /api/apex/predict/:symbol (regime,
 // multi-horizon forecast, options, signal packages, Jarvis synthesis), renders a compact
@@ -144,7 +144,7 @@ export function OracleOverlay({ o, hist, bars, loading, resolvedNote, onClose, o
         {!o ? <div className="axo-empty" style={{ padding: 40 }}>{loading ? "Computing…" : "No forecast."}</div> : (
           <div className="axo-full-scroll">
           {o.report ? <AlgoReport r={o.report} /> : null}
-          <div className="axo-newsband"><div className="axo-sec" style={{ margin: "0 0 6px" }}>NEWS INTELLIGENCE <em>multi-source · event-classified · propagation</em></div><NewsIntel symbol={o.symbol} onPick={onPick} /></div>
+          <div className="axo-newsband"><div className="axo-sec" style={{ margin: "0 0 6px" }}>NEWS INTELLIGENCE <em>multi-source · event-classified · propagation</em></div><NewsIntel symbol={o.symbol} onPick={onPick} /><div style={{ marginTop: 10 }}><NewsStudy symbol={o.symbol} /></div></div>
           <div className="axo-full-body">
             {/* left: horizon table + detail */}
             <div className="axo-col">
