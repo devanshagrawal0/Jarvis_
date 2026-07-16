@@ -6113,6 +6113,10 @@ async function handleApi(req, res, pathname, url) {
             let best = null; for (const b of bars) { const t = new Date(b.t).getTime(); if (t >= targetMs) { best = b.c; break; } best = b.c; }
             return best;
           },
+          getNews: async (sym) => {
+            try { const tk = String(sym || "").replace(/USDT?$/i, "").toUpperCase(); const stories = apexIngest.getNews(40) || [];
+              return stories.filter((s) => { const title = String(s.title || "").toUpperCase(); const tks = (s.impact && s.impact.tickers) || []; return title.includes(tk) || tks.some((t) => (t.t || t.s) === tk); }).map((s) => ({ title: s.title })); } catch { return []; }
+          },
           callModel: async (prompt) => { const r = await callGemini({ prompt, mode: "chat", sessionId: "apex-oracle", deviceId: "apex", source: "apex-oracle", history: [] }); return (r && r.response) || ""; },
         });
         const predM = pathname.match(/^\/api\/apex\/predict\/([^/]+)(\/refresh|\/history)?$/);

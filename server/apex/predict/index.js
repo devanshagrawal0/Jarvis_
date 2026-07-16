@@ -12,12 +12,38 @@ const { recommendContract } = require("./options");
 const { selfCheck } = require("./selfcheck");
 const { scorePrediction, updateCalibration } = require("./calibration");
 const { createOracleStore } = require("./store");
+const { buildPackages } = require("./signals");
+const { fuse } = require("./ensemble");
+const { clamp } = require("./mathx");
 
 const MODEL_VER = "oracle-1.0";
 const MS = { "1h": 3.6e6, "5h": 1.8e7, "12h": 4.32e7, "1d": 8.64e7, "5d": 4.32e8 };
 
-function createOracle({ runtimeDir, getBars, priceAt, callModel = null }) {
+// The LLM gives a 1-day P(up); scale conviction by horizon (shrink toward 0.5 for short, hold/expand for long).
+function horizonScaleLLM(pUp1d, tau) {
+  const k = Math.sqrt(tau / 6.5); // 1d = tau 6.5 → k=1
+  return clamp(0.5 + (pUp1d - 0.5) * clamp(k, 0.4, 1.4), 0.02, 0.98);
+}
+
+function createOracle({ runtimeDir, getBars, priceAt, getNews = null, callModel = null }) {
   const store = createOracleStore(runtimeDir);
+
+  // One Jarvis synthesis call → { pUp, bias, thesis }. Deterministic fallback if unavailable.
+  async function synthesize(symbol, regime, fc, sig) {
+    if (!callModel) return null;
+    const brief = {
+      symbol, spot: +fc.spot.toFixed(2), regime: regime.label, regimeConf: +regime.confidence.toFixed(2),
+      hurst: +regime.hurst.toFixed(2), adx: regime.adx ? +regime.adx.toFixed(1) : null,
+      crossScore: +sig.crossScore.toFixed(2), packages: Object.fromEntries(Object.entries(sig.packages).map(([k, v]) => [k, +v.toFixed(2)])),
+      forecast1d: { dir: fc.horizons.find((h) => h.horizon === "1d")?.dir, pUp: +(fc.horizons.find((h) => h.horizon === "1d")?.pUp || 0.5).toFixed(2), ret5d: +(fc.horizons.find((h) => h.horizon === "5d")?.predRet || 0).toFixed(2) },
+    };
+    try {
+      const out = await callModel(`You are APEX Oracle's synthesis layer. Given this numeric brief for a stock, reply with ONLY compact JSON {"pUp":<0..1 probability the stock is higher in 1 day>,"bias":"bullish|bearish|neutral","thesis":"<=2 sentence rationale citing the strongest signals"}. Brief: ${JSON.stringify(brief)}`);
+      const j = JSON.parse(String(out).match(/\{[\s\S]*\}/)?.[0] || "{}");
+      if (Number.isFinite(j.pUp)) return { pUp: clamp(j.pUp, 0.02, 0.98), bias: j.bias || "neutral", thesis: String(j.thesis || "").slice(0, 400) };
+    } catch { /* fall through */ }
+    return null;
+  }
 
   async function computeForecast(symbol) {
     const bars = await getBars(symbol, { interval: "60m", range: "60d" });
@@ -26,15 +52,30 @@ function createOracle({ runtimeDir, getBars, priceAt, callModel = null }) {
     const cals = {}; for (const h of HORIZONS) cals[h.key] = store.getCalibration(symbol, h.key) || undefined;
     const fc = forecast(bars, regime, cals);
     if (!fc.ok) return { ok: false, reason: fc.reason, symbol };
-    // attach options + confidence to each horizon
+    // signal packages → crossScore (best-effort; tolerant of fetch failures)
+    let sig = { crossScore: regime.trendScore, packages: { technical: regime.trendScore, news: 0, peer: 0, sector: 0, macro: 0 }, detail: {}, weights: {} };
+    try { sig = await buildPackages(symbol, bars, { getBars, getNews }); } catch { /* keep technical fallback */ }
+    // Jarvis synthesis (one call)
+    const llm = await synthesize(symbol, regime, fc, sig);
+    const pCross = clamp(0.5 + 0.5 * sig.crossScore, 0.02, 0.98);
+    // ensemble per horizon (technical GBM view + cross-asset view + LLM view)
     for (const h of fc.horizons) {
-      h.option = recommendContract(h, { r: 0.045, q: 0 });
       const cal = cals[h.key];
+      const brierTech = cal ? cal.mean_brier : 0.25;
+      const views = [ { p: h.pUp, brier: brierTech }, { p: pCross, brier: 0.24 } ];
+      if (llm) views.push({ p: horizonScaleLLM(llm.pUp, h.tau), brier: 0.23 });
+      const ens = fuse(views);
+      h.pUpModel = h.pUp; h.pUp = ens.p; h.dir = ens.p >= 0.5 ? "LONG" : "SHORT"; h.edge = Math.abs(ens.p - 0.5) * 2;
+      h.disagreement = +ens.spread.toFixed(3);
+      // widen intervals by ensemble disagreement
+      const infl = 1 + Math.min(0.6, ens.spread * 1.2);
+      const mid = h.p50; ["p05", "p25", "p75", "p95"].forEach((q) => { h[q] = mid * Math.pow(h[q] / mid, infl); });
+      h.option = recommendContract(h, { r: 0.045, q: 0 });
       const coverageHealth = cal ? 1 - Math.abs((cal.cov90 ?? 0.9) - 0.9) : 0.85;
-      h.confidence = Math.max(0.05, Math.min(0.95, regime.confidence * 0.5 + coverageHealth * 0.3 + h.edge * 0.2));
+      h.confidence = Math.max(0.05, Math.min(0.95, regime.confidence * 0.35 + coverageHealth * 0.25 + h.edge * 0.2 + (1 - ens.spread) * 0.2));
       h.calibrated = !!cal;
     }
-    const payload = { ok: true, symbol, asOf: null, spot: fc.spot, regime, muBar: fc.muBar, sigBar: fc.sigBar, ou: fc.ou, g: fc.g, horizons: fc.horizons, crossScore: regime.trendScore, model_ver: MODEL_VER };
+    const payload = { ok: true, symbol, asOf: null, spot: fc.spot, regime, muBar: fc.muBar, sigBar: fc.sigBar, ou: fc.ou, g: fc.g, horizons: fc.horizons, crossScore: sig.crossScore, packages: sig.packages, signalDetail: sig.detail, weights: sig.weights, jarvis: llm, model_ver: MODEL_VER };
     const sc = selfCheck(payload);
     payload.selfCheck = sc; payload.degraded = !sc.ok;
     return payload;

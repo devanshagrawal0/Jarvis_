@@ -15,6 +15,7 @@ import { ema, vwap as calcVwap, bollinger, rsi as calcRsi, macd as calcMacd, clo
 
 export interface Indicators { ema: boolean; bb: boolean; vwap: boolean; volume: boolean; rsi: boolean; macd: boolean }
 
+export interface ForecastPoint { horizon: string; p05: number; p50: number; p95: number }
 interface Props {
   bars: Bar[];
   up: boolean; // day direction, for candle theming accents
@@ -22,9 +23,12 @@ interface Props {
   replayActive: boolean;
   replaySpeed: number; // bars per second
   replayStrategy: StrategyId;
+  forecast?: ForecastPoint[] | null; // Oracle cones projected into the future
   onReplayProgress?: (pct: number, barTime: number | null) => void;
   onReplayStats?: (r: ReplayResult | null) => void;
 }
+
+const FC_MS: Record<string, number> = { "1h": 3.6e6, "5h": 1.8e7, "12h": 4.32e7, "1d": 8.64e7, "5d": 4.32e8 };
 
 // Institutional palette — TradingView-desaturated candles, muted study lines, near-invisible grid.
 const COL = {
@@ -47,7 +51,7 @@ function cleanBars(bars: Bar[]): Bar[] {
   return out.sort((a, z) => toSec(a.t) - toSec(z.t));
 }
 
-export function ChartPro({ bars, up, indicators, replayActive, replaySpeed, replayStrategy, onReplayProgress, onReplayStats }: Props) {
+export function ChartPro({ bars, up, indicators, replayActive, replaySpeed, replayStrategy, forecast, onReplayProgress, onReplayStats }: Props) {
   const wrapRef = useRef<HTMLDivElement | null>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const S = useRef<Record<string, ISeriesApi<"Candlestick" | "Line" | "Histogram">>>({});
@@ -82,6 +86,11 @@ export function ChartPro({ bars, up, indicators, replayActive, replaySpeed, repl
     // Replay equity overlay — own left scale so it doesn't distort price.
     S.current.equity = chart.addSeries(LineSeries, { color: COL.equity, lineWidth: 2, priceScaleId: "eq", priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false }, 0);
     chart.priceScale("eq").applyOptions({ scaleMargins: { top: 0.05, bottom: 0.55 }, visible: false });
+
+    // Oracle forecast cones — p05 / p50 / p95 projected forward (share the price scale).
+    S.current.coneHi = chart.addSeries(LineSeries, { color: "rgba(224,149,43,.45)", lineWidth: 1, lineStyle: LineStyle.Dotted, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false }, 0);
+    S.current.coneMid = chart.addSeries(LineSeries, { color: "rgba(224,149,43,.9)", lineWidth: 2, lineStyle: LineStyle.Dashed, priceLineVisible: false, lastValueVisible: true, crosshairMarkerVisible: false }, 0);
+    S.current.coneLo = chart.addSeries(LineSeries, { color: "rgba(224,149,43,.45)", lineWidth: 1, lineStyle: LineStyle.Dotted, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false }, 0);
 
     // Volume pane (1)
     S.current.vol = chart.addSeries(HistogramSeries, { priceFormat: { type: "volume" }, priceScaleId: "", priceLineVisible: false, lastValueVisible: false }, 1);
@@ -154,6 +163,28 @@ export function ChartPro({ bars, up, indicators, replayActive, replaySpeed, repl
       if (panes[3]) panes[3].setHeight(indicators.macd ? 90 : 1);
     } catch { /* panes may not exist yet */ }
   }, [indicators]);
+
+  // ── Oracle forecast cones: project p05/p50/p95 forward from the last bar ──
+  useEffect(() => {
+    const s = S.current; if (!s.coneMid) return;
+    const all = dataRef.current;
+    if (!forecast || !forecast.length || !all.length || replayActive) { s.coneHi.setData([]); s.coneMid.setData([]); s.coneLo.setData([]); return; }
+    const last = all[all.length - 1]; const t0 = toSec(last.t); const start = new Date(last.t).getTime();
+    const order = ["1h", "5h", "12h", "1d", "5d"];
+    const fmap = new Map(forecast.map((f) => [f.horizon, f]));
+    const mid: { time: UTCTimestamp; value: number }[] = [{ time: t0, value: last.c }];
+    const hi: { time: UTCTimestamp; value: number }[] = [{ time: t0, value: last.c }];
+    const lo: { time: UTCTimestamp; value: number }[] = [{ time: t0, value: last.c }];
+    const seen = new Set<number>([t0]);
+    for (const k of order) {
+      const f = fmap.get(k); if (!f) continue;
+      const tSec = Math.floor((start + (FC_MS[k] || 0)) / 1000) as UTCTimestamp;
+      if (seen.has(tSec)) continue; seen.add(tSec);
+      mid.push({ time: tSec, value: f.p50 }); hi.push({ time: tSec, value: f.p95 }); lo.push({ time: tSec, value: f.p05 });
+    }
+    s.coneHi.setData(hi); s.coneMid.setData(mid); s.coneLo.setData(lo);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [forecast, bars, replayActive]);
 
   // ── Compute + render everything up to index `n` (for replay reveal) ──
   function renderUpTo(n: number, replay?: ReplayResult) {

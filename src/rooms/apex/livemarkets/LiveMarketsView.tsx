@@ -4,6 +4,7 @@ import {
   type Quote, type Fundamentals, type Bar, type Story,
 } from "../apex-data";
 import { ChartPro, type Indicators } from "./ChartPro";
+import { useOracle, OracleCard, OracleOverlay, ORACLE_CARD_CSS } from "./OraclePanel";
 import { ema, rsi as calcRsi, macd as calcMacd, vwap as calcVwap, atr as calcAtr, relVol, closes, highs, lows, STRATEGIES, type StrategyId } from "./indicators";
 import type { ReplayResult } from "./indicators";
 
@@ -85,6 +86,8 @@ export function LiveMarketsView() {
   const [favorites, setFavorites] = useState<string[]>(["NVDA", "AAPL", "TSLA"]);
   const [watchlist, setWatchlist] = useState<string[]>(WATCH.Stocks);
   const [toast, setToast] = useState<string | null>(null);
+  const [oracleOpen, setOracleOpen] = useState(false);
+  const oracle = useOracle(symbol);
 
   const [quote, setQuote] = useState<Quote | null>(null);
   const [fund, setFund] = useState<Fundamentals | null>(null);
@@ -206,6 +209,7 @@ export function LiveMarketsView() {
             <div className="axt-chartcanvas">
               {bars.length > 1 ? (
                 <ChartPro bars={bars} up={up} indicators={ind} replayActive={replay} replaySpeed={replaySpeed} replayStrategy={replayStrat}
+                  forecast={oracle.data?.horizons?.map((h) => ({ horizon: h.horizon, p05: h.p05, p50: h.p50, p95: h.p95 })) || null}
                   onReplayProgress={(p) => setReplayProg(p)} onReplayStats={setReplayStats} />
               ) : barsLoading ? (
                 <div className="axt-chart-skel"><div className="axt-skel-bars">{Array.from({ length: 40 }).map((_, i) => <span key={i} style={{ height: `${20 + (Math.sin(i * 1.3) * 0.5 + 0.5) * 60}%` }} />)}</div><div className="axt-skel-tag">Loading {symbol} · {tf}…</div></div>
@@ -217,6 +221,7 @@ export function LiveMarketsView() {
 
         {/* RIGHT */}
         <div className="axt-right">
+          <OracleCard o={oracle.data} loading={oracle.loading} onExpand={() => setOracleOpen(true)} onRefresh={oracle.refresh} />
           <MarketStats quote={quote} fund={fund} bars={bars} atr={atrNow} rv={rv} iv={optionsSnap.iv30} />
           <AIAnalysis tech={tech} symbol={symbol} fund={fund} />
           <SentMomentum tech={tech} />
@@ -239,6 +244,8 @@ export function LiveMarketsView() {
       <StatusStrip live={live} />
 
       {toast && <div className="axt-toast">{toast}</div>}
+      <style>{ORACLE_CARD_CSS}</style>
+      {oracleOpen && <OracleOverlay o={oracle.data} hist={oracle.hist} loading={oracle.loading} resolvedNote={oracle.resolvedNote} onClose={() => setOracleOpen(false)} onRefresh={oracle.refresh} onPick={changeSym} />}
     </div>
   );
 }
