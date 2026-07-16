@@ -23,6 +23,9 @@ const { clamp } = require("./mathx");
 const MODEL_VER = "oracle-1.0";
 const MS = { "1h": 3.6e6, "5h": 1.8e7, "12h": 4.32e7, "1d": 8.64e7, "5d": 4.32e8 };
 
+// Stable short hash of a headline (djb2) — dedupes the point-in-time news archive.
+function hashTitle(t) { let h = 5381; const s = String(t || "").toLowerCase().replace(/[^a-z0-9]/g, ""); for (let i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) >>> 0; return h.toString(36); }
+
 // The LLM gives a 1-day P(up); scale conviction by horizon (shrink toward 0.5 for short, hold/expand for long).
 function horizonScaleLLM(pUp1d, tau) {
   const k = Math.sqrt(tau / 6.5); // 1d = tau 6.5 → k=1
@@ -144,7 +147,17 @@ function createOracle({ runtimeDir, getBars, priceAt, getNews = null, callModel 
     let newsIntel = null;
     try {
       newsIntel = store.cacheGet(symbol, "newsintel", 20 * 60 * 1000);
-      if (!newsIntel) { newsIntel = await analyzeNews(symbol, { getBars }); if (newsIntel && newsIntel.items) store.cacheSet(symbol, "newsintel", newsIntel); }
+      if (!newsIntel) {
+        newsIntel = await analyzeNews(symbol, { getBars });
+        if (newsIntel && newsIntel.items) {
+          store.cacheSet(symbol, "newsintel", newsIntel);
+          // Point-in-time log: archive each classified story (INSERT OR IGNORE dedupes by hash),
+          // stamped with the spot price now — so the news signal can be backtested later.
+          for (const it of newsIntel.items) {
+            store.logNews({ symbol, title_hash: hashTitle(it.title), first_seen: Date.now(), title: it.title.slice(0, 300), source: it.source, event: it.event, sentiment: it.sentiment, impact: it.impact, corroboration: it.corroboration, news_score: newsIntel.newsScore, spot: fc.spot });
+          }
+        }
+      }
       if (newsIntel && newsIntel.items && newsIntel.items.length) {
         sig.packages.news = newsIntel.newsScore;
         sig.detail.news = { count: newsIntel.count, score: newsIntel.newsScore, events: newsIntel.topEvents };
@@ -328,7 +341,25 @@ function createOracle({ runtimeDir, getBars, priceAt, getNews = null, callModel 
     return { ok: true, symbol, d1: metaTest(bars, 7), d5: metaTest(bars, 33) };
   }
   const newsIntel = (symbol) => analyzeNews(symbol, { getBars });
-  return { predict, refresh, resolveDue, history, backtest, leaderboard, hindcast, metatest, newsIntel, computeForecast, store, model_ver: MODEL_VER };
+
+  // News event-study: for each logged story aged ≥5d, measure the realized 5-day forward return
+  // and group by event type — the empirical payoff of each headline category. Becomes meaningful
+  // as the point-in-time archive fills up (that's the whole reason we log it).
+  async function newsStudy(symbol) {
+    const rows = store.newsSince(symbol, Date.now() - 180 * 8.64e7);
+    const aged = rows.filter((r) => Date.now() - r.first_seen > 5 * 8.64e7);
+    if (aged.length < 10) return { ok: true, symbol, logged: rows.length, aged: aged.length, note: "Accumulating — need ~10 stories older than 5 days to study. The archive grows every time you open a symbol.", byEvent: [] };
+    const bars = await getBars(symbol, { interval: "1d", range: "1y" }).catch(() => []);
+    const byT = (bars || []).map((b) => ({ t: new Date(b.t).getTime(), c: b.c })).sort((a, b) => a.t - b.t);
+    const priceAt = (ms) => { let best = null; for (const b of byT) { if (b.t >= ms) { best = b.c; break; } best = b.c; } return best; };
+    const groups = {};
+    for (const r of aged) { const p0 = priceAt(r.first_seen), p1 = priceAt(r.first_seen + 5 * 8.64e7); if (p0 == null || p1 == null || p0 <= 0) continue; const fwd = p1 / p0 - 1; const g = groups[r.event] || (groups[r.event] = { n: 0, sum: 0, hit: 0 }); g.n++; g.sum += fwd; g.hit += Math.sign(fwd) === Math.sign(r.sentiment || 0) ? 1 : 0; }
+    const byEvent = Object.entries(groups).map(([ev, g]) => ({ event: ev, n: g.n, avgFwd5d: +(g.sum / g.n * 100).toFixed(2), sentimentHit: +(g.hit / g.n * 100).toFixed(0) })).sort((a, b) => b.n - a.n);
+    return { ok: true, symbol, logged: rows.length, aged: aged.length, byEvent };
+  }
+  const newsLog = (symbol) => ({ symbol, count: store.newsLogCount(), rows: store.newsSince(symbol, Date.now() - 90 * 8.64e7).slice(0, 100) });
+
+  return { predict, refresh, resolveDue, history, backtest, leaderboard, hindcast, metatest, newsIntel, newsStudy, newsLog, computeForecast, store, model_ver: MODEL_VER };
 }
 
 module.exports = { createOracle };

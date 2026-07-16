@@ -40,6 +40,15 @@ function createOracleStore(runtimeDir) {
       PRIMARY KEY (symbol, related, kind)
     );
     CREATE TABLE IF NOT EXISTS feature_cache (symbol TEXT, key TEXT, val_json TEXT, ts INTEGER, PRIMARY KEY(symbol,key));
+    -- Point-in-time news archive: every classified story logged when first seen, with the spot
+    -- price at that moment, so the news signal can be BACKTESTED against realized forward returns.
+    CREATE TABLE IF NOT EXISTS news_log (
+      symbol TEXT NOT NULL, title_hash TEXT NOT NULL, first_seen INTEGER NOT NULL,
+      title TEXT, source TEXT, event TEXT, sentiment REAL, impact REAL, corroboration INTEGER,
+      news_score REAL, spot REAL,
+      PRIMARY KEY (symbol, title_hash)
+    );
+    CREATE INDEX IF NOT EXISTS ix_news_sym ON news_log(symbol, first_seen);
   `);
 
   const insPred = db.prepare(`INSERT INTO predictions
@@ -64,6 +73,10 @@ function createOracleStore(runtimeDir) {
     ON CONFLICT(symbol,related,kind) DO UPDATE SET corr=@corr,beta=@beta,lead_lag=@lead_lag,source=@source,updated_at=@updated_at`);
   const cacheGet = db.prepare(`SELECT val_json,ts FROM feature_cache WHERE symbol=? AND key=?`);
   const cacheSet = db.prepare(`INSERT INTO feature_cache (symbol,key,val_json,ts) VALUES (?,?,?,?) ON CONFLICT(symbol,key) DO UPDATE SET val_json=excluded.val_json, ts=excluded.ts`);
+  const insNews = db.prepare(`INSERT OR IGNORE INTO news_log (symbol,title_hash,first_seen,title,source,event,sentiment,impact,corroboration,news_score,spot)
+    VALUES (@symbol,@title_hash,@first_seen,@title,@source,@event,@sentiment,@impact,@corroboration,@news_score,@spot)`);
+  const newsSinceQ = db.prepare(`SELECT * FROM news_log WHERE symbol=? AND first_seen>=? ORDER BY first_seen DESC LIMIT 500`);
+  const newsCountQ = db.prepare(`SELECT COUNT(*) n FROM news_log`);
 
   return {
     db,
@@ -78,7 +91,10 @@ function createOracleStore(runtimeDir) {
     saveRelation: (row) => upsertRel.run(row),
     cacheGet: (symbol, key, maxAgeMs) => { const r = cacheGet.get(symbol, key); if (!r) return null; if (maxAgeMs && Date.now() - r.ts > maxAgeMs) return null; try { return JSON.parse(r.val_json); } catch { return null; } },
     cacheSet: (symbol, key, val, ts) => cacheSet.run(symbol, key, JSON.stringify(val), ts || Date.now()),
-    stats: () => ({ predictions: db.prepare("SELECT COUNT(*) n FROM predictions").get().n, resolved: db.prepare("SELECT COUNT(*) n FROM predictions WHERE resolved=1").get().n }),
+    logNews: (row) => insNews.run(row),
+    newsSince: (symbol, sinceMs) => newsSinceQ.all(symbol, sinceMs),
+    newsLogCount: () => newsCountQ.get().n,
+    stats: () => ({ predictions: db.prepare("SELECT COUNT(*) n FROM predictions").get().n, resolved: db.prepare("SELECT COUNT(*) n FROM predictions WHERE resolved=1").get().n, newsLogged: newsCountQ.get().n }),
   };
 }
 
