@@ -46,8 +46,9 @@ export function ApexRoom({ onExit }: Props) {
       if (entered) return;
       entered = true;
       setBooted(true);
-      // Next frame: begin fading the room in over the settled lockup.
-      requestAnimationFrame(() => setRoomVisible(true));
+      // Begin fading the room in over the settled frame. setTimeout (not rAF) so this still fires
+      // in hidden/background tabs where requestAnimationFrame is paused.
+      setTimeout(() => setRoomVisible(true), 30);
     };
 
     const stop = startApexBoot(canvas, () => {
