@@ -175,7 +175,8 @@ function classifyIntent(prompt, topicState = defaultTopicState()) {
   if (/\b(mesh_status|device mesh|omnipresence|object portal|command cards?|phone link|cloudflare link|stable link)\b/.test(lower)) {
     return { intent: "device_mesh_status", confidence: 0.92, blockedTools: [], reason: "Device mesh wording." };
   }
-  if (/\b(click|type|press|fullscreen|full screen|switch tabs?|current screen|on my screen|laptop screen|look at my screen)\b/.test(lower)) {
+  const explicitVisibleSurface = /\b(current screen|visible screen|on my screen|use my screen|laptop screen|look at my screen|current window|control my cursor|switch tabs?|change tabs?|next tab|previous tab|fullscreen|full screen)\b/.test(lower);
+  if (explicitVisibleSurface && /\b(click|type|press|open|show|look|control|switch|change|next|previous|fullscreen|full screen|screen|window|cursor)\b/.test(lower)) {
     return { intent: "screen_action", confidence: 0.86, blockedTools: [], reason: "Visible screen/control wording." };
   }
   if (/\b(open|go to|navigate|website|web page|browser|chrome|canvas|instagram|gmail|youtube|github|reddit)\b/.test(lower)) {

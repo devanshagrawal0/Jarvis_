@@ -38,6 +38,33 @@ test("browser validation accepts web URLs and rejects unsafe protocols and selec
   assert.throws(() => validateScreenshotName("../escape.png"), /Screenshot names/i);
 });
 
+test("Runtime browser telemetry is side-effect free and does not launch Chromium", () => {
+  const runtimeDir = tempDir();
+  let launches = 0;
+  const service = createBrowserAutomationService({
+    runtimeDir,
+    headless: true,
+    channel: null,
+    browserType: { launchPersistentContext: async () => { launches += 1; throw new Error("must not launch"); } },
+  });
+  const status = service.runtimeStatus();
+  assert.equal(status.running, false);
+  assert.equal(status.headless, true);
+  assert.equal(status.loginHandoffActive, false);
+  assert.equal(launches, 0);
+});
+
+test("private-browser readiness remembers only origin-level session diagnostics", () => {
+  const runtimeDir = tempDir();
+  const service = createBrowserAutomationService({ runtimeDir, headless: true, channel: null, browserType: { launchPersistentContext: async () => { throw new Error("must not launch"); } } });
+  service.noteSessionStatus({ url: "https://mail.example.test/inbox?secret=discarded", status: "authenticated", reason: "Owner completed login", title: "Inbox" });
+  const restored = createBrowserAutomationService({ runtimeDir, headless: true, channel: null, browserType: { launchPersistentContext: async () => { throw new Error("must not launch"); } } });
+  const status = restored.runtimeStatus();
+  assert.deepEqual(status.sessions.map((item) => item.origin), ["https://mail.example.test"]);
+  assert.equal(status.sessions[0].status, "authenticated");
+  assert.equal(JSON.stringify(status.sessions).includes("secret=discarded"), false);
+});
+
 test("persistent browser service navigates, inspects, types, extracts, verifies, and screenshots", async (t) => {
   if (!fs.existsSync(chromium.executablePath())) {
     t.skip("Playwright Chromium is not installed");
@@ -90,6 +117,7 @@ test("persistent browser service navigates, inspects, types, extracts, verifies,
     runtimeDir,
     headless: true,
     channel: null,
+    interactiveLogin: false,
   });
   closers.push(() => service.close());
 
@@ -184,6 +212,7 @@ test("capability engine registers browser tools and emits verified receipts", as
       calls.push(["loginHandoff", args]);
       return { handoffRequired: true, loginLikelyRequired: true, elements: [] };
     },
+    completeLoginHandoff: async () => ({ completed: true, authenticated: true, headless: true }),
     pageBrief: async (args) => {
       calls.push(["pageBrief", args]);
       return { plainEnglish: "Page has one form.", counts: { forms: 1 } };
@@ -234,6 +263,7 @@ test("capability engine registers browser tools and emits verified receipts", as
   const expectedTools = [
     "browser_status",
     "browser_login_handoff",
+    "browser_login_complete",
     "browser_page_brief",
     "browser_navigate",
     "browser_snapshot",

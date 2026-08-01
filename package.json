@@ -46,7 +46,9 @@
     "test:task-to-skill": "node scripts/task-to-skill-check.mjs",
     "test:local-file-access-protocols": "node scripts/local-file-access-protocols-check.mjs",
     "benchmark:latency": "node scripts/benchmark-latency.mjs",
-    "test": "npm run check && npm run test:backend && npm run test:feature"
+    "test": "npm run check && npm run test:backend && npm run test:feature",
+    "helix:bench": "node scripts/helix-bench.mjs",
+    "helix:test": "node scripts/helix-offline-test.js"
   },
   "build": {
     "appId": "dev.devansh.jarvis",
@@ -101,6 +103,7 @@
     "@loaders.gl/core": "^4.4.3",
     "@mediapipe/tasks-vision": "^0.10.35",
     "@modelcontextprotocol/sdk": "^1.29.0",
+    "@playwright/mcp": "0.0.78",
     "@react-three/drei": "^10.7.7",
     "@react-three/fiber": "^9.6.1",
     "@react-three/postprocessing": "^3.0.4",

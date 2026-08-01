@@ -1,4 +1,4 @@
-// LIVE 3-way comparison: Cortex vs Cortex Prime vs Eclipse, same prompt, high effort.
+// LIVE 3-way comparison: Cortex Balanced vs Cortex Max vs Eclipse.
 // Reads GEMINI_API_KEY from the environment (never printed). Eclipse is capped at $0.75.
 // Run:  GEMINI_API_KEY=... node server/eclipse/evals/live-compare.js
 const { GoogleGenAI } = require("@google/genai");
@@ -16,7 +16,7 @@ const { createLiveWebTools } = require("../tools/web-live");
 // Value stays in-process; never printed.
 const root = path.resolve(__dirname, "../../..");
 const KEY = process.env.GEMINI_API_KEY || (() => { try { return createSecretStore(path.join(root, "runtime")).load().geminiKey; } catch (e) { console.error("vault load failed:", e.message); return null; } })();
-const ONLY = process.env.ONLY || null; // "cortex" | "prime" | "eclipse" — run a single section to save credits
+const ONLY = process.env.ONLY || null; // "cortex" | "max" | "eclipse" — run a single section to save credits
 const PROMPT = process.argv[2] || "Compare LangGraph and CrewAI for durable multi-agent execution and recommend one, with evidence.";
 if (!KEY) { console.error("NO GEMINI_API_KEY in env"); process.exit(1); }
 
@@ -54,21 +54,21 @@ async function tryGen(ai, models, contents, config) {
     catch (e) { console.log("CORTEX FAILED:", String(e.message).slice(0, 200)); }
   }
 
-  // 2) CORTEX PRIME — reasoning model, high thinking, single agent.
-  let prime = null;
-  if (!ONLY || ONLY === "prime") {
-    console.log("\n" + "=".repeat(80) + "\n### 2. CORTEX PRIME (reasoning · pro · high thinking) ###");
+  // 2) CORTEX MAX — Pro reasoning, high thinking, single agent.
+  let cortexMax = null;
+  if (!ONLY || ONLY === "max") {
+    console.log("\n" + "=".repeat(80) + "\n### 2. CORTEX MAX (reasoning · pro · high thinking) ###");
     try {
-      try { prime = await tryGen(ai, PRO_CANDS, PROMPT, { thinkingConfig: { thinkingLevel: "high" }, temperature: 1.0 }); }
-      catch { prime = await tryGen(ai, PRO_CANDS, PROMPT); }
-      console.log(`[model ${prime.model} · ~${prime.usage.totalTokenCount || "?"} tok]\n`); console.log(prime.text.trim());
-    } catch (e) { console.log("CORTEX PRIME FAILED:", String(e.message).slice(0, 200)); }
+      try { cortexMax = await tryGen(ai, PRO_CANDS, PROMPT, { thinkingConfig: { thinkingLevel: "high" }, temperature: 1.0 }); }
+      catch { cortexMax = await tryGen(ai, PRO_CANDS, PROMPT); }
+      console.log(`[model ${cortexMax.model} · ~${cortexMax.usage.totalTokenCount || "?"} tok]\n`); console.log(cortexMax.text.trim());
+    } catch (e) { console.log("CORTEX MAX FAILED:", String(e.message).slice(0, 200)); }
   }
 
   // 3) ECLIPSE — full multi-agent mission, live, capped. Point the registry at the working models.
   if (ONLY && ONLY !== "eclipse") { console.log("\nDONE (ONLY=" + ONLY + ")."); return; }
   console.log("\n" + "=".repeat(80) + "\n### 3. ECLIPSE (multi-agent mission · totality · live + REAL web verification) ###");
-  const flashModel = (cortex && cortex.model) || "gemini-2.5-flash", proModel = (prime && prime.model) || "gemini-3.1-pro-preview";
+  const flashModel = (cortex && cortex.model) || "gemini-2.5-flash", proModel = (cortexMax && cortexMax.model) || "gemini-3.1-pro-preview";
   registry.MODELS.main = flashModel; registry.MODELS.reasoning = proModel; registry.MODELS.router = flashModel;
   const { liveCall } = createInteractionsClient({ getApiKey: () => KEY });
   const web = createLiveWebTools({ ai, searchModel: flashModel }); // real Google-Search grounding + fetch

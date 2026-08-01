@@ -1,0 +1,43 @@
+.rt-mission-stack {
+  min-height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+.rt-mission-stack > .rt-mission {
+  flex: 1;
+  min-height: 0;
+}
+
+.rt-approval {
+  margin: 10px 12px 0;
+  padding: 12px 13px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  border: 1px solid rgba(255, 189, 89, .42);
+  background: linear-gradient(105deg, rgba(255, 164, 42, .14), rgba(33, 20, 5, .7));
+  box-shadow: inset 3px 0 #ffbd59, 0 0 26px rgba(255, 153, 31, .07);
+}
+
+.rt-approval > div:first-child {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.rt-approval span { font-size: 7px; color: #ffbd59; letter-spacing: .16em; }
+.rt-approval strong { font-size: 11px; text-transform: uppercase; color: #fff3d8; }
+.rt-approval p { margin: 0; max-width: 720px; font-size: 8px; line-height: 1.55; color: rgba(255, 241, 211, .7); }
+.rt-approval small { font-size: 6px; color: rgba(255, 221, 160, .45); }
+.rt-approval > div:last-child { display: flex; gap: 7px; }
+.rt-approval button { height: 30px; padding: 0 12px; border-radius: 3px; font: 700 7px/1 inherit; letter-spacing: .09em; cursor: pointer; }
+.rt-approval .approve { border: 1px solid rgba(56, 239, 172, .48); background: rgba(31, 191, 128, .13); color: #8affd0; }
+.rt-approval .danger { border: 1px solid rgba(255, 83, 109, .42); background: rgba(255, 53, 82, .08); color: #ff8c9c; }
+.rt-approval button:disabled { opacity: .4; cursor: default; }
+
+@media (max-width: 900px) {
+  .rt-approval { align-items: flex-start; flex-direction: column; }
+}

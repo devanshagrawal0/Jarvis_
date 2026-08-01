@@ -2,6 +2,7 @@ import { useEffect, useRef } from "react";
 
 // Same WIDGETS list as WidgetStrip — no import needed, just the labels/icons
 const WIDGETS = [
+  { id: "runtime",     label: "Runtime",     icon: "R" },
   { id: "profile",     label: "Profile",     icon: "◐" },
   { id: "weather",     label: "Weather",     icon: "☀" },
   { id: "vitals",      label: "Vitals",      icon: "◍" },

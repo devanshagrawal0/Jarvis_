@@ -10,6 +10,7 @@ import { DeltaChip, ConfBar, MiniBars } from "../hxViz";
 import { Timeline } from "../HxWidgets";
 import { useUI } from "../HxUI";
 import { useSelection } from "../HxInspector";
+import { useHelixAll } from "../useHelixResource";
 
 interface Proj { id: string; name: string }
 interface Entry { id?: string; strand?: string; query?: string; text?: string; source?: string; created_at?: string; voided?: boolean; contradicted?: boolean; confidence?: number }
@@ -37,36 +38,41 @@ export function Home({ project, onNav, onAsk, onNewProject }:
   const [openContra, setOpenContra] = useState(0);
   const [graph, setGraph] = useState<{ entities: any[]; relations: any[] }>({ entities: [], relations: [] });
   const [score, setScore] = useState<number | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [fetched, setFetched] = useState(false);
 
+  // Shared data layer: one aggregated fetch (docs/ux/04) with REAL abort on project switch
+  // + SWR cache — replaces the old `dead`-flag Promise.all (which never aborted, so a fast
+  // switch could paint a stale project's data). Honest empties when a project has no data.
+  const pid = project?.id;
+  const { data: agg, loading, error } = useHelixAll<any>(
+    pid ? `home:${pid}` : null,
+    pid ? [
+      `/api/helix/entries?projectId=${pid}`,
+      `/api/helix/artifacts?projectId=${pid}`,
+      `/api/helix/runs?projectId=${pid}`,
+      `/api/helix/decisions?projectId=${pid}`,
+      `/api/helix/contradictions?projectId=${pid}`,
+      `/api/helix/graph?projectId=${pid}`,
+      `/api/helix/score?projectId=${pid}`,
+    ] : [],
+  );
+  const fetched = agg != null;
   useEffect(() => {
-    const pid = project?.id;
-    if (!pid) { setEntries([]); setArtifacts([]); setRuns([]); setDecisions([]); setOpenContra(0); setGraph({ entities: [], relations: [] }); setScore(null); return; }
-    let dead = false;
-    setLoading(true); setFetched(false);
-    const j = (p: string) => fetch(p).then(r => r.ok ? r.json() : null).catch(() => null);
-    Promise.all([
-      j(`/api/helix/entries?projectId=${pid}`),
-      j(`/api/helix/artifacts?projectId=${pid}`),
-      j(`/api/helix/runs?projectId=${pid}`),
-      j(`/api/helix/decisions?projectId=${pid}`),
-      j(`/api/helix/contradictions?projectId=${pid}`),
-      j(`/api/helix/graph?projectId=${pid}`),
-      j(`/api/helix/score?projectId=${pid}`),
-    ]).then(([en, ar, ru, de, co, gr, sc]) => {
-      if (dead) return;
-      setEntries(((en?.entries) || []).filter((e: Entry) => !e.voided));
-      setArtifacts(ar?.artifacts || []);
-      setRuns(ru?.runs || []);
-      setDecisions(de?.decisions || []);
-      setOpenContra(co?.openCount ?? (co?.contradictions?.length || 0));
-      setGraph({ entities: gr?.entities || [], relations: gr?.relations || [] });
-      const raw = sc?.score; const s = typeof raw === "number" ? raw : (raw?.score ?? raw?.value ?? en?.project?.helix_score ?? null);
-      setScore(s != null ? (s > 1 ? s : s * 100) : null);
-    }).finally(() => { if (!dead) { setLoading(false); setFetched(true); } });
-    return () => { dead = true; };
-  }, [project?.id]);
+    if (!agg) {
+      setEntries([]); setArtifacts([]); setRuns([]); setDecisions([]); setOpenContra(0);
+      setGraph({ entities: [], relations: [] }); setScore(null);
+      return;
+    }
+    const [en, ar, ru, de, co, gr, sc] = agg;
+    setEntries(((en?.entries) || []).filter((e: Entry) => !e.voided));
+    setArtifacts(ar?.artifacts || []);
+    setRuns(ru?.runs || []);
+    setDecisions(de?.decisions || []);
+    setOpenContra(co?.openCount ?? (co?.contradictions?.length || 0));
+    setGraph({ entities: gr?.entities || [], relations: gr?.relations || [] });
+    const raw = sc?.score; const s = typeof raw === "number" ? raw : (raw?.score ?? raw?.value ?? en?.project?.helix_score ?? null);
+    setScore(s != null ? (s > 1 ? s : s * 100) : null);
+  }, [agg]);
+  useEffect(() => { if (error) toast(`Some project data failed to load — ${error}`, "bad"); }, [error, toast]);
 
   // Derived, honest stats.
   const stats = useMemo(() => {

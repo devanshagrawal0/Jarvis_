@@ -21,12 +21,10 @@ const PRICING = {
   "gemini-2.5-flash": { in: 0.30, out: 2.50 },
   "gemini-flash-lite-latest": { in: 0.10, out: 0.40 },
 };
-const DEFAULT_PRICE = { in: 1.50, out: 9.00 }; // assume flash-tier if unknown
-
 function priceFor(model) {
   if (PRICING[model]) return PRICING[model];
   const key = Object.keys(PRICING).find((k) => String(model || "").startsWith(k));
-  return key ? PRICING[key] : DEFAULT_PRICE;
+  return key ? PRICING[key] : null;
 }
 
 function todayStr() { return new Date().toISOString().slice(0, 10); }
@@ -61,15 +59,19 @@ function createCostMeter({ runtimeDir }) {
     const tokOut = Number(usage.candidatesTokenCount || usage.tokOut || 0);
     if (!tokIn && !tokOut) return;
     const p = priceFor(model);
-    const cost = (tokIn / 1e6) * p.in + (tokOut / 1e6) * p.out;
+    const cost = p ? (tokIn / 1e6) * p.in + (tokOut / 1e6) * p.out : null;
     rollWindows();
     for (const w of [state.today, state.month, state.allTime]) {
-      w.calls += 1; w.tokIn += tokIn; w.tokOut += tokOut; w.cost += cost;
+      w.calls += 1; w.tokIn += tokIn; w.tokOut += tokOut;
+      if (cost == null) w.unknownPriceCalls = Number(w.unknownPriceCalls || 0) + 1;
+      else w.cost += cost;
     }
     const bm = state.byModel[model] || { calls: 0, tokIn: 0, tokOut: 0, cost: 0 };
-    bm.calls += 1; bm.tokIn += tokIn; bm.tokOut += tokOut; bm.cost += cost;
+    bm.calls += 1; bm.tokIn += tokIn; bm.tokOut += tokOut;
+    if (cost == null) bm.unknownPriceCalls = Number(bm.unknownPriceCalls || 0) + 1;
+    else bm.cost += cost;
     state.byModel[model] = bm;
-    state.recent.unshift({ at: new Date().toISOString(), model, tokIn, tokOut, cost: Math.round(cost * 1e6) / 1e6, source: meta.source || "" });
+    state.recent.unshift({ at: new Date().toISOString(), model, tokIn, tokOut, cost: cost == null ? null : Math.round(cost * 1e6) / 1e6, pricing: cost == null ? "unknown" : "known", source: meta.source || "" });
     state.recent = state.recent.slice(0, 50);
     persist();
     return cost;

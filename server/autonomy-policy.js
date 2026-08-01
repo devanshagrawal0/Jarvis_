@@ -75,7 +75,7 @@ function evaluateAutonomy({ definition, tool, args, profile, context, recentActi
     };
   }
 
-  const lowRiskLocalExecute = new Set(["screen_act", "desktop_control", "open_url", "youtube_open_video"]);
+  const lowRiskLocalExecute = new Set(["screen_act", "desktop_control", "open_url", "youtube_open_video", "computer_use"]);
   const requiresConfirmation = Boolean(definition.risk === "commit"
     || (definition.risk === "execute" && effectiveLevel !== "autopilot" && !lowRiskLocalExecute.has(tool))
     || context.forceConfirmation);

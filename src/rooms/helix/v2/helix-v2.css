@@ -4,6 +4,30 @@
    one shared detail drawer. Dark, dense, operational. No orb, no score.
    ═══════════════════════════════════════════════════════════════════ */
 
+/* ── Motion + z-index tokens (docs/ux/05 §1, 03 §5) ──────────────────
+   In :root (not .hxv) so floating overlays rendered OUTSIDE .hxv — toasts,
+   modal, command palette — inherit them too. Namespaced --v-* to match the
+   v2 room and avoid colliding with other rooms' globals. */
+:root {
+  --v-dur-instant: 0ms;  --v-dur-fast: 120ms;  --v-dur-base: 200ms;
+  --v-dur-slow: 320ms;   --v-dur-slower: 480ms;
+  --v-ease-out: cubic-bezier(.2,.8,.2,1);   --v-ease-in: cubic-bezier(.4,0,1,1);
+  --v-ease-inout: cubic-bezier(.4,0,.2,1);  --v-ease-spring: cubic-bezier(.34,1.56,.64,1);
+  /* Named z-index scale — app-level layers only. Sub-100 values inside a single
+     component (local stacking) are intentionally left as-is. */
+  --v-z-base: 0;     --v-z-sticky: 100;  --v-z-nav: 200;    --v-z-dropdown: 300;
+  --v-z-drawer: 400; --v-z-modal: 1000;  --v-z-toast: 1100; --v-z-boot: 1200;
+}
+/* Reduced-motion is mandatory (docs/ux/05 §3). Scoped to HELIX classes so other
+   rooms are unaffected. Movement collapses to near-instant; state still changes. */
+@media (prefers-reduced-motion: reduce) {
+  .hxv, .hxv *, .hxv *::before, .hxv *::after,
+  [class*="hxv-"], [class*="hxv-"] *, [class*="hxv-"] *::before, [class*="hxv-"] *::after {
+    animation-duration: .01ms !important; animation-iteration-count: 1 !important;
+    transition-duration: .01ms !important; scroll-behavior: auto !important;
+  }
+}
+
 .hxv {
   /* Deep-tech glass — layered dark glass, cyan-teal accent, atmospheric depth,
      restrained glow. Panels are semi-transparent for backdrop-blur. */
@@ -381,9 +405,9 @@
 .hxv-art-status.review { color: var(--v-warn); background: rgba(242,176,61,0.12); }
 
 /* ── Shared detail drawer ────────────────────────────────────────── */
-.hxv-drawer-scrim { position: absolute; inset: 0; background: rgba(4,8,16,0.62); z-index: 40; opacity: 0; animation: hxvfade .16s forwards; }
+.hxv-drawer-scrim { position: absolute; inset: 0; background: rgba(4,8,16,0.62); z-index: var(--v-z-drawer); opacity: 0; animation: hxvfade .16s forwards; }
 @keyframes hxvfade { to { opacity: 1; } }
-.hxv-drawer { position: absolute; top: 0; right: 0; bottom: 0; width: 420px; z-index: 41;
+.hxv-drawer { position: absolute; top: 0; right: 0; bottom: 0; width: 420px; z-index: calc(var(--v-z-drawer) + 1);
   background: var(--v-panel2); border-left: 1px solid var(--v-line2); box-shadow: -20px 0 60px rgba(0,0,0,0.5);
   display: flex; flex-direction: column; transform: translateX(100%); animation: hxvslide .22s var(--hx-ease-enter, cubic-bezier(0.16,1,0.3,1)) forwards; }
 @keyframes hxvslide { to { transform: translateX(0); } }
@@ -415,7 +439,7 @@
 .hxv-proj-meta { flex: 1; min-width: 0; }
 .hxv-proj-lbl { font-size: 9px; letter-spacing: .12em; text-transform: uppercase; color: var(--v-text3); }
 .hxv-proj-name { font-size: 12.5px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.hxv-proj-menu { position: absolute; top: calc(100% + 4px); left: 0; right: 0; z-index: 20;
+.hxv-proj-menu { position: absolute; top: calc(100% + 4px); left: 0; right: 0; z-index: var(--v-z-dropdown);
   background: var(--v-panel2); border: 1px solid var(--v-line2); border-radius: var(--v-r-sm);
   box-shadow: 0 12px 40px rgba(0,0,0,0.5); overflow: hidden; padding: 4px; }
 .hxv-proj-opt { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-radius: 5px; cursor: pointer; font-size: 12px; color: var(--v-text2); }
@@ -447,7 +471,130 @@
 /* ── Polish: hover-lift, boot-in, focus (upgrades #11, #20) ───────── */
 .hxv-metric, .hxv-indc, .hxv-cc-tile, .hxv-snap, .hxv-op { transition: transform .16s var(--hx-ease-enter, cubic-bezier(0.16,1,0.3,1)), border-color .16s, box-shadow .16s; }
 .hxv-metric:hover, .hxv-indc:hover, .hxv-cc-tile:hover, .hxv-op:hover { transform: translateY(-2px); box-shadow: 0 8px 24px rgba(0,0,0,0.32); }
-.hxv-surface { animation: hxv-boot .34s var(--hx-ease-enter, cubic-bezier(0.16,1,0.3,1)); }
+/* Per-surface enter animation is owned by <SurfaceSwitch> (.hxv-surface-anim) now,
+   so surfaces get a directional, scroll-preserving transition instead of a plain fade. */
+/* ── Surface transition primitive (docs/ux/05 §4) ────────────────────
+   Shell (sidebar/topbar/spine) stays static; only the surface content animates.
+   Direction (fwd/back) is set by <SurfaceSwitch> from spine order. */
+.hxv-surfaceswitch { flex: 1; min-height: 0; display: flex; flex-direction: column; position: relative; }
+.hxv-surface-anim { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.hxv-surfaceswitch[data-dir="fwd"] .hxv-surface-anim { animation: hxv-surf-fwd var(--v-dur-base) var(--v-ease-out); }
+.hxv-surfaceswitch[data-dir="back"] .hxv-surface-anim { animation: hxv-surf-back var(--v-dur-base) var(--v-ease-out); }
+@keyframes hxv-surf-fwd  { from { opacity: 0; transform: translateX(14px);  } to { opacity: 1; transform: none; } }
+@keyframes hxv-surf-back { from { opacity: 0; transform: translateX(-14px); } to { opacity: 1; transform: none; } }
+
+/* ── Surface state triad: skeleton / empty / error (docs/ux/02 §4) ────
+   Skeleton uses an opacity pulse (compositor-cheap; reduced-motion collapses it). */
+.hxv-skel-wrap { padding: 4px 2px; }
+.hxv-skel { background: var(--v-card); border-radius: var(--v-r-sm); animation: hxv-skelpulse 1.2s var(--v-ease-inout) infinite; }
+.hxv-skel-title { height: 26px; width: 240px; margin-bottom: 18px; }
+.hxv-skel-grid { display: flex; flex-direction: column; gap: 10px; }
+.hxv-skel-row { height: 46px; }
+@keyframes hxv-skelpulse { 0%, 100% { opacity: .45; } 50% { opacity: .85; } }
+.hxv-sstate { display: flex; flex-direction: column; align-items: center; gap: 7px; padding: 56px 20px; text-align: center; color: var(--v-text2); }
+.hxv-sstate-ic { display: grid; place-items: center; width: 44px; height: 44px; border-radius: 12px; background: var(--v-card); color: var(--v-text3); font-size: 20px; margin-bottom: 4px; }
+.hxv-sstate-ic.bad { color: var(--v-bad); background: rgba(235,127,134,0.10); }
+.hxv-sstate-t { font-size: 15px; color: var(--v-text); font-weight: 600; }
+.hxv-sstate-s { font-size: 12.5px; color: var(--v-text3); max-width: 380px; line-height: 1.5; }
+
+/* ── Flow: breadcrumb + next-step bar + live spine (docs/ux/02 §6) ────── */
+.hxv-breadcrumb { display: flex; align-items: center; gap: 8px; padding: 6px 26px; font-size: 11.5px; border-bottom: 1px solid var(--v-line); flex: none; }
+.hxv-crumb { color: var(--v-text2); }
+.hxv-crumb.cur { color: var(--v-text); font-weight: 600; }
+.hxv-crumb-sep { color: var(--v-text3); }
+.hxv[data-density="compact"] .hxv-breadcrumb { padding: 5px 20px; }
+.hxv[data-density="ultra"] .hxv-breadcrumb { padding: 4px 13px; }
+
+.hxv-nextbar { display: flex; align-items: center; gap: 12px; padding: 9px 26px; border-top: 1px solid var(--v-line); background: var(--v-panel); flex: none; }
+.hxv-nextbar-lbl { text-transform: uppercase; letter-spacing: .1em; font-size: 10px; font-weight: 700; color: var(--v-accent2); }
+.hxv-nextbar-sub { font-size: 12px; color: var(--v-text3); flex: 1; }
+.hxv-nextbar .hxv-btn:disabled { opacity: .5; cursor: not-allowed; }
+.hxv[data-density="ultra"] .hxv-nextbar { padding: 6px 13px; }
+
+/* Spine nodes are clickable + pulse when they become the current stage. */
+.hxv-spine-node { cursor: pointer; transition: opacity var(--v-dur-fast) var(--v-ease-out); outline: none; }
+.hxv-spine-node:hover { opacity: .82; }
+.hxv-spine-node:focus-visible { box-shadow: 0 0 0 2px var(--v-accent); border-radius: 8px; }
+.hxv-spine-node.cur .hxv-spine-dot { animation: hxv-spinepulse var(--v-dur-slow) var(--v-ease-out); }
+@keyframes hxv-spinepulse { 0% { transform: scale(1); } 45% { transform: scale(1.16); } 100% { transform: scale(1); } }
+
+/* Toast action button (Undo, etc.) */
+.hxv-toast-action { margin-left: 8px; background: rgba(255,255,255,0.10); border: 1px solid var(--v-line2); color: var(--v-accent2); font-size: 11px; font-weight: 700; padding: 3px 10px; border-radius: 6px; cursor: pointer; white-space: nowrap; }
+.hxv-toast-action:hover { background: rgba(255,255,255,0.18); }
+
+/* Honesty: a visible "demo" badge marks any not-yet-live sample content (docs/ux/02 §4). */
+.hxv-demo-badge { display: inline-flex; align-items: center; gap: 4px; font-size: 9.5px; font-weight: 700; text-transform: uppercase; letter-spacing: .08em; color: var(--v-warn); background: rgba(226,180,92,0.12); border: 1px solid rgba(226,180,92,0.3); border-radius: 5px; padding: 2px 6px; }
+
+/* Determinate progress bar (Ask pipeline, #17) */
+.hxv-progbar { height: 4px; border-radius: 3px; background: rgba(140,170,220,0.14); overflow: hidden; }
+.hxv-progbar > i { display: block; height: 100%; background: linear-gradient(90deg, var(--v-accent), var(--v-accent2)); border-radius: 3px; transition: width var(--v-dur-slow) var(--v-ease-out); }
+
+/* Latency HUD (dev, #18) */
+.hxv-lat-hud { position: absolute; bottom: 8px; left: 8px; z-index: var(--v-z-dropdown); display: flex; gap: 8px; align-items: center; font-family: var(--v-mono); font-size: 10px; color: var(--v-text3); background: rgba(4,8,16,0.7); border: 1px solid var(--v-line); border-radius: 6px; padding: 3px 8px; pointer-events: none; }
+.hxv-lat-hud b { color: var(--v-text2); font-weight: 600; }
+.hxv-lat-hud .ok { color: var(--v-good); } .hxv-lat-hud .slow { color: var(--v-warn); } .hxv-lat-hud .bad { color: var(--v-bad); }
+
+/* Streaming-reveal cursor (Ask answer, #15) */
+.hxv-cursor { color: var(--v-accent); animation: hxv-blink 1s steps(2, start) infinite; margin-left: 1px; }
+@keyframes hxv-blink { 0%, 100% { opacity: 1; } 50% { opacity: 0; } }
+
+/* ═══ W7: micro-interactions (docs/ux/05 §5) — hover lift, press, focus rings ═══ */
+/* Buttons: hover lift + press-in; primary gets a magnetic glow. */
+.hxv-btn { transition: transform var(--v-dur-fast) var(--v-ease-out), background var(--v-dur-fast) var(--v-ease-out), border-color var(--v-dur-fast), box-shadow var(--v-dur-fast); }
+.hxv-btn:hover { transform: translateY(-1px); }
+.hxv-btn:active { transform: translateY(0) scale(.97); }
+.hxv-btn.solid:hover { box-shadow: 0 4px 16px var(--v-glow); }
+.hxv-ask-send, .hxv-next-go { transition: transform var(--v-dur-fast) var(--v-ease-out), background var(--v-dur-fast), box-shadow var(--v-dur-fast); }
+.hxv-ask-send:hover, .hxv-next-go:hover { transform: translateY(-1px); }
+.hxv-ask-send:active, .hxv-next-go:active { transform: scale(.94); }
+/* Rows / list items: hover highlight + subtle press. */
+.hxv-prow:not(.head), .hxv-row, .hxv-erow:not(.head), .hxv-runrow, .hxv-proj-opt, .hxv-notif-row, .hxv-metric, .hxv-eclaim, .hxv-list-row {
+  transition: background var(--v-dur-fast) var(--v-ease-out), transform var(--v-dur-fast) var(--v-ease-out); }
+.hxv-prow:not(.head):active, .hxv-row:active, .hxv-erow:not(.head):active, .hxv-metric:active, .hxv-runrow:active { transform: scale(.995); }
+/* Chips / sources / tags: hover lift. */
+.hxv-chip, .hxv-src, .hxv-filter, .hxv-dtab { transition: transform var(--v-dur-fast) var(--v-ease-out), background var(--v-dur-fast), color var(--v-dur-fast), border-color var(--v-dur-fast); }
+.hxv-chip:hover, .hxv-src:hover { transform: translateY(-1px); }
+/* Topbar icons + spine dots: press feedback. */
+.hxv-topicon { transition: transform var(--v-dur-fast) var(--v-ease-out), color var(--v-dur-fast), background var(--v-dur-fast); }
+.hxv-topicon:hover { transform: translateY(-1px); }
+.hxv-topicon:active { transform: scale(.9); }
+/* Global keyboard focus ring (a11y — audit X2). */
+.hxv :focus-visible, [class*="hxv-"]:focus-visible { outline: 2px solid var(--v-accent); outline-offset: 2px; border-radius: 5px; }
+
+/* ═══ W7: staggered list entrance (docs/ux/05 §6) — capped so late rows don't lag ═══ */
+.hxv-stag > * { animation: hxv-rowin var(--v-dur-base) var(--v-ease-out) both; }
+@keyframes hxv-rowin { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+.hxv-stag > *:nth-child(1) { animation-delay: 0ms }   .hxv-stag > *:nth-child(2) { animation-delay: 26ms }
+.hxv-stag > *:nth-child(3) { animation-delay: 52ms }  .hxv-stag > *:nth-child(4) { animation-delay: 78ms }
+.hxv-stag > *:nth-child(5) { animation-delay: 104ms } .hxv-stag > *:nth-child(6) { animation-delay: 130ms }
+.hxv-stag > *:nth-child(7) { animation-delay: 156ms } .hxv-stag > *:nth-child(8) { animation-delay: 182ms }
+.hxv-stag > *:nth-child(9) { animation-delay: 208ms } .hxv-stag > *:nth-child(10) { animation-delay: 234ms }
+.hxv-stag > *:nth-child(n+11) { animation-delay: 260ms }
+
+/* ═══ W8: tick-flash live data (#22) — flash on value change, fade out ═══ */
+.hxv-tick { border-radius: 4px; padding: 0 2px; }
+.hxv-tick.up { animation: hxv-tickup var(--v-dur-slower) var(--v-ease-out); }
+.hxv-tick.down { animation: hxv-tickdown var(--v-dur-slower) var(--v-ease-out); }
+@keyframes hxv-tickup { 0% { background: rgba(63,208,160,0.38); color: var(--v-good); } 100% { background: transparent; } }
+@keyframes hxv-tickdown { 0% { background: rgba(235,127,134,0.38); color: var(--v-bad); } 100% { background: transparent; } }
+
+/* ═══ W8: shared-element expand (#21) — drawer expands in; clicked row stays anchored ═══ */
+.hxv-drawer { animation: hxv-drawerin var(--v-dur-base) var(--v-ease-out); transform-origin: right center; }
+@keyframes hxv-drawerin { from { opacity: 0; transform: translateX(26px) scale(.98); } to { opacity: 1; transform: none; } }
+.hxv-prow.sel, .hxv-erow.sel, .hxv-row.sel { background: rgba(51,194,209,0.10) !important; box-shadow: inset 3px 0 0 var(--v-accent); }
+/* W10 #26: inline contradiction highlight — contradicted evidence reads at a glance. */
+.hxv-erow.con:not(.sel) { box-shadow: inset 3px 0 0 var(--v-bad); background: rgba(235,127,134,0.045); }
+
+/* ═══ W8: milestone celebration (#23) — reserved for real peaks (Von Restorff) ═══ */
+.hxv-celebrate { position: relative; }
+.hxv-celebrate::after { content: ""; position: absolute; inset: -2px; border-radius: inherit; pointer-events: none; animation: hxv-celebrate-glow 900ms var(--v-ease-out); }
+@keyframes hxv-celebrate-glow { 0% { box-shadow: 0 0 0 0 rgba(51,194,209,0.55); } 100% { box-shadow: 0 0 0 24px rgba(51,194,209,0); } }
+
+/* ═══ W9 #25: ambient depth — pointer parallax on the (non-interactive) ambient layers ═══
+   Layers drift at different rates for a sense of depth. --px/--py set by JS (rAF-throttled);
+   reduced-motion never sets them, so the layers stay put. */
+.hxv::before { transform: translate3d(calc(var(--px, 0) * 6px), calc(var(--py, 0) * 6px), 0); transition: transform 220ms var(--v-ease-out); }
+.hxv::after  { transform: translate3d(calc(var(--px, 0) * -9px), calc(var(--py, 0) * -9px), 0); transition: transform 320ms var(--v-ease-out); }
 @keyframes hxv-boot { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
 .hxv-side { animation: hxv-fadein .4s ease; }
 @keyframes hxv-fadein { from { opacity: 0; } to { opacity: 1; } }
@@ -473,7 +620,7 @@
 .hxv-emptyc-s { font-size: 11px; color: var(--v-text3); margin-bottom: 14px; line-height: 1.4; }
 
 /* ── Command palette (#12) ───────────────────────────────────────── */
-.hxv-cmdk-scrim { position: absolute; inset: 0; background: rgba(2,4,10,0.6); z-index: 60; display: grid; place-items: start center; padding-top: 12vh; }
+.hxv-cmdk-scrim { position: absolute; inset: 0; background: rgba(2,4,10,0.6); z-index: var(--v-z-modal); display: grid; place-items: start center; padding-top: 12vh; }
 .hxv-cmdk { width: 560px; max-width: 90%; background: var(--v-panel2); border: 1px solid var(--v-line2); border-radius: 12px; box-shadow: 0 30px 80px rgba(0,0,0,0.6); overflow: hidden; }
 .hxv-cmdk-in { width: 100%; background: transparent; border: none; border-bottom: 1px solid var(--v-line); padding: 16px 18px; color: var(--v-text); font-size: 15px; font-family: var(--v-font); }
 .hxv-cmdk-in:focus { outline: none; }
@@ -526,7 +673,7 @@
 .hxv-pline { flex: 0 0 30px; height: 1.5px; background: var(--v-good); opacity: .4; }
 
 /* ── Boot transition (room open) ─────────────────────────────────── */
-.hxv-boot { position: absolute; inset: 0; z-index: 200; background: #05070e; display: grid; place-items: center;
+.hxv-boot { position: absolute; inset: 0; z-index: var(--v-z-boot); background: #05070e; display: grid; place-items: center;
   overflow: hidden; transition: opacity .42s ease; }
 .hxv-boot.leaving { opacity: 0; pointer-events: none; }
 .hxv-boot-stars { position: absolute; inset: 0; width: 100%; height: 100%; }
@@ -716,14 +863,14 @@
 .hxv-side, .hxv-main { position: relative; z-index: 2; }
 
 /* ── Toasts + modal (in-app, Electron-safe) ──────────────────────── */
-.hxv-toasts { position: absolute; bottom: 20px; right: 20px; z-index: 300; display: flex; flex-direction: column; gap: 8px; align-items: flex-end; }
+.hxv-toasts { position: absolute; bottom: 20px; right: 20px; z-index: var(--v-z-toast); display: flex; flex-direction: column; gap: 8px; align-items: flex-end; }
 .hxv-toast { display: flex; align-items: center; gap: 9px; padding: 11px 15px; border-radius: 9px; font-size: 12.5px; color: var(--v-text);
   background: rgba(20,28,38,0.96); border: 1px solid var(--v-line2); box-shadow: 0 10px 34px rgba(0,0,0,0.5);
   animation: hxv-toast-in .24s cubic-bezier(0.16,1,0.3,1); max-width: 360px; }
 @keyframes hxv-toast-in { from { opacity: 0; transform: translateX(16px); } to { opacity: 1; transform: none; } }
 .hxv-toast-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--v-accent); flex: none; }
 .hxv-toast.good .hxv-toast-dot { background: var(--v-good); } .hxv-toast.warn .hxv-toast-dot { background: var(--v-warn); } .hxv-toast.bad .hxv-toast-dot { background: var(--v-bad); }
-.hxv-modal-scrim { position: absolute; inset: 0; z-index: 320; background: rgba(4,8,14,0.6); display: grid; place-items: center; }
+.hxv-modal-scrim { position: absolute; inset: 0; z-index: var(--v-z-modal); background: rgba(4,8,14,0.6); display: grid; place-items: center; }
 .hxv-modal { width: 420px; max-width: 90%; background: var(--v-panel2); border: 1px solid var(--v-line2); border-radius: 14px; padding: 22px; box-shadow: 0 30px 80px rgba(0,0,0,0.6); }
 .hxv-modal-t { font-size: 16px; font-weight: 650; margin-bottom: 4px; }
 .hxv-modal-l { font-size: 12px; color: var(--v-text3); margin-bottom: 12px; }
@@ -731,7 +878,7 @@
 .hxv-modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
 
 /* Notifications dropdown */
-.hxv-notif { position: absolute; top: 48px; right: 16px; z-index: 300; width: 320px; background: var(--v-panel2); border: 1px solid var(--v-line2); border-radius: 12px; box-shadow: 0 20px 60px rgba(0,0,0,0.5); overflow: hidden; }
+.hxv-notif { position: absolute; top: 48px; right: 16px; z-index: var(--v-z-dropdown); width: 320px; background: var(--v-panel2); border: 1px solid var(--v-line2); border-radius: 12px; box-shadow: 0 20px 60px rgba(0,0,0,0.5); overflow: hidden; }
 .hxv-notif-row { display: flex; gap: 10px; padding: 12px 14px; border-bottom: 1px solid var(--v-line); }
 .hxv-notif-row:last-child { border-bottom: none; }
 .hxv-notif-dot { width: 8px; height: 8px; border-radius: 50%; flex: none; margin-top: 4px; }
@@ -789,7 +936,7 @@
 .hxv-cmdk-foot { display: flex; align-items: center; gap: 14px; padding: 8px 14px; border-top: 1px solid var(--v-line); font-size: 10.5px; color: var(--v-text3); }
 .hxv-cmdk-foot kbd, .hxv-cheat-keys kbd { font-family: var(--v-mono); font-size: 10px; background: rgba(255,255,255,0.05); border: 1px solid var(--v-line2); border-radius: 4px; padding: 1px 5px; color: var(--v-text2); margin: 0 1px; }
 
-.hxv-cheat-scrim { position: absolute; inset: 0; background: rgba(2,4,10,0.66); z-index: 62; display: grid; place-items: center; backdrop-filter: blur(5px); -webkit-backdrop-filter: blur(5px); }
+.hxv-cheat-scrim { position: absolute; inset: 0; background: rgba(2,4,10,0.66); z-index: var(--v-z-modal); display: grid; place-items: center; backdrop-filter: blur(5px); -webkit-backdrop-filter: blur(5px); }
 .hxv-cheat { width: 660px; max-width: 92%; background: var(--v-panel2); border: 1px solid var(--v-line2); border-radius: 14px; box-shadow: 0 30px 90px rgba(0,0,0,0.65); overflow: hidden;
   backdrop-filter: blur(26px) saturate(1.4); -webkit-backdrop-filter: blur(26px) saturate(1.4); }
 .hxv-cheat-h { display: flex; align-items: center; justify-content: space-between; padding: 15px 18px; border-bottom: 1px solid var(--v-line); }
@@ -1006,7 +1153,7 @@
 .hxv-view-x:hover { color: var(--v-bad); }
 
 /* ─── Comparison mode (#5) ───────────────────────────────────────────── */
-.hxv-cmptray { position: absolute; z-index: 40; bottom: 18px; left: 50%; transform: translateX(-50%);
+.hxv-cmptray { position: absolute; z-index: var(--v-z-drawer); bottom: 18px; left: 50%; transform: translateX(-50%);
   display: flex; align-items: center; gap: 10px; padding: 9px 12px; border-radius: 12px; max-width: 82%;
   background: var(--v-panel2); border: 1px solid var(--v-line2); box-shadow: 0 18px 50px rgba(0,0,0,0.55);
   backdrop-filter: blur(22px) saturate(1.3); -webkit-backdrop-filter: blur(22px) saturate(1.3); }
@@ -1017,7 +1164,7 @@
 .hxv-cmpchip button:hover { color: var(--v-bad); }
 .hxv-cmptray .hxv-btn { flex: none; font-size: 11.5px; padding: 6px 11px; }
 
-.hxv-cmp-scrim { position: absolute; inset: 0; z-index: 64; background: rgba(2,4,10,0.7); display: grid; place-items: center;
+.hxv-cmp-scrim { position: absolute; inset: 0; z-index: var(--v-z-modal); background: rgba(2,4,10,0.7); display: grid; place-items: center;
   backdrop-filter: blur(5px); -webkit-backdrop-filter: blur(5px); }
 .hxv-cmp { width: min(92%, 1000px); max-height: 84vh; overflow: auto; background: var(--v-panel2); border: 1px solid var(--v-line2);
   border-radius: 14px; box-shadow: 0 30px 90px rgba(0,0,0,0.65); backdrop-filter: blur(26px); -webkit-backdrop-filter: blur(26px); }
@@ -1053,7 +1200,7 @@
 @media (prefers-reduced-motion: reduce) { .hxv-ticker-track { animation: none; } }
 
 /* ─── Hover-peek card (#9) ───────────────────────────────────────────── */
-.hxv-peek { position: fixed; z-index: 70; width: 276px; padding: 12px 14px; border-radius: 11px; pointer-events: none;
+.hxv-peek { position: fixed; z-index: var(--v-z-dropdown); width: 276px; padding: 12px 14px; border-radius: 11px; pointer-events: none;
   background: var(--v-panel2); border: 1px solid var(--v-line2); box-shadow: 0 20px 50px rgba(0,0,0,0.6);
   backdrop-filter: blur(22px) saturate(1.3); -webkit-backdrop-filter: blur(22px) saturate(1.3); animation: hxv-peek-in .12s ease; }
 @keyframes hxv-peek-in { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
@@ -1063,7 +1210,7 @@
 .hxv-peek-row .hxv-support { padding: 1px 7px; font-size: 10px; }
 
 /* ─── Right-click context menu (#19) ─────────────────────────────────── */
-.hxv-ctxmenu { position: fixed; z-index: 72; min-width: 184px; padding: 5px; border-radius: 10px;
+.hxv-ctxmenu { position: fixed; z-index: var(--v-z-dropdown); min-width: 184px; padding: 5px; border-radius: 10px;
   background: var(--v-panel2); border: 1px solid var(--v-line2); box-shadow: 0 20px 50px rgba(0,0,0,0.6);
   backdrop-filter: blur(24px) saturate(1.3); -webkit-backdrop-filter: blur(24px) saturate(1.3); animation: hxv-peek-in .1s ease; }
 .hxv-ctxitem { display: flex; align-items: center; gap: 9px; padding: 7px 10px; border-radius: 6px; font-size: 12.5px; color: var(--v-text2); cursor: pointer; }
@@ -1157,3 +1304,147 @@
   .hxv-bento { grid-template-columns: 1fr; }
   .hxv-pstages { flex-wrap: wrap; }
 }
+
+/* ── HELIX structured report (Research Engine W5) ─────────────────────────
+   Renders the HelixReport schema. Reading-optimised: measure capped near 70ch,
+   sections separated by space rather than boxes-in-boxes. Two things are
+   deliberately loud — the `Inference` badge and the degraded banner — because
+   both exist to stop the reader mistaking analysis or a partial run for
+   sourced, complete fact. */
+.hxr { padding: 18px 20px 22px; }
+.hxr-head { border-bottom: 1px solid var(--v-line); padding-bottom: 12px; margin-bottom: 16px; }
+.hxr-title { font-size: 19px; line-height: 1.3; font-weight: 650; color: var(--v-text); margin: 0 0 7px; text-wrap: balance; }
+.hxr-meta { display: flex; flex-wrap: wrap; gap: 14px; font-family: var(--v-mono); font-size: 11px; color: var(--v-text3); }
+.hxr-meta span { display: inline-flex; align-items: center; gap: 5px; }
+.hxr-meta span::before { content: ""; width: 3px; height: 3px; border-radius: 50%; background: var(--v-accent2); opacity: .7; }
+
+.hxr-degraded { display: flex; gap: 8px; padding: 10px 13px; margin-bottom: 16px; border-radius: var(--v-r-sm);
+  background: rgba(242,176,61,0.10); border: 1px solid rgba(242,176,61,0.32); color: var(--v-text); font-size: 12.5px; line-height: 1.5; }
+.hxr-degraded strong { color: var(--v-warn); }
+
+.hxr-tldr { font-size: 14.5px; line-height: 1.62; color: var(--v-text); margin: 0 0 20px; max-width: 72ch;
+  padding-left: 13px; border-left: 2px solid var(--v-accent); }
+
+.hxr-sec { margin-bottom: 22px; }
+/* Inference sections are visually separated from sourced ones — never the same surface. */
+.hxr-sec-inf { padding: 12px 14px; border-radius: var(--v-r-sm); background: rgba(140,170,220,0.045); border: 1px dashed var(--v-line2); }
+.hxr-sec-h { display: flex; align-items: center; gap: 9px; margin-bottom: 9px; flex-wrap: wrap; }
+.hxr-sec-t { font-size: 13px; font-weight: 700; letter-spacing: .055em; text-transform: uppercase; color: var(--v-accent2); margin: 0; }
+.hxr-inf { font-size: 9.5px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; padding: 2px 7px; border-radius: 20px;
+  color: var(--v-purple); background: rgba(160,130,230,0.15); border: 1px solid rgba(160,130,230,0.34); }
+.hxr-conf { font-family: var(--v-mono); font-size: 10px; text-transform: uppercase; letter-spacing: .05em; color: var(--v-text3); }
+.hxr-conf-strong { color: var(--v-good); }
+.hxr-conf-weak { color: var(--v-warn); }
+
+.hxr-prose { font-size: 13.5px; line-height: 1.68; color: var(--v-text); margin: 0; max-width: 72ch; white-space: pre-wrap; }
+
+.hxr-tablewrap { overflow-x: auto; border: 1px solid var(--v-line); border-radius: var(--v-r-sm); }
+.hxr-table { border-collapse: collapse; width: 100%; font-size: 12.5px; }
+.hxr-table th, .hxr-table td { padding: 8px 12px; text-align: left; border-bottom: 1px solid var(--v-line); white-space: nowrap; }
+.hxr-table thead th { font-family: var(--v-mono); font-size: 10.5px; text-transform: uppercase; letter-spacing: .05em;
+  color: var(--v-text3); background: var(--v-panel2); position: sticky; top: 0; }
+.hxr-table tbody tr:last-child td, .hxr-table tbody tr:last-child th { border-bottom: none; }
+.hxr-table tbody tr:hover { background: rgba(140,170,220,0.045); }
+/* Figures line up column-wise — the whole point of choosing a table. */
+.hxr-table td { font-variant-numeric: tabular-nums; }
+.hxr-rowh { font-weight: 600; color: var(--v-text2); background: var(--v-panel2); }
+
+.hxr-bars { display: grid; gap: 7px; max-width: 62ch; }
+.hxr-bar-row { display: grid; grid-template-columns: minmax(90px, 30%) 1fr auto; align-items: center; gap: 10px; font-size: 12px; }
+.hxr-bar-l { color: var(--v-text2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hxr-bar-track { height: 7px; border-radius: 4px; background: var(--v-line); overflow: hidden; }
+.hxr-bar-fill { display: block; height: 100%; border-radius: 4px; background: linear-gradient(90deg, var(--v-accent), var(--v-cyan)); }
+.hxr-bar-v { font-family: var(--v-mono); font-size: 11.5px; color: var(--v-text); font-variant-numeric: tabular-nums; }
+
+.hxr-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 9px; max-width: 74ch; }
+.hxr-list li { position: relative; padding-left: 16px; font-size: 13px; line-height: 1.58; color: var(--v-text); }
+.hxr-list li::before { content: ""; position: absolute; left: 0; top: 8px; width: 5px; height: 5px; border-radius: 50%; background: var(--v-accent2); }
+.hxr-list-risk li::before { background: var(--v-warn); }
+.hxr-li-t { font-weight: 600; }
+.hxr-li-d { display: block; margin-top: 2px; color: var(--v-text2); font-weight: 400; }
+
+.hxr-steps { list-style: none; margin: 0; padding: 0; display: grid; gap: 12px; max-width: 74ch; counter-reset: hxrstep; }
+.hxr-steps li { display: grid; grid-template-columns: 26px 1fr; gap: 11px; align-items: start; }
+.hxr-step-n { width: 24px; height: 24px; border-radius: 50%; display: grid; place-items: center; font-family: var(--v-mono);
+  font-size: 11.5px; font-weight: 700; color: var(--v-accent2); background: rgba(140,170,220,0.12); border: 1px solid var(--v-line2); }
+.hxr-step-t { font-size: 13px; font-weight: 600; color: var(--v-text); line-height: 1.5; }
+.hxr-step-d { font-size: 12.5px; color: var(--v-text2); line-height: 1.58; margin-top: 3px; }
+
+.hxr-cites { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 9px; }
+.hxr-cite { font-family: var(--v-mono); font-size: 10px; padding: 2px 7px; border-radius: 4px; cursor: pointer;
+  color: var(--v-text3); background: transparent; border: 1px solid var(--v-line2); transition: color var(--v-dur-fast) var(--v-ease-out), border-color var(--v-dur-fast) var(--v-ease-out); }
+.hxr-cite:hover, .hxr-cite:focus-visible { color: var(--v-accent2); border-color: var(--v-accent2); }
+.hxr-cite-more { font-family: var(--v-mono); font-size: 10px; color: var(--v-text3); align-self: center; }
+
+.hxr-lim { padding: 12px 14px; border-radius: var(--v-r-sm); background: rgba(242,176,61,0.055); border: 1px solid rgba(242,176,61,0.22); }
+.hxr-lim .hxr-sec-t { color: var(--v-warn); }
+
+.hxr-srcs { list-style: none; margin: 0; padding: 0; display: grid; gap: 7px; }
+.hxr-srcs li { display: flex; gap: 9px; align-items: baseline; font-size: 12.5px; scroll-margin-top: 70px; }
+.hxr-srcs li:target { background: rgba(140,170,220,0.10); border-radius: 4px; }
+.hxr-src-n { font-family: var(--v-mono); font-size: 10.5px; font-weight: 700; color: var(--v-accent2); flex: none; }
+.hxr-src-a { color: var(--v-text2); text-decoration: none; overflow-wrap: anywhere; }
+a.hxr-src-a:hover { color: var(--v-accent2); text-decoration: underline; }
+.hxr-src-c { font-family: var(--v-mono); font-size: 10px; color: var(--v-good); flex: none; }
+
+@media (max-width: 720px) {
+  .hxr { padding: 14px 14px 18px; }
+  .hxr-bar-row { grid-template-columns: minmax(70px, 38%) 1fr auto; }
+}
+
+/* Report header actions + table of contents (W5). The TOC appears only on reports with
+   4+ sections — on a short report it would be chrome, not navigation. */
+.hxr-head-top { display: flex; align-items: flex-start; justify-content: space-between; gap: 14px; }
+.hxr-copy { flex: none; font-family: var(--v-mono); font-size: 10.5px; letter-spacing: .04em; text-transform: uppercase;
+  padding: 5px 11px; border-radius: var(--v-r-sm); cursor: pointer; color: var(--v-text3);
+  background: transparent; border: 1px solid var(--v-line2);
+  transition: color var(--v-dur-fast) var(--v-ease-out), border-color var(--v-dur-fast) var(--v-ease-out); }
+.hxr-copy:hover, .hxr-copy:focus-visible { color: var(--v-accent2); border-color: var(--v-accent2); }
+
+.hxr-toc { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 18px; }
+.hxr-toc-a { font-size: 11.5px; padding: 4px 10px; border-radius: 20px; text-decoration: none;
+  color: var(--v-text2); background: rgba(140,170,220,0.06); border: 1px solid var(--v-line);
+  transition: color var(--v-dur-fast) var(--v-ease-out), border-color var(--v-dur-fast) var(--v-ease-out); }
+.hxr-toc-a:hover, .hxr-toc-a:focus-visible { color: var(--v-accent2); border-color: var(--v-accent2); }
+.hxr-sec { scroll-margin-top: 16px; }
+
+@media (prefers-reduced-motion: reduce) {
+  .hxr-copy, .hxr-toc-a, .hxr-cite { transition: none; }
+}
+
+/* Donut row for share-of-whole chart sections (W5). Each ring carries its own label so a
+   slice is never an unlabelled colour. */
+.hxr-donuts { display: flex; flex-wrap: wrap; gap: 16px; }
+.hxr-donut { flex: none; }
+
+/* Verification block (W6). The supported-claim ratio is only honest next to the claims that
+   failed, so the bar and the flag list live in one block. Segment widths are proportional to
+   real counts — never a decorative fixed split. */
+.hxr-verify { padding: 12px 14px; border-radius: var(--v-r-sm); background: rgba(140,170,220,0.045); border: 1px solid var(--v-line); }
+.hxr-vscore { font-family: var(--v-mono); font-size: 11px; color: var(--v-text3); }
+.hxr-vbar { display: flex; height: 7px; border-radius: 4px; overflow: hidden; background: var(--v-line); margin-bottom: 9px; }
+.hxr-vseg { display: block; height: 100%; }
+.hxr-v-supported { background: var(--v-good); }
+.hxr-v-unsupported { background: var(--v-warn); }
+.hxr-v-contradicted { background: var(--v-bad); }
+.hxr-vnote { font-size: 12px; color: var(--v-text2); margin: 0 0 9px; }
+
+/* Live source arrivals during gather (W7). Newest last, capped to 6 — a growing wall of
+   URLs is noise; a short moving list reads as progress. */
+.hxv-livesrc { display: flex; flex-wrap: wrap; gap: 5px; padding: 8px 10px 2px; border-top: 1px solid var(--v-line); margin-top: 6px; }
+.hxv-livesrc-i { font-family: var(--v-mono); font-size: 10px; color: var(--v-text3);
+  padding: 2px 7px; border-radius: 4px; background: rgba(140,170,220,0.07); border: 1px solid var(--v-line);
+  animation: hxv-srcin var(--v-dur-base) var(--v-ease-out) both; }
+@keyframes hxv-srcin { from { opacity: 0; transform: translateY(3px); } to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) { .hxv-livesrc-i { animation: none; } }
+
+/* Depth selector (W8) — a real segmented control, since the choice really changes the run. */
+.hxv-depth { display: inline-flex; border: 1px solid var(--v-line); border-radius: var(--v-r-sm); overflow: hidden; }
+.hxv-depth-b { font-size: 11.5px; padding: 5px 11px; cursor: pointer; color: var(--v-text2);
+  background: transparent; border: none; border-right: 1px solid var(--v-line);
+  transition: color var(--v-dur-fast) var(--v-ease-out), background var(--v-dur-fast) var(--v-ease-out); }
+.hxv-depth-b:last-child { border-right: none; }
+.hxv-depth-b:hover { color: var(--v-text); background: rgba(140,170,220,0.07); }
+.hxv-depth-b.on { color: var(--v-accent2); background: rgba(140,170,220,0.14); font-weight: 600; }
+.hxv-depth-b:focus-visible { outline: 2px solid var(--v-accent2); outline-offset: -2px; }
+@media (prefers-reduced-motion: reduce) { .hxv-depth-b { transition: none; } }

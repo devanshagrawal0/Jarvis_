@@ -185,6 +185,7 @@ export function StatusStrip({ pills, ticker }: { pills?: [string, string, string
   const dot = (t: string) => t === "good" ? "var(--v-good)" : t === "warn" ? "var(--v-warn)" : t === "bad" ? "var(--v-bad)" : "var(--v-accent2)";
   return (
     <div className="hxv-status">
+      <span className="hxv-demo-badge" style={{ marginRight: 6 }} title="Ambient status strip — sample values, not yet wired to live telemetry.">demo</span>
       <div className="hxv-status-pills">
         {P.map(([k, v, tone]) => (
           <span className="hxv-status-pill" key={k}><span className="hxv-status-dot" style={{ background: dot(tone) }} />{k} <b>{v}</b></span>

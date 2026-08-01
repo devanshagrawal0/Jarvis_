@@ -19,6 +19,7 @@ const SECRET_FIELDS = new Set([
   "newsApiKey",
   "instagramAccessToken",
   "instagramAccountId",
+  "playwrightExtensionToken",
 ]);
 
 function runPowerShell(script, input = "") {

@@ -4,7 +4,7 @@ type JarvisCommandBarProps = {
   onSubmit?: (text: string, files?: File[]) => void;
   onMicToggle?: (active: boolean) => void;
   onModules?: () => void;
-  model?: string;               // Cortex v4 — "cortex" | "cortex-prime"
+  model?: string;               // "cortex" | "eclipse"
   onSetModel?: (v: string) => void;
   strength?: string;            // Cortex v4 P1.4 — "cost-guarded" | "balanced" | "full"
   onCycleStrength?: () => void;
@@ -226,20 +226,19 @@ function IconApps() {
   );
 }
 
-// Cortex v4 — models shown in the picker. "Cortex" is the standard brain (Effort
-// picks its tier). "Cortex Prime" forces the strongest reasoning model — credit-heavy.
+// Products shown in the picker. Cortex owns the direct-chat effort ladder;
+// Eclipse is the durable mission runtime.
 const MODEL_NAME = "Cortex";
 // Descriptions state EXACTLY what each option does — Effort maps to a real model tier.
 const MODELS: { id: string; label: string; desc: string }[] = [
-  { id: "cortex", label: "Cortex", desc: "Fast everyday brain" },
-  { id: "cortex-prime", label: "Cortex Prime", desc: "Deep reasoning · higher cost" },
+  { id: "cortex", label: "Cortex", desc: "Everyday to deep reasoning" },
   { id: "eclipse", label: "Eclipse", desc: "Durable multi-agent research mission" },
 ];
-// Standard effort tiers (Cortex / Cortex Prime) — each maps to a real model tier.
+// Cortex effort tiers map to real model + thinking levels in the backend.
 const STD_EFFORTS: { id: string; label: string; desc: string }[] = [
-  { id: "cost-guarded", label: "Eco", desc: "Flash-Lite · fastest, cheapest" },
-  { id: "balanced", label: "Balanced", desc: "Flash · smarter" },
-  { id: "full", label: "Max", desc: "Pro · deepest reasoning" },
+  { id: "cost-guarded", label: "Eco", desc: "Flash · minimal thinking" },
+  { id: "balanced", label: "Balanced", desc: "Flash · medium thinking" },
+  { id: "full", label: "Max", desc: "Pro · high thinking · extended budget" },
 ];
 // Eclipse mission tiers — the effort names swap to these when Eclipse is the model.
 const ECLIPSE_EFFORTS: { id: string; label: string; desc: string }[] = [

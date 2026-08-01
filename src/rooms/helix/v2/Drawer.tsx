@@ -11,7 +11,11 @@ export interface DrawerItem {
   source?: string;
   pointer?: string[];                 // e.g. ["Page 3", "Section: Fees", "Lines 8–12"]
   support?: { label: string; tone: "sup" | "con" | "uns" };
-  confidence?: { label: "Strong" | "Moderate" | "Weak" | "Insufficient"; inputs: [string, string][] } | null;
+  // Headline label + the inputs behind it. Usually an ordinal confidence
+  // ("Strong"/"Moderate"/"Weak"/"Insufficient" → toned via CONF_TONE), but surfaces also use
+  // it for a headline value (an indicator's current value, a graph node's type), so it's a
+  // string with a neutral tone fallback rather than a narrow union that call sites violate.
+  confidence?: { label: string; inputs: [string, string][] } | null;
   lineage?: string[];
   audit?: [string, string][];
 }
@@ -81,7 +85,7 @@ function DrawerPanel({ item, onClose }: { item: DrawerItem; onClose: () => void 
             <div className="hxv-u hxv-dsec-h">Confidence</div>
             {item.confidence ? (
               <>
-                <span className={"hxv-conf-badge hxv-badge " + CONF_TONE[item.confidence.label]}>{item.confidence.label}</span>
+                <span className={"hxv-conf-badge hxv-badge " + (CONF_TONE[item.confidence.label] || "med")}>{item.confidence.label}</span>
                 <div style={{ marginTop: 10 }}>
                   {item.confidence.inputs.map(([k, v]) => (
                     <div className="hxv-why" key={k}><span className="hxv-why-k">{k}</span><span className="hxv-why-v">{v}</span></div>

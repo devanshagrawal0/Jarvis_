@@ -25,6 +25,15 @@ async function powershell(script, timeout = 30000) {
   return stdout.trim();
 }
 
+function parseBrokerJson(output, fallback) {
+  const raw = String(output || "").replace(/^\uFEFF/, "").trim();
+  if (!raw && fallback !== undefined) return fallback;
+  // UI Automation window/control titles can contain literal CR, LF, tabs, or
+  // other control bytes. PowerShell's ConvertTo-Json may emit them raw, which
+  // makes otherwise valid broker output impossible for JSON.parse to read.
+  return JSON.parse(raw.replace(/[\u0000-\u001F]/g, " "));
+}
+
 const bootstrap = [
   "Add-Type -AssemblyName UIAutomationClient",
   "Add-Type -AssemblyName UIAutomationTypes",
@@ -43,7 +52,7 @@ async function listWindows(args) {
     "$result|ConvertTo-Json -Depth 5 -Compress",
   ].join(";");
   const output = await powershell(script);
-  const parsed = output ? JSON.parse(output) : [];
+  const parsed = parseBrokerJson(output, []);
   return { windows: Array.isArray(parsed) ? parsed : [parsed] };
 }
 
@@ -60,7 +69,7 @@ async function inspectWindow(args) {
     "$result=@($nodes|ForEach-Object { @{name=$_.Current.Name;automationId=$_.Current.AutomationId;controlType=$_.Current.ControlType.ProgrammaticName;enabled=$_.Current.IsEnabled;offscreen=$_.Current.IsOffscreen;processId=$_.Current.ProcessId} })",
     "@{window=@{name=$window.Current.Name;processId=$window.Current.ProcessId};controls=$result}|ConvertTo-Json -Depth 5 -Compress",
   ].join(";");
-  return JSON.parse(await powershell(script));
+  return parseBrokerJson(await powershell(script));
 }
 
 async function focusWindow(args) {
@@ -74,7 +83,62 @@ async function focusWindow(args) {
     "$window.SetFocus()",
     "@{focused=$true;name=$window.Current.Name;processId=$window.Current.ProcessId}|ConvertTo-Json -Compress",
   ].join(";");
-  return JSON.parse(await powershell(script));
+  return parseBrokerJson(await powershell(script));
+}
+
+async function createBrowserWindow(args) {
+  const requestedUrl = clean(args.url, 2000);
+  let parsed;
+  try { parsed = new URL(requestedUrl); } catch { throw new Error("A valid browser URL is required"); }
+  if (!["http:", "https:"].includes(parsed.protocol)) throw new Error("Only HTTP(S) browser windows are allowed");
+  const script = [
+    bootstrap,
+    "$candidates=@((Join-Path $env:ProgramFiles 'Google\\Chrome\\Application\\chrome.exe'),(Join-Path ${env:ProgramFiles(x86)} 'Google\\Chrome\\Application\\chrome.exe'),(Join-Path $env:LOCALAPPDATA 'Google\\Chrome\\Application\\chrome.exe'))",
+    "$chrome=$candidates|Where-Object {$_ -and (Test-Path $_)}|Select-Object -First 1",
+    "if(-not $chrome){throw 'Google Chrome executable was not found'}",
+    "$root=[System.Windows.Automation.AutomationElement]::RootElement",
+    "$before=@($root.FindAll([System.Windows.Automation.TreeScope]::Children,[System.Windows.Automation.Condition]::TrueCondition)|Where-Object {$_.Current.ClassName -eq 'Chrome_WidgetWin_1'}|ForEach-Object {[int64]$_.Current.NativeWindowHandle})",
+    `$url=${psQuote(parsed.href)}`,
+    "Start-Process -FilePath $chrome -ArgumentList @('--new-window','--start-minimized',$url) -WindowStyle Minimized|Out-Null",
+    "$deadline=(Get-Date).AddSeconds(10);$window=$null",
+    "do{$window=$root.FindAll([System.Windows.Automation.TreeScope]::Children,[System.Windows.Automation.Condition]::TrueCondition)|Where-Object {$_.Current.ClassName -eq 'Chrome_WidgetWin_1' -and $before -notcontains [int64]$_.Current.NativeWindowHandle}|Select-Object -First 1;if(-not $window){Start-Sleep -Milliseconds 150}}while(-not $window -and (Get-Date)-lt $deadline)",
+    "if(-not $window){throw 'A separate Chrome task window was not detected'}",
+    "$pattern=$null;if($window.TryGetCurrentPattern([System.Windows.Automation.WindowPattern]::Pattern,[ref]$pattern)){$pattern.SetWindowVisualState([System.Windows.Automation.WindowVisualState]::Minimized)}",
+    "@{created=$true;minimized=$true;handle=[string]$window.Current.NativeWindowHandle;processId=$window.Current.ProcessId;title=$window.Current.Name}|ConvertTo-Json -Compress",
+  ].join(";");
+  return parseBrokerJson(await powershell(script, 20000));
+}
+
+async function setWindowState(args, state) {
+  const handle = clean(args.handle, 30);
+  if (!/^\d+$/.test(handle) || handle === "0") throw new Error("A valid native window handle is required");
+  const visualState = state === "restore" ? "Normal" : "Minimized";
+  const script = [
+    bootstrap,
+    `$handle=[int]${handle}`,
+    "$root=[System.Windows.Automation.AutomationElement]::FromHandle([IntPtr]$handle)",
+    "if(-not $root){throw 'Window handle is no longer available'}",
+    "$pattern=$null;if(-not $root.TryGetCurrentPattern([System.Windows.Automation.WindowPattern]::Pattern,[ref]$pattern)){throw 'Window state control is unavailable'}",
+    `$pattern.SetWindowVisualState([System.Windows.Automation.WindowVisualState]::${visualState})`,
+    state === "restore" ? "$root.SetFocus()" : "",
+    `@{updated=$true;state=${psQuote(state)};handle=[string]$handle;title=$root.Current.Name}|ConvertTo-Json -Compress`,
+  ].filter(Boolean).join(";");
+  return parseBrokerJson(await powershell(script, 10000));
+}
+
+async function closeWindow(args) {
+  const handle = clean(args.handle, 30);
+  if (!/^\d+$/.test(handle) || handle === "0") throw new Error("A valid native window handle is required");
+  const script = [
+    bootstrap,
+    `$handle=[int]${handle}`,
+    "$window=[System.Windows.Automation.AutomationElement]::FromHandle([IntPtr]$handle)",
+    "if(-not $window){return @{closed=$true;alreadyGone=$true;handle=[string]$handle}|ConvertTo-Json -Compress}",
+    "$pattern=$null;if(-not $window.TryGetCurrentPattern([System.Windows.Automation.WindowPattern]::Pattern,[ref]$pattern)){throw 'Window close control is unavailable'}",
+    "$pattern.Close()",
+    "@{closed=$true;alreadyGone=$false;handle=[string]$handle}|ConvertTo-Json -Compress",
+  ].join(";");
+  return parseBrokerJson(await powershell(script, 10000));
 }
 
 async function invokeControl(args) {
@@ -93,7 +157,7 @@ async function invokeControl(args) {
     "$pattern.Invoke()",
     "@{invoked=$true;window=$window.Current.Name;control=$control.Current.Name;automationId=$control.Current.AutomationId}|ConvertTo-Json -Compress",
   ].join(";");
-  return JSON.parse(await powershell(script));
+  return parseBrokerJson(await powershell(script));
 }
 
 async function setControlValue(args) {
@@ -113,7 +177,7 @@ async function setControlValue(args) {
     `if($pattern.Current.IsReadOnly){throw 'Control is read-only'};$pattern.SetValue(${psQuote(value)})`,
     "@{updated=$true;window=$window.Current.Name;control=$control.Current.Name;valueLength=" + value.length + "}|ConvertTo-Json -Compress",
   ].join(";");
-  return JSON.parse(await powershell(script));
+  return parseBrokerJson(await powershell(script));
 }
 
 const handlers = {
@@ -121,6 +185,10 @@ const handlers = {
   list_windows: listWindows,
   inspect_window: inspectWindow,
   focus_window: focusWindow,
+  create_browser_window: createBrowserWindow,
+  minimize_window: (args) => setWindowState(args, "minimize"),
+  restore_window: (args) => setWindowState(args, "restore"),
+  close_window: closeWindow,
   invoke_control: invokeControl,
   set_control_value: setControlValue,
 };

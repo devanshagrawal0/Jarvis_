@@ -111,6 +111,12 @@ export async function fetchBars(sym: string, tf = "1d", range = "6mo"): Promise<
   const r = await safe<{ bars: Bar[] }>(`/api/apex/bars/${encodeURIComponent(sym)}?tf=${tf}&range=${range}`, { bars: [] });
   return (r.bars || []).filter((b) => b && b.c != null);
 }
+/* Explicit date-range daily bars (from/to = YYYY-MM-DD). Returns TRUE daily history for any span
+   (range=max coerces long daily requests to monthly). Used by the stress lab's crash windows. */
+export async function fetchBarsRange(sym: string, tf: string, from: string, to: string): Promise<Bar[]> {
+  const r = await safe<{ bars: Bar[] }>(`/api/apex/bars/${encodeURIComponent(sym)}?tf=${tf}&from=${from}&to=${to}`, { bars: [] });
+  return (r.bars || []).filter((b) => b && b.c != null);
+}
 export async function fetchNewsImpact(sym: string): Promise<{ title: string; dir: string; magnitude: number; sector: string }[]> {
   const r = await safe<{ impact: { title: string; sentiment_dir: number; impact: number; sector: string }[] }>(`/api/apex/news/impact/${encodeURIComponent(sym)}`, { impact: [] });
   return (r.impact || []).map((i) => ({ title: i.title, dir: i.sentiment_dir > 0 ? "bullish" : "bearish", magnitude: i.impact, sector: i.sector }));

@@ -77,9 +77,18 @@ function priceFor(model) {
   const m = String(model || "");
   return PRICING.find(p => p.re.test(m)) || { in: 0.30, out: 2.50 };
 }
-function helixCostUsd(model, inTokens = 0, outTokens = 0) {
+// ── GROUNDED SEARCH IS BILLED PER REQUEST, NOT PER TOKEN ──────────────────
+// Google bills Search-grounding requests separately from tokens (list price ~$35 per 1,000).
+// This meter only ever counted tokens, so a research run firing 6 grounded searches reported
+// ~$0.03 when it really cost ~$0.24 — about 8x understated. That under-report is exactly what
+// let a day of testing drain a balance without either of us seeing it in the numbers. Every
+// grounded call must be counted, or the figure is worse than useless: it is misleading.
+const GROUNDING_USD_PER_REQUEST = Number(process.env.HELIX_GROUNDING_USD || 0.035);
+
+function helixCostUsd(model, inTokens = 0, outTokens = 0, opts = {}) {
   const p = priceFor(model);
-  return +(((inTokens * p.in) + (outTokens * p.out)) / 1_000_000).toFixed(6);
+  const tokens = ((inTokens * p.in) + (outTokens * p.out)) / 1_000_000;
+  return +(tokens + (opts.grounded ? GROUNDING_USD_PER_REQUEST : 0)).toFixed(6);
 }
 // Rough token estimate when a provider doesn't return usage (~4 chars/token).
 function estimateTokens(text) { return Math.ceil(String(text || "").length / 4); }
@@ -87,5 +96,5 @@ function estimateTokens(text) { return Math.ceil(String(text || "").length / 4);
 module.exports = {
   HELIX_OP_POLICY, policyFor, memoryNamespace,
   isNonAnswer, assessInquiryConfidence,
-  helixCostUsd, priceFor, estimateTokens,
+  helixCostUsd, priceFor, estimateTokens, GROUNDING_USD_PER_REQUEST,
 };

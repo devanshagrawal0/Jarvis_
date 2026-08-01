@@ -68,7 +68,7 @@ export function Analyze({ projectId }: { projectId?: string } = {}) {
       <div className="hxv-surface-head">
         <div>
           <div className="hxv-h1">Analyze &amp; Decide</div>
-          <div className="hxv-h1-sub">What the evidence means, and what we commit to.</div>
+          <div className="hxv-h1-sub">What the evidence means, and what we commit to. <span className="hxv-demo-badge" title="The assertions & indicators shown are sample scaffolding; the decision composer below records REAL decisions with a live server-side integrity check.">sample analysis · real decisions</span></div>
         </div>
         <button className="hxv-btn" onClick={reRun} disabled={rerunning}><Ico.spark /> {rerunning ? "Re-running…" : "Re-run analysis"}</button>
       </div>

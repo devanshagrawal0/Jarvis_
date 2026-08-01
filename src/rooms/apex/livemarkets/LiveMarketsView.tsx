@@ -3,7 +3,7 @@ import {
   useApexLive, useMicro, fetchQuote, fetchBars, fetchFundamentals, fetchNewsImpact,
   type Quote, type Fundamentals, type Bar, type Story,
 } from "../apex-data";
-import { ChartPro, type Indicators } from "./ChartPro";
+import { ChartPro, type Indicators, type ChartKind, type DrawKind, type DrawApi } from "./ChartPro";
 import { useOracle, OracleCard, OracleOverlay, ORACLE_CARD_CSS } from "./OraclePanel";
 import { ema, rsi as calcRsi, macd as calcMacd, vwap as calcVwap, atr as calcAtr, relVol, closes, highs, lows, STRATEGIES, type StrategyId } from "./indicators";
 import type { ReplayResult } from "./indicators";
@@ -130,7 +130,15 @@ export function LiveMarketsView() {
   const [barsLoading, setBarsLoading] = useState(false);
   const [newsImpact, setNewsImpact] = useState<{ title: string; dir: string; magnitude: number; sector: string }[]>([]);
 
-  const [ind, setInd] = useState<Indicators>({ ema: true, bb: true, vwap: true, volume: true, rsi: true, macd: true });
+  // Clean default: a normal candlestick price chart with volume only. Everything else is opt-in.
+  const [ind, setInd] = useState<Indicators>({ ema: false, bb: false, vwap: false, volume: true, rsi: false, macd: false });
+  const [chartType, setChartType] = useState<ChartKind>("candles");
+  const [showForecast, setShowForecast] = useState(false);   // Oracle cones off by default (not a "normal" chart)
+  const [tool, setTool] = useState<DrawKind | null>(null);   // active drawing tool (null = cursor/select)
+  const [magnet, setMagnet] = useState(false);
+  const [scaleMode, setScaleMode] = useState<"normal" | "log" | "percent">("normal");
+  const [drawCount, setDrawCount] = useState(0);
+  const drawApi = useRef<DrawApi | null>(null);
   const [replay, setReplay] = useState(false);
   const [replaySpeed, setReplaySpeed] = useState(8);
   const [replayStrat, setReplayStrat] = useState<StrategyId>("ema_stack");
@@ -256,12 +264,28 @@ export function LiveMarketsView() {
           <SymbolHeader symbol={symbol} quote={quote} fund={fund} bars={bars} rv={rv} up={up} />
           <div className="axt-chartbar">
             <div className="axt-tfs">{TF.map((t) => <button key={t.k} className={tf === t.k ? "on" : ""} onClick={() => setTf(t.k)}>{t.k}</button>)}</div>
+            <div className="axt-ctypes">
+              {([["candles", "▮", "Candles"], ["bars", "≣", "Bar"], ["line", "／", "Line"], ["area", "◺", "Area"], ["heikin", "◧", "Heikin-Ashi"]] as [ChartKind, string, string][]).map(([k, ic, lbl]) => (
+                <button key={k} className={chartType === k ? "on" : ""} onClick={() => setChartType(k)} title={lbl}>{ic}</button>
+              ))}
+            </div>
             <div className="axt-indtoggles">
               {([["ema", "EMA"], ["bb", "BB"], ["vwap", "VWAP"], ["volume", "VOL"], ["rsi", "RSI"], ["macd", "MACD"]] as [keyof Indicators, string][]).map(([k, lbl]) => (
                 <button key={k} className={ind[k] ? "on" : ""} onClick={() => setInd((p) => ({ ...p, [k]: !p[k] }))}>{lbl}</button>
               ))}
             </div>
             <div className="axt-chartbar-r">
+              <div className="axt-navctl">
+                <button onClick={() => drawApi.current?.zoomOut()} title="Zoom out">−</button>
+                <button onClick={() => drawApi.current?.zoomIn()} title="Zoom in">+</button>
+                <button onClick={() => drawApi.current?.resetView()} title="Fit / reset view (or double-click the chart)">⤢</button>
+                <button onClick={() => drawApi.current?.scrollRealtime()} title="Scroll to latest">»|</button>
+              </div>
+              <div className="axt-scalectl">
+                <button className={scaleMode === "log" ? "on" : ""} onClick={() => setScaleMode((m) => (m === "log" ? "normal" : "log"))} title="Logarithmic price scale">LOG</button>
+                <button className={scaleMode === "percent" ? "on" : ""} onClick={() => setScaleMode((m) => (m === "percent" ? "normal" : "percent"))} title="Percent price scale">%</button>
+                <button className={showForecast ? "on" : ""} onClick={() => setShowForecast((v) => !v)} title="Overlay the Oracle probability forecast cone">⟿ FCAST</button>
+              </div>
               <select className="axt-stratsel" value={replayStrat} onChange={(e) => setReplayStrat(e.target.value as StrategyId)} title="Replay strategy">
                 {STRATEGIES.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
               </select>
@@ -271,13 +295,23 @@ export function LiveMarketsView() {
 
           <div className="axt-chartzone">
             <div className="axt-drawtools">
-              {["✛", "／", "▭", "◭", "T", "⤢", "◔", "⎌", "🗑"].map((t, i) => <button key={i} title="Drawing tool">{t}</button>)}
+              {([["cursor", "⤢", "Cursor / select · drag to move, Del to remove, Esc to cancel"], ["trend", "／", "Trend line (2 clicks)"], ["hline", "―", "Horizontal line"], ["vline", "│", "Vertical line"], ["ray", "⟋", "Ray"], ["rect", "▭", "Rectangle"], ["fib", "≣", "Fibonacci retracement"], ["measure", "⇕", "Measure range"], ["text", "T", "Text label"]] as [string, string, string][]).map(([k, ic, title]) => (
+                <button key={k} className={(k === "cursor" ? tool === null : tool === k) ? "on" : ""} title={title}
+                  onClick={() => setTool(k === "cursor" ? null : (k as DrawKind))}>{ic}</button>
+              ))}
+              <span className="axt-drawsep" />
+              <button className={magnet ? "on" : ""} title="Magnet — snap drawings to OHLC" onClick={() => setMagnet((m) => !m)}>🧲</button>
+              <button title="Undo last drawing" disabled={drawCount === 0} onClick={() => drawApi.current?.undo()}>⎌</button>
+              <button title="Clear all drawings" disabled={drawCount === 0} onClick={() => drawApi.current?.clearAll()}>🗑</button>
             </div>
             <div className="axt-chartcanvas">
               {bars.length > 1 ? (
-                <ChartPro bars={bars} up={up} indicators={ind} replayActive={replay} replaySpeed={replaySpeed} replayStrategy={replayStrat}
+                <ChartPro bars={bars} up={up} indicators={ind} chartType={chartType} showForecast={showForecast}
+                  activeTool={tool} magnet={magnet} scaleMode={scaleMode}
+                  replayActive={replay} replaySpeed={replaySpeed} replayStrategy={replayStrat}
                   forecast={oracle.data?.horizons?.map((h) => ({ horizon: h.horizon, p05: h.p05, p50: h.p50, p95: h.p95 })) || null}
-                  onReplayProgress={(p) => setReplayProg(p)} onReplayStats={setReplayStats} />
+                  onReplayProgress={(p) => setReplayProg(p)} onReplayStats={setReplayStats}
+                  onToolDone={() => setTool(null)} onDrawCount={setDrawCount} drawApiRef={drawApi} />
               ) : barsLoading ? (
                 <div className="axt-chart-skel"><div className="axt-skel-bars">{Array.from({ length: 40 }).map((_, i) => <span key={i} style={{ height: `${20 + (Math.sin(i * 1.3) * 0.5 + 0.5) * 60}%` }} />)}</div><div className="axt-skel-tag">Loading {symbol} · {tf}…</div></div>
               ) : <div className="axt-chart-empty">No chart data for {symbol} at {tf}. Try another timeframe.</div>}
@@ -924,22 +958,37 @@ const TERM_CSS = `
 .axt-shs span { font-size:7.5px; letter-spacing:.05em; color:var(--ax-dim); }
 .axt-shs b { font-family:var(--ax-mono); font-size:12px; font-weight:700; }
 
-.axt-chartbar { display:flex; align-items:center; gap:10px; background:var(--ax-panel-grad); border:1px solid var(--ax-bd); border-radius:9px; padding:5px 9px; flex-shrink:0; box-shadow:var(--ax-panel-glow); }
+.axt-chartbar { display:flex; align-items:center; flex-wrap:wrap; gap:8px 10px; background:var(--ax-panel-grad); border:1px solid var(--ax-bd); border-radius:9px; padding:5px 9px; flex-shrink:0; box-shadow:var(--ax-panel-glow); }
 .axt-tfs, .axt-indtoggles { display:flex; gap:2px; }
 .axt-tfs button, .axt-indtoggles button { background:none; border:1px solid transparent; color:var(--ax-dim); border-radius:5px; min-width:26px; min-height:26px; padding:4px 8px; font-size:10.5px; font-weight:700; font-family:var(--ax-mono); }
 .axt-tfs button:hover, .axt-indtoggles button:hover { color:var(--ax-tx); background:var(--ax-surface); }
 .axt-tfs button.on { color:var(--ax-acc); background:var(--ax-panelhi); border-color:var(--ax-bdglow); }
 .axt-indtoggles { margin-left:6px; padding-left:8px; border-left:1px solid var(--ax-bdsoft); }
 .axt-indtoggles button.on { color:${CY}; border-color:color-mix(in srgb, ${CY} 40%, transparent); background:color-mix(in srgb, ${CY} 10%, transparent); }
-.axt-chartbar-r { margin-left:auto; display:flex; align-items:center; gap:6px; }
+.axt-chartbar-r { margin-left:auto; display:flex; align-items:center; flex-wrap:wrap; gap:6px; }
+.axt-navctl { display:flex; gap:2px; margin-right:2px; padding-right:6px; border-right:1px solid var(--ax-bdsoft); }
+.axt-navctl button { background:none; border:1px solid transparent; color:var(--ax-dim); border-radius:5px; min-width:26px; min-height:26px; padding:4px 6px; font-size:13px; font-weight:700; font-family:var(--ax-mono); line-height:1; }
+.axt-navctl button:hover { color:var(--ax-acc); background:var(--ax-surface); border-color:var(--ax-bdglow); }
 .axt-stratsel { background:var(--ax-surface); border:1px solid var(--ax-bdsoft); color:var(--ax-tx); border-radius:6px; padding:5px 7px; font-size:10.5px; font-family:var(--ax-sans); outline:none; }
 .axt-replay { background:color-mix(in srgb, ${PUR} 14%, transparent); border:1px solid color-mix(in srgb, ${PUR} 45%, transparent); color:${PUR}; border-radius:7px; padding:6px 12px; font-size:11px; font-weight:700; }
 .axt-replay.on { background:${PUR}; color:#120a24; }
 
 .axt-chartzone { flex:1; min-height:0; display:flex; gap:6px; background:var(--ax-panel-grad); border:1px solid var(--ax-bd); border-radius:10px; padding:8px; box-shadow:var(--ax-panel-glow); }
 .axt-drawtools { display:flex; flex-direction:column; gap:3px; }
-.axt-drawtools button { width:26px; height:26px; background:var(--ax-surface); border:1px solid var(--ax-bdsoft); color:var(--ax-mut); border-radius:6px; font-size:12px; display:flex; align-items:center; justify-content:center; }
-.axt-drawtools button:hover { border-color:var(--ax-bdglow); color:var(--ax-acc); }
+.axt-drawtools button { width:26px; height:26px; background:var(--ax-surface); border:1px solid var(--ax-bdsoft); color:var(--ax-mut); border-radius:6px; font-size:12px; display:flex; align-items:center; justify-content:center; cursor:pointer; transition:color .12s, border-color .12s, background .12s; }
+.axt-drawtools button:hover:not(:disabled) { border-color:var(--ax-bdglow); color:var(--ax-acc); }
+.axt-drawtools button.on { color:${CY}; border-color:color-mix(in srgb, ${CY} 50%, transparent); background:color-mix(in srgb, ${CY} 14%, transparent); }
+.axt-drawtools button:disabled { opacity:.32; cursor:default; }
+.axt-drawsep { height:1px; margin:3px 4px; background:var(--ax-bdsoft); }
+/* chart-type + scale controls (match the timeframe/indicator button language) */
+.axt-ctypes { display:flex; gap:2px; margin-left:6px; padding-left:8px; border-left:1px solid var(--ax-bdsoft); }
+.axt-ctypes button { background:none; border:1px solid transparent; color:var(--ax-dim); border-radius:5px; min-width:26px; min-height:26px; padding:4px 7px; font-size:13px; font-weight:700; }
+.axt-ctypes button:hover { color:var(--ax-tx); background:var(--ax-surface); }
+.axt-ctypes button.on { color:var(--ax-acc); background:var(--ax-panelhi); border-color:var(--ax-bdglow); }
+.axt-scalectl { display:flex; gap:2px; margin-right:4px; padding-right:6px; border-right:1px solid var(--ax-bdsoft); }
+.axt-scalectl button { background:none; border:1px solid transparent; color:var(--ax-dim); border-radius:5px; min-height:26px; padding:4px 8px; font-size:9.5px; font-weight:800; letter-spacing:.04em; font-family:var(--ax-mono); }
+.axt-scalectl button:hover { color:var(--ax-tx); background:var(--ax-surface); }
+.axt-scalectl button.on { color:${CY}; border-color:color-mix(in srgb, ${CY} 40%, transparent); background:color-mix(in srgb, ${CY} 10%, transparent); }
 .axt-chartcanvas { flex:1; min-width:0; position:relative; }
 .axt-chart-empty { position:absolute; inset:0; display:flex; align-items:center; justify-content:center; color:var(--ax-mut); font-size:12px; }
 .axt-chart-skel { position:absolute; inset:0; display:flex; flex-direction:column; justify-content:flex-end; padding:24px; gap:14px; }

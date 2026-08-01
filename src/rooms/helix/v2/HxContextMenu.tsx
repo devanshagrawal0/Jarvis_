@@ -2,7 +2,9 @@
 // any element calls show(x, y, items) from onContextMenu to surface in-place verbs.
 import React, { createContext, useCallback, useContext, useEffect, useState } from "react";
 
-export interface CtxItem { label: string; icon?: React.ReactNode; run?: () => void; danger?: boolean; sep?: boolean }
+// `label` is optional because a separator (`{ sep: true }`) carries no text; the renderer
+// branches on `sep` before ever reading `label`.
+export interface CtxItem { label?: string; icon?: React.ReactNode; run?: () => void; danger?: boolean; sep?: boolean }
 interface CtxV { show: (x: number, y: number, items: CtxItem[]) => void }
 const Ctx = createContext<CtxV>({ show: () => {} });
 export const useContextMenu = () => useContext(Ctx);

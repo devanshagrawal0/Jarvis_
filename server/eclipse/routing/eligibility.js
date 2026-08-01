@@ -1,6 +1,6 @@
 // ECLIPSE routing — the smart gate. Turns a raw prompt into a routing decision:
 //   cortex   → direct answer / clarify (no mission, no tools beyond a device call)
-//   pulse    → Cortex Prime, single agent, 0–2 tools (a fact, an extract, a bounded action)
+//   pulse    → Cortex Max/bounded execution, single agent, 0–2 tools
 //   deep     → Eclipse Umbra-lite: a small bounded mission, ≥1 tool Worker
 //   totality → Eclipse Totality: full multi-agent mission
 //
@@ -40,7 +40,7 @@ function allowlistReason(raw) {
 
 // ── Stage 1: mission score from the genome (research/depth need, NOT consequence) ────
 // Consequence is deliberately excluded here: a high-consequence single action ("email the
-// board") is NOT a research mission — it routes to Cortex Prime + a capability approval, per
+// board") is NOT a research mission — it routes to bounded Cortex + capability approval, per
 // the guardrail "consequence ≠ depth". Score ∈ [0,1] after clamp.
 const W = { depth: 0.45, family: 0.30, fresh: 0.20, breadth: 0.15, memory: 0.30, ambiguity: 0.25 };
 function familyWeight(fam) {
@@ -84,7 +84,7 @@ function classify(prompt, opts = {}) {
   }
 
   // Hard guardrail C — consequence ≠ depth. A side-effecting single action stays on Cortex
-  // Prime (which will request a capability lease/approval), it does NOT fan out.
+  // Max/bounded execution (which requests a capability lease/approval), it does NOT fan out.
   if (g.consequence >= 0.7 && g.depth <= 1 && familyWeight(g.taskFamily) < 1.0) {
     return decision("pulse", "consequence-gate", ["high-consequence action → single agent + capability approval (no fan-out)"], score, g, { requiresApproval: true });
   }

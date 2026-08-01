@@ -170,7 +170,7 @@ export function JarvisUI() {
   const [liveVoiceState, setLiveVoiceState] = useState<"idle" | "connecting" | "listening" | "speaking" | "error">("idle");
   const liveVoiceRef = useRef<LiveVoiceController | null>(null);
   // Cortex v4 P1.4 — Strength dial (cost-guarded default). Cycles on click; sent with each request.
-  const [model, setModel] = useState<"cortex" | "cortex-prime" | "eclipse">("cortex"); // Cortex v4 — model selector (+ Eclipse mission runtime)
+  const [model, setModel] = useState<"cortex" | "eclipse">("cortex"); // Cortex chat/reasoning or Eclipse mission runtime
   const [strength, setStrength] = useState<"cost-guarded" | "balanced" | "full" | "pulse" | "deep" | "totality">("cost-guarded");
   const cycleStrength = useCallback(() => {
     setStrength((s) => (s === "cost-guarded" ? "balanced" : s === "balanced" ? "full" : "cost-guarded"));
@@ -564,7 +564,7 @@ export function JarvisUI() {
         onLiveVoiceToggle={toggleLiveVoice}
         onModules={() => setLauncherOpen(o => !o)}
         model={model}
-        onSetModel={(v) => setModel(v as "cortex" | "cortex-prime" | "eclipse")}
+        onSetModel={(v) => setModel(v as "cortex" | "eclipse")}
         strength={strength}
         onCycleStrength={cycleStrength}
         onSetStrength={(v) => setStrength(v as "cost-guarded" | "balanced" | "full" | "pulse" | "deep" | "totality")}

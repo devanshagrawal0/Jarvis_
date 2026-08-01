@@ -1,0 +1,101 @@
+"use strict";
+
+const SITE_START_URLS = Object.freeze({
+  instagram: "https://www.instagram.com/direct/inbox/",
+  whatsapp: "https://web.whatsapp.com/",
+  gmail: "https://mail.google.com/mail/u/0/#inbox",
+  canvas: "https://northeastern.instructure.com/",
+  github: "https://github.com/",
+  linkedin: "https://www.linkedin.com/",
+  reddit: "https://www.reddit.com/",
+  youtube: "https://www.youtube.com/",
+  amazon: "https://www.amazon.com/",
+  google: "https://www.google.com/",
+});
+
+const AUTHENTICATED_BROWSER_SITES = new Set(["instagram", "whatsapp", "gmail", "canvas", "github", "linkedin", "reddit", "youtube", "amazon"]);
+
+function siteFor(text) {
+  const lower = String(text || "").toLowerCase();
+  if (/\binstagram|\binsta\b/.test(lower)) return "instagram";
+  if (/\bwhats ?app\b/.test(lower)) return "whatsapp";
+  if (/\bgmail|google mail\b/.test(lower)) return "gmail";
+  if (/\bcanvas|student hub|student portal\b/.test(lower)) return "canvas";
+  if (/\bgithub\b/.test(lower)) return "github";
+  if (/\blinked ?in\b/.test(lower)) return "linkedin";
+  if (/\breddit\b/.test(lower)) return "reddit";
+  if (/\byoutube|you tube\b/.test(lower)) return "youtube";
+  if (/\bamazon\b/.test(lower)) return "amazon";
+  if (/\bgoogle\b/.test(lower)) return "google";
+  return null;
+}
+
+function emailIntent(text) {
+  const value = String(text || "");
+  const requested = /\b(email|e-mail|gmail)\b/i.test(value) && /\b(send|write|draft|compose|reply|forward)\b/i.test(value);
+  if (!requested) return null;
+  const recipientEmail = value.match(/\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/i)?.[0] || null;
+  return {
+    requested: true,
+    commit: /\b(send|reply|forward)\b/i.test(value) && !/\b(draft only|don'?t send|do not send|prepare only)\b/i.test(value),
+    recipientEmail,
+  };
+}
+
+function explicitVisible(text) {
+  return /\b(on my screen|visible screen|use my screen|current screen|current window|control my cursor|show (?:it|this|the result) on (?:my )?screen)\b/i.test(String(text || ""));
+}
+
+function browserOutcome(text) {
+  return /\b(open|go to|navigate|search|find|send|message|like|comment|post|apply|download|upload|submit|reply|check|inspect|read|collect|scrape|fill|book|reserve)\b/i.test(String(text || ""))
+    && /\b(browser|website|web page|chrome|instagram|insta|whats ?app|gmail|canvas|student hub|student portal|github|linked ?in|reddit|youtube|amazon|google|portal|site|form)\b/i.test(String(text || ""));
+}
+
+function routeExecutionLane(text, settings = {}) {
+  const prompt = String(text || "").trim();
+  let site = siteFor(prompt);
+  const email = emailIntent(prompt);
+  if (email?.requested && !site) site = "gmail";
+  const googleConnected = Boolean(settings.googleRefreshToken || settings.googleAccessToken || process.env.GOOGLE_REFRESH_TOKEN || process.env.GOOGLE_ACCESS_TOKEN);
+
+  if (explicitVisible(prompt)) {
+    return { lane: "visible-desktop", surface: "daily-browser", placement: "visible", site, startUrl: site ? SITE_START_URLS[site] : null, tools: ["computer_use", "screen_capture", "screen_inspect", "screen_act", "desktop_control"] };
+  }
+
+  if (email?.requested && googleConnected && email.recipientEmail) {
+    return {
+      lane: "connector-google",
+      surface: "google-api",
+      placement: "runtime",
+      site: "gmail",
+      startUrl: SITE_START_URLS.gmail,
+      tools: email.commit ? ["gmail_prepare_email", "gmail_send_prepared"] : ["gmail_prepare_email"],
+      commit: email.commit,
+      recipientResolved: true,
+    };
+  }
+
+  if (browserOutcome(prompt) || email?.requested) {
+    const needsPersonalSession = Boolean(email?.requested || (site && AUTHENTICATED_BROWSER_SITES.has(site)));
+    return {
+      lane: needsPersonalSession ? "private-browser" : "headless-browser",
+      surface: "managed-browser",
+      placement: "runtime",
+      site,
+      startUrl: site ? SITE_START_URLS[site] : null,
+      tools: ["computer_use", "browser_status", "browser_login_handoff", "browser_login_complete"],
+      authenticationMayBeRequired: needsPersonalSession,
+      profileIsolation: "jarvis-private-profile",
+    };
+  }
+
+  return { lane: "none", surface: null, placement: null, site, startUrl: site ? SITE_START_URLS[site] : null, tools: [] };
+}
+
+function declarationsForLane(declarations, execution) {
+  if (!execution || execution.lane === "none") return declarations;
+  const allowed = new Set(execution.tools || []);
+  return (declarations || []).filter((tool) => allowed.has(tool.name));
+}
+
+module.exports = { AUTHENTICATED_BROWSER_SITES, SITE_START_URLS, browserOutcome, declarationsForLane, emailIntent, explicitVisible, routeExecutionLane, siteFor };

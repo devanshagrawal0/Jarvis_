@@ -12,6 +12,7 @@ const { createWorkComposer } = require("./work-composer/work-composer");
 const { createPcKnowledgeGraph } = require("./pc-knowledge-graph");
 const { createSkillAutopilot } = require("./skill-autopilot");
 const { createComputerUse } = require("./computer-use");
+const { createUniversalBrowserAgent } = require("./universal-browser-agent");
 
 const execFileAsync = promisify(execFile);
 const CONFIRMATIONS_FILE = "confirmations.json";
@@ -38,6 +39,22 @@ function errorWithStatus(message, statusCode = 400) {
 
 function cleanString(value, max = 500) {
   return String(value || "").trim().slice(0, max);
+}
+
+function parsePowerShellJson(output, label = "PowerShell") {
+  const raw = String(output || "").replace(/^\uFEFF/, "").trim();
+  if (!raw) throw errorWithStatus(`${label} returned no JSON output.`, 502);
+  // UI Automation occasionally exposes control characters and non-finite bounds.
+  // Both are invalid JSON even though ConvertTo-Json can emit them on Windows.
+  const repaired = raw
+    .replace(/[\u0000-\u001F]/g, " ")
+    .replace(/(^|[:,\[]\s*)-?Infinity(?=\s*[,}\]])/g, "$1null")
+    .replace(/(^|[:,\[]\s*)NaN(?=\s*[,}\]])/g, "$1null");
+  try {
+    return JSON.parse(repaired);
+  } catch (error) {
+    throw errorWithStatus(`${label} returned malformed JSON: ${error.message}`, 502);
+  }
 }
 
 function asNumber(value, fallback, min, max) {
@@ -119,18 +136,25 @@ function createCapabilityEngine({
   neuralVault,
   missionEngine,
   apexIngest,
+  desktopTakeover,
 }) {
   const getApex = () => (typeof apexIngest === "function" ? apexIngest() : apexIngest);
   const confirmationsPath = path.join(runtimeDir, CONFIRMATIONS_FILE);
   const memoryPath = path.join(runtimeDir, MEMORY_FILE);
   const actionHistory = [];
   const browser = browserService || createBrowserAutomationService({ runtimeDir });
+  // Runtime/background automation has a hard zero-visible-surface contract.
+  // Authenticated work always uses this dedicated persistent profile; capability
+  // execution has no reference to the retired personal-Chrome extension bridge.
+  const managedBrowser = browser;
   const cortex = createResearchOrchestrator({ getSettings });
   let researchV2;
   const composer = createWorkComposer({ runtimeDir });
   const pcGraph = createPcKnowledgeGraph({ runtimeDir, workspaceRoot });
   const skillAutopilot = createSkillAutopilot({ runtimeDir, missionEngine });
   const computerUse = screenCapture ? createComputerUse({ screenCapture, getSettings, browserService: browser }) : null;
+  const universalHeadlessBrowser = createUniversalBrowserAgent({ browserService: managedBrowser, getSettings, runtimeDir });
+  const browserForContext = () => managedBrowser;
   const siteAliases = {
     youtube: "https://www.youtube.com/",
     "you tube": "https://www.youtube.com/",
@@ -248,10 +272,13 @@ function createCapabilityEngine({
     ["codebase_search", "Search JARVIS source code, routes, symbols, configuration, and architecture with hybrid retrieval.", "observe", false],
     ["jarvis_self_inspect", "Read JARVIS runtime architecture, code-index health, capabilities, and application inventory.", "observe", false],
     ["draft_email", "Prepare an email draft without sending it.", "prepare", false],
-    ["send_email", "Send an email through Gmail using a configured OAuth access token.", "commit", true],
+    ["gmail_prepare_email", "Create a real Gmail draft, read it back, and return the immutable draft identity and content hash without sending it.", "prepare", false],
+    ["gmail_send_prepared", "Send one previously prepared Gmail draft after re-reading it and proving its recipient, subject, and body hash are unchanged.", "commit", true],
+    ["send_email", "Legacy one-step Gmail sender. Prefer gmail_prepare_email followed by gmail_send_prepared so approval is bound to an exact provider draft.", "commit", true],
     ["browser_search", "Open a web search in the default browser.", "execute", false],
     ["browser_status", "Report the persistent JARVIS browser session, tabs, active page, saved profile, and snapshot readiness.", "observe", false],
     ["browser_login_handoff", "Open a login-required website in the persistent JARVIS browser and pause for the user to authenticate manually.", "prepare", false],
+    ["browser_login_complete", "Verify that manual authentication finished, save the dedicated browser profile, close its visible window, and return automation to headless background mode.", "prepare", false],
     ["browser_page_brief", "Summarize the active browser page into forms, buttons, links, upload controls, login signals, security signals, and likely next actions.", "observe", false],
     ["browser_navigate", "Navigate the isolated persistent JARVIS browser to a validated HTTP or HTTPS URL.", "prepare", false],
     ["browser_snapshot", "Observe the active browser page as compact semantic elements with stable short-lived references.", "observe", false],
@@ -268,6 +295,9 @@ function createCapabilityEngine({
     ["browser_verify", "Verify browser URL, title, text, or element visibility without changing the page.", "observe", false],
     ["screen_capture", "Capture the laptop primary display for visual analysis. Use only when the user asks what is on the laptop screen or desktop.", "observe", false],
     ["instagram_reply", "Reply through the official Instagram professional messaging API.", "commit", true],
+    ["instagram_like_current", "Like the currently visible Instagram Reel only after verifying that a reel URL is open; returns proof that the control changed from Like to Unlike.", "commit", true],
+    ["instagram_prepare_dm", "Open an exact visible Instagram Direct thread and place the requested text in its composer without sending it.", "prepare", false],
+    ["instagram_send_current", "Send the already-prepared text in the currently visible Instagram Direct conversation only after verifying the chat URL, recipient context, and exact composer value; returns proof that the composer cleared and the text appeared in the conversation.", "commit", true],
     ["list_windows", "List visible top-level Windows application windows using semantic UI Automation.", "observe", false],
     ["inspect_window", "Inspect named controls in a Windows application using semantic UI Automation.", "observe", false],
     ["focus_window", "Focus a visible Windows application window.", "execute", true],
@@ -280,7 +310,7 @@ function createCapabilityEngine({
     ["write_clipboard", "Write text to the Windows clipboard.", "execute", false],
     ["toast_notification", "Show a Windows toast notification with a title and message.", "execute", false],
     ["screen_analyze", "Capture the current screen once and analyze it with Gemini Vision. Returns what is visible and answers a specific question about the screen.", "observe", false],
-    ["computer_use", "Run a vision-grounded automation task on the current screen: Jarvis takes a screenshot, draws numbered bounding boxes on every interactive element (Set-of-Marks), sends it to Gemini Vision, and executes multi-step tasks like searching YouTube, sending Instagram DMs, scrolling to find a contact, clicking buttons, typing — on ANY website or app regardless of accessibility support. Use for tasks that require navigating modern apps visually.", "execute", true],
+    ["computer_use", "Run a task through the policy-selected browser lane: signed-in personal Chrome, isolated headless browser, or explicitly visible desktop. Navigation and preparation run first; Send, Like, Post, Submit, Delete, Purchase, and similar external commits pause at the exact final-action boundary for owner approval.", "execute", false],
     ["screen_locate", "Find any visible UI element on the current screen using Gemini Vision and return its pixel coordinates. Works on web apps with no accessibility labels.", "observe", false],
     ["mouse_scroll", "Scroll the mouse wheel at a screen coordinate in a specified direction and amount. Use for scrolling feeds, lists, pages, or DM threads.", "execute", false],
     ["apex_catalog_search", "Search the APEX trading-room data catalog by keyword and get matching datasets, database tables, and local files with their columns, row counts, date coverage, source, and a plain-language summary. Use this first to discover what market/news/history data APEX holds before answering data questions.", "observe", false],
@@ -324,11 +354,12 @@ function createCapabilityEngine({
       fullscreen: { type: "BOOLEAN", description: "Whether to toggle browser full screen after opening." },
     }, required: ["query"] } },
     { name: "desktop_control", description: description("desktop_control"), parameters: { type: "OBJECT", properties: {
-      action: { type: "STRING", description: "One of: open_site_fullscreen, open_site, fullscreen, next_tab, previous_tab, tab_number, hotkey, click_text, click, type_text, youtube_search_visible." },
-      target: { type: "STRING", description: "Site name or URL for open_site/open_site_fullscreen." },
+      action: { type: "STRING", description: "One of: open_site_fullscreen, open_site, activate_site, scroll_page, fullscreen, next_tab, previous_tab, tab_number, hotkey, click_text, click, type_text, youtube_search_visible." },
+      target: { type: "STRING", description: "Site name or URL for open_site/open_site_fullscreen/activate_site/scroll_page." },
       targetText: { type: "STRING", description: "Visible text, button label, link label, or control name for click_text." },
       tabNumber: { type: "INTEGER", description: "Browser tab number, 1 through 9." },
       hotkey: { type: "STRING", description: "Allowed hotkey: enter, escape, tab, shift_tab, ctrl_l, ctrl_r, ctrl_tab, ctrl_shift_tab, f11, alt_left, alt_right, page_down, page_up." },
+      direction: { type: "STRING", description: "For scroll_page: up or down." },
       x: { type: "INTEGER", description: "Screen X coordinate for click." },
       y: { type: "INTEGER", description: "Screen Y coordinate for click." },
       text: { type: "STRING", description: "Text to paste/type into the active field." },
@@ -544,10 +575,13 @@ function createCapabilityEngine({
     { name: "codebase_search", description: description("codebase_search"), parameters: { type: "OBJECT", properties: { query: { type: "STRING" }, limit: { type: "INTEGER" } }, required: ["query"] } },
     { name: "jarvis_self_inspect", description: description("jarvis_self_inspect"), parameters: { type: "OBJECT", properties: {} } },
     { name: "draft_email", description: description("draft_email"), parameters: { type: "OBJECT", properties: { recipient: { type: "STRING" }, subject: { type: "STRING" }, body: { type: "STRING" } }, required: ["recipient", "subject", "body"] } },
+    { name: "gmail_prepare_email", description: description("gmail_prepare_email"), parameters: { type: "OBJECT", properties: { recipient: { type: "STRING" }, subject: { type: "STRING" }, body: { type: "STRING" } }, required: ["recipient", "subject", "body"] } },
+    { name: "gmail_send_prepared", description: description("gmail_send_prepared"), parameters: { type: "OBJECT", properties: { draftId: { type: "STRING" }, expectedRecipient: { type: "STRING" }, expectedSubject: { type: "STRING" }, expectedBodyHash: { type: "STRING" } }, required: ["draftId", "expectedRecipient", "expectedSubject", "expectedBodyHash"] } },
     { name: "send_email", description: description("send_email"), parameters: { type: "OBJECT", properties: { recipient: { type: "STRING" }, subject: { type: "STRING" }, body: { type: "STRING" } }, required: ["recipient", "subject", "body"] } },
     { name: "browser_search", description: description("browser_search"), parameters: { type: "OBJECT", properties: { query: { type: "STRING" } }, required: ["query"] } },
     { name: "browser_status", description: description("browser_status"), parameters: { type: "OBJECT", properties: {} } },
     { name: "browser_login_handoff", description: description("browser_login_handoff"), parameters: { type: "OBJECT", properties: { url: { type: "STRING", description: "Optional HTTP or HTTPS URL to open before checking for login." }, selector: { type: "STRING" }, limit: { type: "INTEGER" }, timeoutMs: { type: "INTEGER" } } } },
+    { name: "browser_login_complete", description: description("browser_login_complete"), parameters: { type: "OBJECT", properties: { selector: { type: "STRING" }, limit: { type: "INTEGER" }, timeoutMs: { type: "INTEGER" } } } },
     { name: "browser_page_brief", description: description("browser_page_brief"), parameters: { type: "OBJECT", properties: { selector: { type: "STRING" }, limit: { type: "INTEGER" }, timeoutMs: { type: "INTEGER" } } } },
     { name: "browser_navigate", description: description("browser_navigate"), parameters: { type: "OBJECT", properties: { url: { type: "STRING" }, waitUntil: { type: "STRING", description: "One of commit, domcontentloaded, or load." }, timeoutMs: { type: "INTEGER" } }, required: ["url"] } },
     { name: "browser_snapshot", description: description("browser_snapshot"), parameters: { type: "OBJECT", properties: { selector: { type: "STRING" }, limit: { type: "INTEGER" }, timeoutMs: { type: "INTEGER" } } } },
@@ -592,6 +626,14 @@ function createCapabilityEngine({
     { name: "browser_verify", description: description("browser_verify"), parameters: { type: "OBJECT", properties: { selector: { type: "STRING" }, expectedText: { type: "STRING" }, urlIncludes: { type: "STRING" }, titleIncludes: { type: "STRING" } } } },
     { name: "screen_capture", description: description("screen_capture"), parameters: { type: "OBJECT", properties: { reason: { type: "STRING" } } } },
     { name: "instagram_reply", description: description("instagram_reply"), parameters: { type: "OBJECT", properties: { recipientId: { type: "STRING" }, message: { type: "STRING" } }, required: ["recipientId", "message"] } },
+    // These three had definitions and handlers but no declaration, so `selectTools` — which
+    // resolves names against `declarations` — could never surface them to the model, while
+    // `toolAvailability()` and `catalog()` (both built from `definitions`) advertised them as
+    // available. The model was told the Instagram send/like/DM tools existed and then had no way
+    // to call them. Parameter shapes below match what the handlers actually read.
+    { name: "instagram_like_current", description: description("instagram_like_current"), parameters: { type: "OBJECT", properties: { expectedHandle: { type: "STRING" } } } },
+    { name: "instagram_prepare_dm", description: description("instagram_prepare_dm"), parameters: { type: "OBJECT", properties: { recipient: { type: "STRING" }, message: { type: "STRING" } }, required: ["recipient", "message"] } },
+    { name: "instagram_send_current", description: description("instagram_send_current"), parameters: { type: "OBJECT", properties: { expectedRecipient: { type: "STRING" }, resolvedRecipient: { type: "STRING" }, expectedConversationUrl: { type: "STRING" }, message: { type: "STRING" } }, required: ["expectedRecipient", "message"] } },
     { name: "list_windows", description: description("list_windows"), parameters: { type: "OBJECT", properties: { limit: { type: "INTEGER" } } } },
     { name: "inspect_window", description: description("inspect_window"), parameters: { type: "OBJECT", properties: { title: { type: "STRING" }, limit: { type: "INTEGER" } }, required: ["title"] } },
     { name: "focus_window", description: description("focus_window"), parameters: { type: "OBJECT", properties: { title: { type: "STRING" } }, required: ["title"] } },
@@ -625,6 +667,8 @@ function createCapabilityEngine({
     { name: "computer_use", description: description("computer_use"), parameters: { type: "OBJECT", properties: {
       task: { type: "STRING", description: "Natural language task to execute visually on screen, e.g. 'search YouTube for lo-fi music and play the first result' or 'open Instagram DMs and send Avery a message saying hey'." },
       maxSteps: { type: "INTEGER", description: "Maximum automation steps, 1 to 25. Defaults to 15." },
+      startUrl: { type: "STRING", description: "Optional already-open HTTPS surface to keep re-focused during visible browser automation." },
+      prepareOnlyText: { type: "STRING", description: "Optional exact draft text that may be prepared but must never be submitted during this capability call." },
     }, required: ["task"] } },
     { name: "screen_locate", description: description("screen_locate"), parameters: { type: "OBJECT", properties: {
       description: { type: "STRING", description: "Visual description of the element to find, e.g. 'YouTube search bar', 'Instagram messages icon', 'play button'." },
@@ -671,10 +715,16 @@ function createCapabilityEngine({
         deviceId: cleanString(actor.deviceId || "local-browser", 100),
         sessionId: cleanString(actor.sessionId, 200),
       },
+      continuation: {
+        actionTaskId: cleanString(actor.actionTaskId, 160) || null,
+        actionStepId: cleanString(actor.actionStepId, 160) || null,
+        placement: cleanString(actor.placement, 40) || null,
+        surface: cleanString(actor.surface, 80) || null,
+      },
       ownerChallenge: crypto.randomBytes(32).toString("base64url"),
       status: "pending",
       createdAt: new Date().toISOString(),
-      expiresAt: new Date(Date.now() + 90_000).toISOString(),
+      expiresAt: new Date(Date.now() + 10 * 60_000).toISOString(),
     };
     writeJsonAtomic(confirmationsPath, [item, ...loadConfirmations()].slice(0, 50));
     return {
@@ -687,13 +737,53 @@ function createCapabilityEngine({
     };
   }
 
+  // Node builds execFile errors as `Command failed: <file> <args…>\n<stderr>`, and for us `args`
+  // is the entire PowerShell/C# script passed to -Command. That message was returned verbatim as
+  // `error.message`, fed back to the model, and interpolated into the owner-facing failure text —
+  // so every UI-Automation `throw` shipped hundreds of lines of its own source into the chat.
+  // The useful part is the last line of stderr (usually the script's own `throw`); the script
+  // body is noise to the owner and prompt-poison to the model.
+  function cleanPowershellFailure(error, script) {
+    const scriptText = String(script || "");
+    const stderr = String(error?.stderr || "").trim();
+    const raw = stderr || String(error?.message || "");
+    // Echoed script lines are matched by whole-line equality, not `includes`. A thrown message is
+    // a *substring* of its own source line (`throw 'No visible tab…'`), so a substring test
+    // deleted the one line worth showing along with the source.
+    const scriptLines = new Set(scriptText.split("\n").map((line) => line.trim()).filter(Boolean));
+    const withoutInvocation = raw
+      .replace(/^Command failed:[^\n]*\n?/i, "")
+      .split("\n")
+      .filter((line) => {
+        const trimmed = line.trim();
+        if (!trimmed) return false;
+        if (scriptLines.has(trimmed)) return false;
+        // PowerShell's positional error decorations carry no meaning for the owner.
+        return !/^(?:\+\s|At line:|At char:|\s*~+\s*$|\s*\+\s*CategoryInfo|\s*\+\s*FullyQualifiedErrorId)/.test(line);
+      })
+      .join(" ")
+      .replace(/\s+/g, " ")
+      .trim();
+    if (error?.killed || /ETIMEDOUT/i.test(String(error?.code || ""))) return "The desktop command timed out.";
+    const message = withoutInvocation || "The desktop command failed without reporting a reason.";
+    return message.slice(0, 300);
+  }
+
   async function powershell(script, timeout = 10000) {
-    const { stdout } = await execFileAsync(
-      "powershell.exe",
-      ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", script],
-      { timeout, windowsHide: true, maxBuffer: MAX_OUTPUT },
-    );
-    return stdout.trim();
+    try {
+      const { stdout } = await execFileAsync(
+        "powershell.exe",
+        ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", script],
+        { timeout, windowsHide: true, maxBuffer: MAX_OUTPUT },
+      );
+      return stdout.trim();
+    } catch (error) {
+      const clean = new Error(cleanPowershellFailure(error, script));
+      clean.code = error?.code;
+      // Kept off `.message` so diagnostics survive without reaching the owner or the model.
+      clean.rawStderr = String(error?.stderr || "").slice(0, 2000);
+      throw clean;
+    }
   }
 
   async function systemStatus() {
@@ -752,16 +842,21 @@ function createCapabilityEngine({
 
   async function openUrl(args) {
     const normalized = normalizeOpenUrl(args.url);
-    const child = spawn("cmd.exe", ["/c", "start", "", normalized], { detached: true, stdio: "ignore", windowsHide: true });
-    child.unref();
-    return { opened: true, url: normalized };
+    const desktop = await desktopControl({ action: "open_site", target: normalized });
+    if (!desktop.visible) throw errorWithStatus(`Opened ${normalized}, but could not verify it on the visible desktop.`, 502);
+    return { opened: true, visible: true, url: normalized, desktop };
   }
 
   async function youtubeOpenVideo(args = {}) {
     const query = cleanString(args.query || args.title || args.video || args.target, 300);
     if (!query) throw errorWithStatus("A YouTube video title or search query is required.");
-    const searchUrl = `https://www.youtube.com/results?search_query=${encodeURIComponent(query)}`;
+    const latest = args.latest === true || /\b(latest|newest|most recent|recent upload)\b/i.test(query);
+    const normalizedQuery = query.replace(/\b(latest|newest|most recent|recent upload|video|on youtube|youtube)\b/ig, " ").replace(/\s+/g, " ").trim() || query;
+    const searchUrl = `https://www.youtube.com/results?search_query=${encodeURIComponent(normalizedQuery)}${latest ? "&sp=CAI%253D" : ""}`;
     let videoId = "";
+    let videoTitle = "";
+    let channelTitle = "";
+    let publishedTime = "";
     try {
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), 5000);
@@ -778,13 +873,38 @@ function createCapabilityEngine({
       } finally {
         clearTimeout(timer);
       }
-      const ids = [
-        ...[...html.matchAll(/"videoId":"([a-zA-Z0-9_-]{11})"/g)].map((match) => match[1]),
-        ...[...html.matchAll(/\/watch\?v=([a-zA-Z0-9_-]{11})/g)].map((match) => match[1]),
-      ];
-      videoId = ids.find(Boolean) || "";
+      const renderers = [...html.matchAll(/"videoRenderer":\{"videoId":"([a-zA-Z0-9_-]{11})"([\s\S]{0,7000}?)(?="videoRenderer"|"channelRenderer"|"playlistRenderer"|$)/g)];
+      const first = renderers[0];
+      if (first) {
+        videoId = first[1];
+        const block = first[2] || "";
+        videoTitle = block.match(/"title":\{"runs":\[\{"text":"([^"]+)"/)?.[1] || "";
+        channelTitle = block.match(/"ownerText":\{"runs":\[\{"text":"([^"]+)"/)?.[1] || "";
+        publishedTime = block.match(/"publishedTimeText":\{"simpleText":"([^"]+)"/)?.[1] || "";
+      }
+      if (!videoId) {
+        const ids = [
+          ...[...html.matchAll(/"videoId":"([a-zA-Z0-9_-]{11})"/g)].map((match) => match[1]),
+          ...[...html.matchAll(/\/watch\?v=([a-zA-Z0-9_-]{11})/g)].map((match) => match[1]),
+        ];
+        videoId = ids.find(Boolean) || "";
+      }
     } catch {
       videoId = "";
+    }
+    if (videoId && (!videoTitle || !channelTitle)) {
+      try {
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), 2000);
+        try {
+          const response = await fetch(`https://www.youtube.com/oembed?url=${encodeURIComponent(`https://www.youtube.com/watch?v=${videoId}`)}&format=json`, { signal: controller.signal });
+          const metadata = response.ok ? await response.json() : {};
+          videoTitle = cleanString(metadata.title, 300) || videoTitle;
+          channelTitle = cleanString(metadata.author_name, 200) || channelTitle;
+        } finally {
+          clearTimeout(timer);
+        }
+      } catch {}
     }
     const url = videoId ? `https://www.youtube.com/watch?v=${videoId}` : searchUrl;
     const desktop = await desktopControl({
@@ -794,7 +914,12 @@ function createCapabilityEngine({
     });
     return {
       query,
+      normalizedQuery,
+      latest,
       openedVideo: Boolean(videoId),
+      videoTitle,
+      channelTitle,
+      publishedTime,
       url,
       fallbackSearchOpened: !videoId,
       desktop,
@@ -828,6 +953,8 @@ function createCapabilityEngine({
   async function inspectScreen(args = {}) {
     const limit = asNumber(args.limit, 80, 1, 120);
     const script = [
+      "Add-Type @'\nusing System;\nusing System.Runtime.InteropServices;\npublic class InspectDpiOps {\n[DllImport(\"user32.dll\")] public static extern bool SetProcessDPIAware();\n}\n'@",
+      "[InspectDpiOps]::SetProcessDPIAware() | Out-Null",
       "Add-Type -AssemblyName UIAutomationClient",
       "Add-Type -AssemblyName UIAutomationTypes",
       "Add-Type -AssemblyName System.Windows.Forms",
@@ -835,7 +962,8 @@ function createCapabilityEngine({
       "$foreground=[ForegroundOps]::GetForegroundWindow()",
       "$root=[System.Windows.Automation.AutomationElement]::FromHandle($foreground)",
       "if($null -eq $root){ $root=[System.Windows.Automation.AutomationElement]::RootElement }",
-      "$rootName=[string]$root.Current.Name",
+      "function SafeText([object]$value){ return (([string]$value) -replace '[\\x00-\\x1F]',' ').Trim() }",
+      "$rootName=SafeText $root.Current.Name",
       "$rootType=[string]$root.Current.ControlType.ProgrammaticName",
       "$rootRect=$root.Current.BoundingRectangle",
       "$primary=[System.Windows.Forms.Screen]::PrimaryScreen.Bounds",
@@ -845,9 +973,10 @@ function createCapabilityEngine({
       "  try {",
       "    $rect=$node.Current.BoundingRectangle",
       "    if($node.Current.IsOffscreen -or $rect.Width -le 4 -or $rect.Height -le 4){ continue }",
-      "    $name=([string]$node.Current.Name).Trim()",
-      "    $help=([string]$node.Current.HelpText).Trim()",
-      "    $automationId=([string]$node.Current.AutomationId).Trim()",
+      "    if([double]::IsNaN($rect.X) -or [double]::IsInfinity($rect.X) -or [double]::IsNaN($rect.Y) -or [double]::IsInfinity($rect.Y) -or [double]::IsNaN($rect.Width) -or [double]::IsInfinity($rect.Width) -or [double]::IsNaN($rect.Height) -or [double]::IsInfinity($rect.Height)){ continue }",
+      "    $name=SafeText $node.Current.Name",
+      "    $help=SafeText $node.Current.HelpText",
+      "    $automationId=SafeText $node.Current.AutomationId",
       "    $type=[string]$node.Current.ControlType.ProgrammaticName",
       "    $label=(($name+' '+$help+' '+$automationId).Trim())",
       "    if([string]::IsNullOrWhiteSpace($label)){ continue }",
@@ -857,7 +986,7 @@ function createCapabilityEngine({
       "    try {",
       "      if($node.GetCurrentPropertyValue([System.Windows.Automation.AutomationElement]::IsValuePatternAvailableProperty) -eq $true){",
       "        $valuePattern=$node.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern)",
-      "        $valueText=([string]$valuePattern.Current.Value)",
+      "        $valueText=SafeText $valuePattern.Current.Value",
       "      }",
       "    } catch {}",
       "    if($valueText.Length -gt 240){ $valueText=$valueText.Substring(0,240) }",
@@ -876,7 +1005,7 @@ function createCapabilityEngine({
       "$payload=[ordered]@{foregroundWindow=[ordered]@{name=$rootName;controlType=$rootType};uiBounds=[ordered]@{x=[int]$rootRect.X;y=[int]$rootRect.Y;width=[int]$rootRect.Width;height=[int]$rootRect.Height};screenBounds=[ordered]@{x=[int]$primary.X;y=[int]$primary.Y;width=[int]$primary.Width;height=[int]$primary.Height};count=[int]$items.Count;controls=$controls}",
       "$payload | ConvertTo-Json -Depth 5 -Compress",
     ].join("\n");
-    return JSON.parse(await powershell(script, 12000));
+    return parsePowerShellJson(await powershell(script, 12000), "Screen inspection");
   }
 
   function words(value) {
@@ -999,7 +1128,8 @@ function createCapabilityEngine({
         : await desktopControl({ action: "hotkey", hotkey: "f" });
     } else {
       let clickX, clickY;
-      if (choice.best?.control) {
+      const minimumUiScore = action === "type" ? 90 : 82;
+      if (choice.best?.control && choice.best.score >= minimumUiScore) {
         const { centerX, centerY } = choice.best.control;
         const point = normalizeScreenPoint({ x: centerX, y: centerY }, inspection);
         result.normalizedPoint = point;
@@ -1008,9 +1138,9 @@ function createCapabilityEngine({
       } else if (computerUse) {
         // UI Automation tree didn't find the element — fall back to Gemini Vision grounding
         const located = await computerUse.locateElement(targetText || instruction);
-        if (!located.found || (located.confidence || 0) < 0.35) {
+        if (!located.found || (located.confidence || 0) < 0.65) {
           throw errorWithStatus(
-            `Could not locate "${targetText || instruction}" via UI Automation or visual grounding (confidence: ${(located.confidence || 0).toFixed(2)}).`,
+            `Could not safely locate "${targetText || instruction}". Best UI match scored ${choice.best?.score || 0}; visual confidence was ${(located.confidence || 0).toFixed(2)}. No click was performed.`,
             404,
           );
         }
@@ -1032,29 +1162,162 @@ function createCapabilityEngine({
     await new Promise((resolve) => setTimeout(resolve, 650));
     const after = screenCapture ? await screenCapture({ reason: `screen_act after: ${instruction}` }) : null;
     result.afterCapture = after ? { path: after.path, dimensions: after.dimensions, capturedAt: after.capturedAt } : null;
+    result.verified = Boolean(result.performed?.ok !== false && (result.afterCapture || action === "press" || action === "fullscreen"));
+    if (!result.verified) throw errorWithStatus(`The visible-screen action could not be verified: ${instruction}`, 502);
     return result;
   }
 
   async function desktopControl(args = {}) {
     const action = cleanString(args.action, 60).toLowerCase();
-    const allowed = new Set(["open_site_fullscreen", "open_site", "fullscreen", "next_tab", "previous_tab", "tab_number", "hotkey", "click_text", "click", "type_text", "youtube_search_visible"]);
+    const allowed = new Set(["open_site_fullscreen", "open_site", "activate_site", "scroll_page", "fullscreen", "next_tab", "previous_tab", "tab_number", "hotkey", "click_text", "click", "type_text", "youtube_search_visible"]);
     if (!allowed.has(action)) throw errorWithStatus(`Unsupported desktop action: ${action}`);
+
+    if (action === "activate_site") {
+      const target = normalizeOpenUrl(args.target || args.url || "google");
+      const hostname = new URL(target).hostname.replace(/^www\./, "");
+      const siteTitle = hostname.includes("youtube.com") ? "YouTube"
+        : hostname.includes("instagram.com") ? "Instagram"
+          : hostname.includes("mail.google.com") ? "Gmail"
+            : hostname.includes("github.com") ? "GitHub"
+              : hostname.includes("reddit.com") ? "Reddit"
+                : hostname.split(".")[0];
+      const script = [
+        "Add-Type -AssemblyName UIAutomationClient",
+        "Add-Type -AssemblyName UIAutomationTypes",
+        `$siteTitle=${psSingleQuoted(siteTitle)}`,
+        "$shell=New-Object -ComObject WScript.Shell",
+        "$activated=$false",
+        "$selectedTab=''",
+        "$selectedVia=''",
+        "$p=$null",
+        "$browserProcesses=Get-Process | Where-Object { $_.MainWindowHandle -ne 0 -and ($_.ProcessName -eq 'chrome' -or $_.ProcessName -eq 'msedge') }",
+        "foreach($candidate in $browserProcesses){",
+        "  try {",
+        "    $root=[System.Windows.Automation.AutomationElement]::FromHandle($candidate.MainWindowHandle)",
+        "    if($null -eq $root){ continue }",
+        "    $tabCondition=New-Object System.Windows.Automation.PropertyCondition([System.Windows.Automation.AutomationElement]::ControlTypeProperty,[System.Windows.Automation.ControlType]::TabItem)",
+        "    $tabs=$root.FindAll([System.Windows.Automation.TreeScope]::Descendants,$tabCondition)",
+        "    foreach($tab in $tabs){",
+        "      try {",
+        "        $name=([string]$tab.Current.Name).Trim()",
+        "        if($name -notlike ('*'+$siteTitle+'*') -or $tab.Current.IsOffscreen){ continue }",
+        "        if($tab.GetCurrentPropertyValue([System.Windows.Automation.AutomationElement]::IsSelectionItemPatternAvailableProperty) -eq $true){",
+        "          $tab.GetCurrentPattern([System.Windows.Automation.SelectionItemPattern]::Pattern).Select()",
+        "          $selectedVia='selection_pattern'",
+        "        } elseif($tab.GetCurrentPropertyValue([System.Windows.Automation.AutomationElement]::IsInvokePatternAvailableProperty) -eq $true){",
+        "          $tab.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()",
+        "          $selectedVia='invoke_pattern'",
+        "        } else { continue }",
+        "        $selectedTab=$name",
+        "        $p=$candidate",
+        "        break",
+        "      } catch {}",
+        "    }",
+        "    if($null -ne $p){ break }",
+        "  } catch {}",
+        "}",
+        "if($null -eq $p){",
+        "  $p=Get-Process | Where-Object { $_.MainWindowTitle -and $_.MainWindowTitle -like ('*'+$siteTitle+'*') } | Select-Object -First 1",
+        "}",
+        "if($null -ne $p){",
+        "  $activated=$shell.AppActivate($p.Id)",
+        "  Start-Sleep -Milliseconds 300",
+        "}",
+        "$foreground=if($null -ne $p){[string](Get-Process -Id $p.Id -ErrorAction SilentlyContinue).MainWindowTitle}else{''}",
+        "[pscustomobject]@{action='activate_site';hostname=" + psSingleQuoted(hostname) + ";expectedTitle=$siteTitle;activated=$activated;visible=[bool]($activated -and ($selectedTab -or $foreground -like ('*'+$siteTitle+'*')));selectedTab=$selectedTab;selectedVia=$selectedVia;foregroundTitle=$foreground} | ConvertTo-Json -Compress",
+      ].join("\n");
+      const activated = parsePowerShellJson(await powershell(script, 6500), "Desktop activation");
+      if (!activated.visible) throw errorWithStatus(`Could not reactivate the visible ${siteTitle} browser surface.`, 502);
+      return activated;
+    }
+
+    if (action === "scroll_page") {
+      const target = normalizeOpenUrl(args.target || args.url || "google");
+      const hostname = new URL(target).hostname.replace(/^www\./, "");
+      const siteTitle = hostname.includes("youtube.com") ? "YouTube"
+        : hostname.includes("instagram.com") ? "Instagram"
+          : hostname.includes("mail.google.com") ? "Gmail"
+            : hostname.includes("github.com") ? "GitHub"
+              : hostname.includes("reddit.com") ? "Reddit"
+                : hostname.split(".")[0];
+      const direction = cleanString(args.direction || "down", 20).toLowerCase() === "up" ? "up" : "down";
+      const script = [
+        "Add-Type -AssemblyName UIAutomationClient",
+        "Add-Type -AssemblyName UIAutomationTypes",
+        "Add-Type -AssemblyName System.Windows.Forms",
+        `$siteTitle=${psSingleQuoted(siteTitle)}`,
+        `$direction=${psSingleQuoted(direction)}`,
+        "$shell=New-Object -ComObject WScript.Shell",
+        "$p=Get-Process | Where-Object { $_.MainWindowTitle -and $_.MainWindowTitle -like ('*'+$siteTitle+'*') } | Select-Object -First 1",
+        "if($null -eq $p){ throw ('No visible '+$siteTitle+' browser window was found.') }",
+        "$activated=$shell.AppActivate($p.Id)",
+        "Start-Sleep -Milliseconds 180",
+        "$root=[System.Windows.Automation.AutomationElement]::FromHandle($p.MainWindowHandle)",
+        "$scrollNode=$null;$bestArea=0",
+        "if($null -ne $root){",
+        "  $nodes=$root.FindAll([System.Windows.Automation.TreeScope]::Descendants,[System.Windows.Automation.Condition]::TrueCondition)",
+        "  foreach($node in $nodes){",
+        "    try {",
+        "      $rect=$node.Current.BoundingRectangle",
+        "      $supports=$node.GetCurrentPropertyValue([System.Windows.Automation.AutomationElement]::IsScrollPatternAvailableProperty)",
+        "      $area=[double]$rect.Width*[double]$rect.Height",
+        "      if($supports -eq $true -and -not $node.Current.IsOffscreen -and $area -gt $bestArea){ $scrollNode=$node;$bestArea=$area }",
+        "    } catch {}",
+        "  }",
+        "}",
+        "$method='sendkeys';$before=-1;$after=-1",
+        "if($null -ne $scrollNode){",
+        "  $pattern=$scrollNode.GetCurrentPattern([System.Windows.Automation.ScrollPattern]::Pattern)",
+        "  $before=[double]$pattern.Current.VerticalScrollPercent",
+        "  $amount=if($direction -eq 'up'){[System.Windows.Automation.ScrollAmount]::LargeDecrement}else{[System.Windows.Automation.ScrollAmount]::LargeIncrement}",
+        "  $pattern.Scroll([System.Windows.Automation.ScrollAmount]::NoAmount,$amount)",
+        "  $method='uia-scroll-pattern'",
+        "  Start-Sleep -Milliseconds 350",
+        "  $after=[double]$pattern.Current.VerticalScrollPercent",
+        "} else {",
+        "  try { $root.SetFocus() } catch {}",
+        "  [System.Windows.Forms.SendKeys]::SendWait($(if($direction -eq 'up'){'{PGUP}'}else{'{PGDN}'}))",
+        "  Start-Sleep -Milliseconds 350",
+        "}",
+        "[pscustomobject]@{action='scroll_page';hostname=" + psSingleQuoted(hostname) + ";direction=$direction;activated=$activated;method=$method;before=$before;after=$after;scrolled=($method -eq 'sendkeys' -or $after -ne $before)} | ConvertTo-Json -Compress",
+      ].join("\n");
+      const scrolled = parsePowerShellJson(await powershell(script, 8000), "Desktop scrolling");
+      if (!scrolled.activated || !scrolled.scrolled) throw errorWithStatus(`Could not scroll the visible ${siteTitle} surface.`, 502);
+      return scrolled;
+    }
 
     if (["open_site_fullscreen", "open_site"].includes(action)) {
       const target = normalizeOpenUrl(args.target || args.url || "google");
       const fullscreen = action === "open_site_fullscreen" || args.fullscreen === true;
+      const hostname = new URL(target).hostname.replace(/^www\./, "");
+      const siteTitle = hostname.includes("youtube.com") ? "YouTube"
+        : hostname.includes("instagram.com") ? "Instagram"
+          : hostname.includes("mail.google.com") ? "Gmail"
+            : hostname.includes("github.com") ? "GitHub"
+              : hostname.includes("reddit.com") ? "Reddit"
+                : hostname.split(".")[0];
       const script = [
         `$url=${psSingleQuoted(target)}`,
+        `$siteTitle=${psSingleQuoted(siteTitle)}`,
         "$shell=New-Object -ComObject WScript.Shell",
         "Start-Process $url",
-        "Start-Sleep -Milliseconds 1600",
-        "$titles=@('YouTube','Google Chrome','Chrome','Microsoft Edge','Edge')",
+        "Start-Sleep -Milliseconds 500",
+        // The URL launch normally foregrounds its new tab. Never activate generic
+        // 'Chrome' here: that previously pulled the JARVIS tab back over the target.
         "$activated=$false",
-        "foreach($title in $titles){ if($shell.AppActivate($title)){ $activated=$true; break } }",
-        fullscreen ? "$shell.SendKeys('{F11}'); Start-Sleep -Milliseconds 250" : "",
-        "[pscustomobject]@{action='open_site';url=$url;fullscreen=$" + (fullscreen ? "true" : "false") + ";activated=$activated} | ConvertTo-Json -Compress",
-      ].filter(Boolean).join(";");
-      return JSON.parse(await powershell(script, 8000));
+        "$deadline=(Get-Date).AddMilliseconds(2800)",
+        "do {",
+        "  $p=Get-Process | Where-Object { $_.MainWindowTitle -and $_.MainWindowTitle -like ('*'+$siteTitle+'*') } | Select-Object -First 1",
+        "  if($null -ne $p){ $activated=$shell.AppActivate($p.Id); if($activated){ break } }",
+        "  Start-Sleep -Milliseconds 180",
+        "} while((Get-Date) -lt $deadline)",
+        fullscreen ? "if($activated){ $shell.SendKeys('{F11}'); Start-Sleep -Milliseconds 250 }" : "",
+        "$foreground=(Get-Process | Where-Object { $_.MainWindowHandle -ne 0 -and $_.MainWindowTitle -like ('*'+$siteTitle+'*') } | Select-Object -First 1).MainWindowTitle",
+        "[pscustomobject]@{action='open_site';url=$url;hostname=" + psSingleQuoted(hostname) + ";expectedTitle=$siteTitle;fullscreen=$" + (fullscreen ? "true" : "false") + ";activated=$activated;visible=[bool]$activated;foregroundTitle=[string]$foreground} | ConvertTo-Json -Compress",
+      ].filter(Boolean).join("\n");
+      const opened = parsePowerShellJson(await powershell(script, 8000), "Desktop placement");
+      if (!opened.visible) throw errorWithStatus(`Could not place ${hostname} on the visible desktop. The target was opened, but its window/tab was not verified in front.`, 502);
+      return opened;
     }
 
     if (action === "youtube_search_visible") {
@@ -1162,9 +1425,9 @@ function createCapabilityEngine({
       const script = [
         action === "type_text" ? "Add-Type -AssemblyName System.Windows.Forms" : "",
         "$shell=New-Object -ComObject WScript.Shell",
-        "$titles=@('Google Chrome','Chrome','Microsoft Edge','Edge')",
-        "$activated=$false",
-        "foreach($title in $titles){ if($shell.AppActivate($title)){ $activated=$true; break } }",
+        // Preserve the surface selected by the preceding verified navigation/click.
+        // Generic Chrome activation used to jump back to JARVIS or another tab.
+        "$activated=$true",
         action === "type_text"
           ? `$text=${psSingleQuoted(text)}; Set-Clipboard -Value $text; Start-Sleep -Milliseconds 140; [System.Windows.Forms.SendKeys]::SendWait('^v'); Start-Sleep -Milliseconds 120`
           : `$shell.SendKeys(${psSingleQuoted(sequence)})`,
@@ -1179,13 +1442,13 @@ function createCapabilityEngine({
       const script = [
         "Add-Type -AssemblyName UIAutomationClient",
         "Add-Type -AssemblyName UIAutomationTypes",
-        "Add-Type @'\nusing System;\nusing System.Runtime.InteropServices;\npublic class MouseOps {\n[DllImport(\"user32.dll\")] public static extern IntPtr GetForegroundWindow();\n[DllImport(\"user32.dll\")] public static extern bool SetCursorPos(int X, int Y);\n[DllImport(\"user32.dll\")] public static extern void mouse_event(uint flags, uint dx, uint dy, uint data, UIntPtr extra);\n}\n'@",
+        "Add-Type @'\nusing System;\nusing System.Runtime.InteropServices;\npublic class MouseOps {\n[DllImport(\"user32.dll\")] public static extern bool SetProcessDPIAware();\n[DllImport(\"user32.dll\")] public static extern IntPtr GetForegroundWindow();\n[DllImport(\"user32.dll\")] public static extern bool SetCursorPos(int X, int Y);\n[DllImport(\"user32.dll\")] public static extern void mouse_event(uint flags, uint dx, uint dy, uint data, UIntPtr extra);\n}\n'@",
+        "[MouseOps]::SetProcessDPIAware() | Out-Null",
         `$needle=${psSingleQuoted(targetText)}.ToLowerInvariant()`,
         "$foreground=[MouseOps]::GetForegroundWindow()",
         "$roots=@()",
         "$fgRoot=[System.Windows.Automation.AutomationElement]::FromHandle($foreground)",
         "if($null -ne $fgRoot){ $roots += $fgRoot }",
-        "$roots += [System.Windows.Automation.AutomationElement]::RootElement",
         "$match=$null;$matchText='';$matchType='';$matchScore=0",
         "foreach($root in $roots){",
         "  if($null -eq $root -or $null -ne $match){ continue }",
@@ -1194,6 +1457,7 @@ function createCapabilityEngine({
         "    try {",
         "      $rect=$node.Current.BoundingRectangle",
         "      if($node.Current.IsOffscreen -or $rect.Width -le 3 -or $rect.Height -le 3){ continue }",
+        "      if([double]::IsNaN($rect.X) -or [double]::IsInfinity($rect.X) -or [double]::IsNaN($rect.Y) -or [double]::IsInfinity($rect.Y) -or [double]::IsNaN($rect.Width) -or [double]::IsInfinity($rect.Width) -or [double]::IsNaN($rect.Height) -or [double]::IsInfinity($rect.Height)){ continue }",
         "      $name=[string]$node.Current.Name",
         "      $help=[string]$node.Current.HelpText",
         "      $automationId=[string]$node.Current.AutomationId",
@@ -1216,7 +1480,7 @@ function createCapabilityEngine({
         "    } catch {}",
         "  }",
         "}",
-        "if($null -eq $match){ throw ('No visible control text matched '+$needle) }",
+        "if($null -eq $match -or $matchScore -lt 80){ throw ('No sufficiently reliable visible control text matched '+$needle) }",
         "$rect=$match.Current.BoundingRectangle",
         "$x=[int]($rect.X+($rect.Width/2));$y=[int]($rect.Y+($rect.Height/2))",
         "[MouseOps]::SetCursorPos($x,$y) | Out-Null",
@@ -1226,9 +1490,11 @@ function createCapabilityEngine({
         "[pscustomobject]@{action='click_text';targetText=$needle;matchedName=$matchText;controlType=$matchType;score=$matchScore;x=$x;y=$y;bounds=(@{x=$rect.X;y=$rect.Y;width=$rect.Width;height=$rect.Height})} | ConvertTo-Json -Compress",
       ].join("\n");
       try {
-        return JSON.parse(await powershell(script, 12000));
+        const clicked = parsePowerShellJson(await powershell(script, 12000), "Desktop text click");
+        if (Number(clicked.score || 0) < 80) throw errorWithStatus(`No sufficiently reliable visible control matched "${targetText}". No click was accepted.`, 404);
+        return clicked;
       } catch (error) {
-        if (String(error.message || "").includes("No visible control text matched")) {
+        if (/No (sufficiently reliable )?visible control text matched/.test(String(error.message || ""))) {
           throw errorWithStatus(`No visible control text matched "${targetText}".`, 404);
         }
         throw error;
@@ -1240,11 +1506,11 @@ function createCapabilityEngine({
     if (!Number.isFinite(x) || !Number.isFinite(y)) throw errorWithStatus("Click requires numeric x and y screen coordinates.");
     const script = [
       `$x=${Math.round(x)};$y=${Math.round(y)}`,
-      "Add-Type @'\nusing System;\nusing System.Runtime.InteropServices;\npublic class MouseOps {\n[DllImport(\"user32.dll\")] public static extern bool SetCursorPos(int X, int Y);\n[DllImport(\"user32.dll\")] public static extern void mouse_event(uint flags, uint dx, uint dy, uint data, UIntPtr extra);\n}\n'@",
+      "Add-Type @'\nusing System;\nusing System.Runtime.InteropServices;\npublic class MouseOps {\n[DllImport(\"user32.dll\")] public static extern bool SetProcessDPIAware();\n[DllImport(\"user32.dll\")] public static extern bool SetCursorPos(int X, int Y);\n[DllImport(\"user32.dll\")] public static extern void mouse_event(uint flags, uint dx, uint dy, uint data, UIntPtr extra);\n}\n'@",
+      "[MouseOps]::SetProcessDPIAware() | Out-Null",
       "Add-Type @'\nusing System;\nusing System.Runtime.InteropServices;\npublic class ScreenMetrics {\n[DllImport(\"user32.dll\")] public static extern int GetSystemMetrics(int nIndex);\n}\n'@",
       "$screenWidth=[ScreenMetrics]::GetSystemMetrics(0);$screenHeight=[ScreenMetrics]::GetSystemMetrics(1)",
       "$scaled=$false",
-      "if(($x -ge $screenWidth -or $y -ge $screenHeight) -and $x -lt ($screenWidth*3) -and $y -lt ($screenHeight*3)){ $x=[int][Math]::Round($x/2); $y=[int][Math]::Round($y/2); $scaled=$true }",
       "if($x -lt 0 -or $x -ge $screenWidth -or $y -lt 0 -or $y -ge $screenHeight){ throw ('Click coordinate outside screen bounds '+$screenWidth+'x'+$screenHeight) }",
       "[MouseOps]::SetCursorPos($x,$y) | Out-Null",
       "[MouseOps]::mouse_event(0x0002,0,0,0,[UIntPtr]::Zero)",
@@ -1252,7 +1518,7 @@ function createCapabilityEngine({
       "[MouseOps]::mouse_event(0x0004,0,0,0,[UIntPtr]::Zero)",
       "[pscustomobject]@{action='click';x=$x;y=$y;screen=($screenWidth.ToString()+'x'+$screenHeight.ToString());scaled=$scaled} | ConvertTo-Json -Compress",
     ].join(";");
-    return JSON.parse(await powershell(script, 5000));
+    return parsePowerShellJson(await powershell(script, 5000), "Desktop click");
   }
 
   async function closeApp(args) {
@@ -1469,6 +1735,211 @@ function createCapabilityEngine({
       body: JSON.stringify({ recipient: { id: cleanString(args.recipientId, 200) }, message: { text: cleanString(args.message, 1000) } }),
     });
     return { sent: true, messageId: result.message_id || result.id };
+  }
+
+  async function instagramLikeCurrent(args = {}) {
+    const expectedHandle = cleanString(args.expectedHandle, 80).replace(/^@/, "");
+    const script = [
+      "Add-Type -AssemblyName UIAutomationClient",
+      "Add-Type -AssemblyName UIAutomationTypes",
+      "$root=[System.Windows.Automation.AutomationElement]::FromHandle((Get-Process | Where-Object { $_.MainWindowHandle -ne 0 -and $_.MainWindowTitle -like '*Instagram*' } | Select-Object -First 1).MainWindowHandle)",
+      "if($null -eq $root){ throw 'No visible Instagram window is active.' }",
+      "$root.SetFocus()",
+      "$nodes=$root.FindAll([System.Windows.Automation.TreeScope]::Descendants,[System.Windows.Automation.Condition]::TrueCondition)",
+      "$reelUrl=''",
+      "foreach($node in $nodes){",
+      "  try {",
+      "    if([string]$node.Current.ControlType.ProgrammaticName -eq 'ControlType.Document' -and $node.GetCurrentPropertyValue([System.Windows.Automation.AutomationElement]::IsValuePatternAvailableProperty) -eq $true){",
+      "      $value=[string]$node.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).Current.Value",
+      "      if($value -match 'instagram\\.com/reel/'){ $reelUrl=$value; break }",
+      "    }",
+      "  } catch {}",
+      "}",
+      "if([string]::IsNullOrWhiteSpace($reelUrl)){ throw 'The visible Instagram surface is not an open Reel URL.' }",
+      "$buttons=@()",
+      "foreach($node in $nodes){",
+      "  try {",
+      "    $name=([string]$node.Current.Name).Trim()",
+      "    $type=[string]$node.Current.ControlType.ProgrammaticName",
+      "    $rect=$node.Current.BoundingRectangle",
+      "    if(($name -eq 'Like' -or $name -eq 'Unlike') -and $type -eq 'ControlType.Button' -and -not $node.Current.IsOffscreen -and $rect.Width -gt 4 -and $rect.Height -gt 4){",
+      "      $buttons += [pscustomobject]@{Node=$node;Name=$name;X=[double]$rect.X;Y=[double]$rect.Y;Width=[double]$rect.Width;Height=[double]$rect.Height}",
+      "    }",
+      "  } catch {}",
+      "}",
+      "$primary=$buttons | Sort-Object Y | Select-Object -First 1",
+      "if($null -eq $primary){ throw 'No exact Like or Unlike control was found on the open Reel.' }",
+      "$alreadyLiked=($primary.Name -eq 'Unlike')",
+      "$invoked=$false",
+      "if(-not $alreadyLiked){",
+      "  if($primary.Node.GetCurrentPropertyValue([System.Windows.Automation.AutomationElement]::IsInvokePatternAvailableProperty) -ne $true){ throw 'The primary Reel Like control is not invokable.' }",
+      "  $primary.Node.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()",
+      "  $invoked=$true",
+      "  Start-Sleep -Milliseconds 900",
+      "}",
+      "$verifyRoot=[System.Windows.Automation.AutomationElement]::FromHandle((Get-Process | Where-Object { $_.MainWindowHandle -ne 0 -and $_.MainWindowTitle -like '*Instagram*' } | Select-Object -First 1).MainWindowHandle)",
+      "$verifyNodes=$verifyRoot.FindAll([System.Windows.Automation.TreeScope]::Descendants,[System.Windows.Automation.Condition]::TrueCondition)",
+      "$unlikeFound=$false",
+      "foreach($node in $verifyNodes){",
+      "  try {",
+      "    $name=([string]$node.Current.Name).Trim();$type=[string]$node.Current.ControlType.ProgrammaticName;$rect=$node.Current.BoundingRectangle",
+      "    if($name -eq 'Unlike' -and $type -eq 'ControlType.Button' -and -not $node.Current.IsOffscreen -and $rect.Width -gt 4 -and $rect.Height -gt 4){ $unlikeFound=$true; break }",
+      "  } catch {}",
+      "}",
+      "[pscustomobject]@{ok=$unlikeFound;platform='instagram';reelUrl=$reelUrl;expectedHandle=" + psSingleQuoted(expectedHandle) + ";alreadyLiked=$alreadyLiked;invoked=$invoked;before=$primary.Name;after=$(if($unlikeFound){'Unlike'}else{'unverified'});x=[int]($primary.X+($primary.Width/2));y=[int]($primary.Y+($primary.Height/2))} | ConvertTo-Json -Compress",
+    ].join("\n");
+    return parsePowerShellJson(await powershell(script, 12000), "Instagram Like verification");
+  }
+
+  async function instagramPrepareDm(args = {}) {
+    const recipient = cleanString(args.recipient, 120);
+    const message = cleanString(args.message, 2000);
+    if (!recipient || !message) throw errorWithStatus("Instagram recipient and exact message are required.", 400);
+    await desktopControl({ action: "activate_site", target: "https://www.instagram.com/direct/inbox/" });
+    const script = [
+      "Add-Type -AssemblyName UIAutomationClient",
+      "Add-Type -AssemblyName UIAutomationTypes",
+      "Add-Type -AssemblyName System.Windows.Forms",
+      `$recipient=${psSingleQuoted(recipient)}`,
+      `$expected=${psSingleQuoted(message)}`,
+      "$needle=$recipient.ToLowerInvariant()",
+      "$process=Get-Process | Where-Object { $_.MainWindowHandle -ne 0 -and $_.MainWindowTitle -like '*Instagram*' } | Select-Object -First 1",
+      "if($null -eq $process){ throw 'No visible Instagram window is active.' }",
+      "$root=[System.Windows.Automation.AutomationElement]::FromHandle($process.MainWindowHandle)",
+      "if($null -eq $root){ throw 'The Instagram accessibility surface is unavailable.' }",
+      "try { $root.SetFocus() } catch {}",
+      "$nodes=$root.FindAll([System.Windows.Automation.TreeScope]::Descendants,[System.Windows.Automation.Condition]::TrueCondition)",
+      "$candidate=$null;$candidateName='';$candidateScore=-1",
+      "foreach($node in $nodes){",
+      "  try {",
+      "    $name=([string]$node.Current.Name).Trim();$type=[string]$node.Current.ControlType.ProgrammaticName;$rect=$node.Current.BoundingRectangle",
+      "    if($type -ne 'ControlType.Button' -or $node.Current.IsOffscreen -or $rect.Width -lt 100 -or $rect.Height -lt 30){ continue }",
+      "    $lower=$name.ToLowerInvariant();$escaped=[regex]::Escape($needle)",
+      "    $tokenMatch=[regex]::IsMatch($lower,'(^|[^a-z0-9._])'+$escaped+'([^a-z0-9._]|$)')",
+      "    $score=if($tokenMatch){100}elseif($lower.Contains($needle)){60}else{-1}",
+      "    if($name -like 'user-profile-picture*'){ $score+=20 }",
+      "    if($score -gt $candidateScore){ $candidate=$node;$candidateName=$name;$candidateScore=$score }",
+      "  } catch {}",
+      "}",
+      "if($null -eq $candidate -or $candidateScore -lt 60){ throw ('No Instagram Direct thread safely matched '+$recipient+'.') }",
+      "$selectedVia='already_selected'",
+      "if($candidate.GetCurrentPropertyValue([System.Windows.Automation.AutomationElement]::IsInvokePatternAvailableProperty) -eq $true){",
+      "  $candidate.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()",
+      "  $selectedVia='invoke_pattern'",
+      "} elseif($candidate.GetCurrentPropertyValue([System.Windows.Automation.AutomationElement]::IsTogglePatternAvailableProperty) -eq $true){",
+      "  $toggle=$candidate.GetCurrentPattern([System.Windows.Automation.TogglePattern]::Pattern)",
+      "  if($toggle.Current.ToggleState -ne [System.Windows.Automation.ToggleState]::On){ $toggle.Toggle();$selectedVia='toggle_pattern' }",
+      "} else { throw 'The matched Instagram Direct thread has no safe selection pattern.' }",
+      "Start-Sleep -Milliseconds 700",
+      "$root=[System.Windows.Automation.AutomationElement]::FromHandle($process.MainWindowHandle)",
+      "$nodes=$root.FindAll([System.Windows.Automation.TreeScope]::Descendants,[System.Windows.Automation.Condition]::TrueCondition)",
+      "$chatUrl='';$resolvedRecipient='';$composer=$null",
+      "foreach($node in $nodes){",
+      "  try {",
+      "    $name=([string]$node.Current.Name).Trim();$type=[string]$node.Current.ControlType.ProgrammaticName;$rect=$node.Current.BoundingRectangle",
+      "    if($type -eq 'ControlType.Document' -and $node.GetCurrentPropertyValue([System.Windows.Automation.AutomationElement]::IsValuePatternAvailableProperty) -eq $true){",
+      "      $value=[string]$node.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).Current.Value",
+      "      if($value -match 'instagram\\.com/direct/t/'){ $chatUrl=$value }",
+      "    }",
+      "    if(-not $resolvedRecipient -and $type -eq 'ControlType.Hyperlink' -and $name -like 'Open the profile page of *' -and $rect.X -gt 900){ $resolvedRecipient=$name.Substring(25).Trim() }",
+      "    if($type -eq 'ControlType.Edit' -and ($name -eq 'Message...' -or ($rect.X -gt 900 -and $rect.Y -gt 1200))){ $composer=$node }",
+      "  } catch {}",
+      "}",
+      "if([string]::IsNullOrWhiteSpace($chatUrl)){ throw 'The matched item did not open an Instagram Direct conversation URL.' }",
+      "if($null -eq $composer){ throw 'The Instagram message composer was not found.' }",
+      "$setVia='focused_paste'",
+      "$composer.SetFocus()",
+      "Start-Sleep -Milliseconds 120",
+      "Set-Clipboard -Value $expected",
+      "[System.Windows.Forms.SendKeys]::SendWait('^a')",
+      "[System.Windows.Forms.SendKeys]::SendWait('^v')",
+      "Start-Sleep -Milliseconds 500",
+      "$verifyRoot=[System.Windows.Automation.AutomationElement]::FromHandle($process.MainWindowHandle)",
+      "$verifyNodes=$verifyRoot.FindAll([System.Windows.Automation.TreeScope]::Descendants,[System.Windows.Automation.Condition]::TrueCondition)",
+      "$draftVerified=$false;$sendAvailable=$false",
+      "foreach($node in $verifyNodes){",
+      "  try {",
+      "    $name=([string]$node.Current.Name).Trim();$type=[string]$node.Current.ControlType.ProgrammaticName",
+      "    if($type -eq 'ControlType.Edit' -and $node.GetCurrentPropertyValue([System.Windows.Automation.AutomationElement]::IsValuePatternAvailableProperty) -eq $true){",
+      "      $value=([string]$node.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).Current.Value).Trim()",
+      "      if($value -ceq $expected){ $draftVerified=$true }",
+      "    }",
+      "    if($name -eq 'Send' -and $type -eq 'ControlType.Button' -and -not $node.Current.IsOffscreen){ $sendAvailable=$true }",
+      "  } catch {}",
+      "}",
+      "if(-not $draftVerified){ throw 'Instagram did not expose the exact prepared draft after writing it.' }",
+      "[pscustomobject]@{ok=$true;platform='instagram';requestedRecipient=$recipient;matchedThread=$candidateName;selectedVia=$selectedVia;resolvedRecipient=$resolvedRecipient;conversationUrl=$chatUrl;messageLength=$expected.Length;draftVerified=$draftVerified;sendAvailable=$sendAvailable;setVia=$setVia;submitted=$false} | ConvertTo-Json -Compress",
+    ].join("\n");
+    return parsePowerShellJson(await powershell(script, 12000), "Instagram draft preparation");
+  }
+
+  async function instagramSendCurrent(args = {}) {
+    const expectedRecipient = cleanString(args.expectedRecipient, 120);
+    const resolvedRecipient = cleanString(args.resolvedRecipient, 200);
+    const expectedConversationUrl = cleanString(args.expectedConversationUrl, 1000);
+    const message = cleanString(args.message, 2000);
+    if (!expectedRecipient || !message) throw errorWithStatus("Instagram recipient and exact message are required.", 400);
+    const script = [
+      "Add-Type -AssemblyName UIAutomationClient",
+      "Add-Type -AssemblyName UIAutomationTypes",
+      `$recipient=${psSingleQuoted(expectedRecipient)}`,
+      `$recipientProof=${psSingleQuoted(resolvedRecipient || expectedRecipient)}`,
+      `$expectedUrl=${psSingleQuoted(expectedConversationUrl)}`,
+      `$expected=${psSingleQuoted(message)}`,
+      "$process=Get-Process | Where-Object { $_.MainWindowHandle -ne 0 -and $_.MainWindowTitle -like '*Instagram*' } | Select-Object -First 1",
+      "if($null -eq $process){ throw 'No visible Instagram window is active.' }",
+      "$root=[System.Windows.Automation.AutomationElement]::FromHandle($process.MainWindowHandle)",
+      "$root.SetFocus()",
+      "$nodes=$root.FindAll([System.Windows.Automation.TreeScope]::Descendants,[System.Windows.Automation.Condition]::TrueCondition)",
+      "$chatUrl=''",
+      "$recipientSeen=$false",
+      "$composer=$null",
+      "$sendButton=$null",
+      "foreach($node in $nodes){",
+      "  try {",
+      "    $name=([string]$node.Current.Name).Trim();$type=[string]$node.Current.ControlType.ProgrammaticName",
+      "    if($name.IndexOf($recipientProof,[StringComparison]::OrdinalIgnoreCase) -ge 0){ $recipientSeen=$true }",
+      "    if($type -eq 'ControlType.Document' -and $node.GetCurrentPropertyValue([System.Windows.Automation.AutomationElement]::IsValuePatternAvailableProperty) -eq $true){",
+      "      $value=[string]$node.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).Current.Value",
+      "      if($value -match 'instagram\\.com/direct/t/'){ $chatUrl=$value }",
+      "    }",
+      "    if($type -eq 'ControlType.Edit'){",
+      "      $value=''",
+      "      if($node.GetCurrentPropertyValue([System.Windows.Automation.AutomationElement]::IsValuePatternAvailableProperty) -eq $true){ $value=[string]$node.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).Current.Value }",
+      "      if($value -eq $expected -or $name -eq $expected){ $composer=$node }",
+      "    }",
+      "    if($name -eq 'Send' -and $type -eq 'ControlType.Button' -and -not $node.Current.IsOffscreen){ $sendButton=$node }",
+      "  } catch {}",
+      "}",
+      "if([string]::IsNullOrWhiteSpace($chatUrl)){ throw 'The visible Instagram surface is not a Direct conversation URL.' }",
+      "if($expectedUrl -and $chatUrl -ne $expectedUrl){ throw 'The visible Instagram conversation changed after draft preparation.' }",
+      "if(-not $recipientSeen){ throw ('The visible Direct conversation does not prove recipient '+$recipient+'.') }",
+      "if($null -eq $composer){ throw 'The Instagram composer does not contain the exact approved text.' }",
+      "if($null -eq $sendButton -or $sendButton.GetCurrentPropertyValue([System.Windows.Automation.AutomationElement]::IsInvokePatternAvailableProperty) -ne $true){ throw 'No invokable Instagram Send control was found.' }",
+      "$sendButton.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()",
+      "$verified=$false;$composerCleared=$false;$bubbleSeen=$false",
+      "for($attempt=0;$attempt -lt 6;$attempt++){",
+      "  Start-Sleep -Milliseconds 700",
+      "  $verifyRoot=[System.Windows.Automation.AutomationElement]::FromHandle($process.MainWindowHandle)",
+      "  $verifyNodes=$verifyRoot.FindAll([System.Windows.Automation.TreeScope]::Descendants,[System.Windows.Automation.Condition]::TrueCondition)",
+      "  $bubbleSeen=$false;$exactDraftStillPresent=$false",
+      "  foreach($node in $verifyNodes){",
+      "    try {",
+      "      $name=([string]$node.Current.Name).Trim();$type=[string]$node.Current.ControlType.ProgrammaticName",
+      "      if($type -eq 'ControlType.Edit'){",
+      "        $value=''",
+      "        if($node.GetCurrentPropertyValue([System.Windows.Automation.AutomationElement]::IsValuePatternAvailableProperty) -eq $true){ $value=[string]$node.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).Current.Value }",
+      "        if($value -eq $expected -or $name -eq $expected){ $exactDraftStillPresent=$true }",
+      "      }",
+      "      if($name -eq $expected -and $type -ne 'ControlType.Edit'){ $bubbleSeen=$true }",
+      "    } catch {}",
+      "  }",
+      "  $composerCleared=-not $exactDraftStillPresent",
+      "  if($composerCleared -and $bubbleSeen){ $verified=$true;break }",
+      "}",
+      "[pscustomobject]@{ok=$verified;platform='instagram';chatUrl=$chatUrl;expectedRecipient=$recipient;recipientSeen=$recipientSeen;messageLength=$expected.Length;invoked=$true;composerCleared=$composerCleared;bubbleSeen=$bubbleSeen} | ConvertTo-Json -Compress",
+    ].join("\n");
+    return parsePowerShellJson(await powershell(script, 18000), "Instagram Send verification");
   }
 
   // Resolve the user's REAL Desktop — on OneDrive "Known Folder Move" machines the visible
@@ -1889,29 +2360,49 @@ function createCapabilityEngine({
       neuralVault: neuralVault ? neuralVault.status() : null,
     }),
     draft_email: draftEmail,
+    gmail_prepare_email: async (args) => {
+      const draft = await providers.google.createDraft((await draftEmail(args)).draft);
+      const verified = await providers.google.getDraft(draft.draftId);
+      const verifiedBodyHash = crypto.createHash("sha256").update(cleanString(verified.rawBody, 10000)).digest("hex");
+      if (verified.recipient.toLowerCase() !== draft.recipient.toLowerCase() || verified.subject !== draft.subject || verifiedBodyHash !== draft.bodyHash) {
+        await providers.google.deleteDraft(draft.draftId).catch(() => undefined);
+        throw errorWithStatus("Gmail draft read-after-write verification failed; the draft was not sent", 502);
+      }
+      return { ...draft, verified: true, verification: "provider-read-after-write" };
+    },
+    gmail_send_prepared: async (args) => providers.google.sendDraft({
+      draftId: cleanString(args.draftId, 200),
+      expectedRecipient: cleanString(args.expectedRecipient, 320),
+      expectedSubject: cleanString(args.expectedSubject, 200),
+      expectedBodyHash: cleanString(args.expectedBodyHash, 128),
+    }),
     send_email: async (args) => providers.google.sendEmail((await draftEmail(args)).draft),
     browser_search: browserSearch,
-    browser_status: () => browser.status(),
-    browser_login_handoff: (args) => browser.loginHandoff(args),
-    browser_page_brief: (args) => browser.pageBrief(args),
-    browser_navigate: (args) => browser.navigate(args),
-    browser_snapshot: (args) => browser.snapshot(args),
-    browser_tabs: (args) => browser.tabs(args),
-    browser_act: (args) => browser.act(args),
-    browser_commit: (args) => browser.commit(args),
-    browser_file_search: (args) => browser.findFiles(args),
-    browser_inspect: (args) => browser.inspect(args),
-    browser_click: (args) => browser.click(args),
-    browser_type: (args) => browser.type(args),
-    browser_extract: (args) => browser.extract(args),
-    browser_screenshot: (args) => browser.screenshot(args),
-    browser_wait: (args) => browser.wait(args),
-    browser_verify: (args) => browser.verify(args),
+    browser_status: (args, context) => browserForContext(context).status(args),
+    browser_login_handoff: (args, context) => browserForContext(context).loginHandoff(args),
+    browser_login_complete: (args, context) => browserForContext(context).completeLoginHandoff(args),
+    browser_page_brief: (args, context) => browserForContext(context).pageBrief(args),
+    browser_navigate: (args, context) => browserForContext(context).navigate(args),
+    browser_snapshot: (args, context) => browserForContext(context).snapshot(args),
+    browser_tabs: (args, context) => browserForContext(context).tabs(args),
+    browser_act: (args, context) => browserForContext(context).act(args),
+    browser_commit: (args, context) => browserForContext(context).commit(args),
+    browser_file_search: (args, context) => browserForContext(context).findFiles(args),
+    browser_inspect: (args, context) => browserForContext(context).inspect(args),
+    browser_click: (args, context) => browserForContext(context).click(args),
+    browser_type: (args, context) => browserForContext(context).type(args),
+    browser_extract: (args, context) => browserForContext(context).extract(args),
+    browser_screenshot: (args, context) => browserForContext(context).screenshot(args),
+    browser_wait: (args, context) => browserForContext(context).wait(args),
+    browser_verify: (args, context) => browserForContext(context).verify(args),
     screen_capture: async (args) => {
       if (!screenCapture) throw errorWithStatus("Screen capture is not available in this runtime", 412);
       return screenCapture({ reason: cleanString(args.reason, 240) });
     },
     instagram_reply: instagramReply,
+    instagram_like_current: instagramLikeCurrent,
+    instagram_prepare_dm: instagramPrepareDm,
+    instagram_send_current: instagramSendCurrent,
     list_windows: async (args) => { if (!windowsBroker) throw errorWithStatus("Windows broker is not available", 412); return windowsBroker.call("list_windows", args); },
     inspect_window: async (args) => { if (!windowsBroker) throw errorWithStatus("Windows broker is not available", 412); return windowsBroker.call("inspect_window", args); },
     focus_window: async (args) => { if (!windowsBroker) throw errorWithStatus("Windows broker is not available", 412); return windowsBroker.call("focus_window", args); },
@@ -2034,20 +2525,80 @@ function createCapabilityEngine({
       }
       return { ok: true, title, message };
     },
-    computer_use: async (args) => {
+    computer_use: async (args, context = {}) => {
       if (!computerUse) throw errorWithStatus("computer_use requires screen capture — not available in this runtime.", 412);
       const task = cleanString(args.task || args.instruction || args.goal || args.command, 1200);
       if (!task) throw errorWithStatus("computer_use requires a task description.", 400);
       if (/\b(password|captcha|purchase|buy|sell|trade|submit.*payment|pay|checkout|wire|bank|delete account)\b/i.test(task)) {
         throw errorWithStatus("computer_use blocked a sensitive or financial action. Use an explicit approved workflow instead.", 403);
       }
-      const maxSteps = Math.min(asNumber(args.maxSteps || args.max_steps, 15, 1, 25), 25);
+      const complexitySignals = (task.match(/\b(?:then|after|across|multiple|compare|analyse|analyze|evidence|source|different|tabs?|report|download|upload|repository|workflow)\b/gi) || []).length;
+      const defaultMaxSteps = complexitySignals >= 6 ? 40 : complexitySignals >= 3 ? 32 : 24;
+      const maxSteps = Math.min(asNumber(args.maxSteps || args.max_steps, defaultMaxSteps, 1, 40), 40);
+      const startUrl = cleanString(args.startUrl || args.start_url || context.startUrl, 2000);
+      const dailySurface = (context.surface || (context.placement === "visible" ? "daily-browser" : "managed-browser")) === "daily-browser";
       const stepLog = [];
-      const result = await computerUse.execute(task, {
+      const automationOptions = {
         maxSteps,
-        onStep: (s) => stepLog.push({ step: s.step, action: s.action, reasoning: s.reasoning, done: s.done }),
-      });
-      return { ok: result.success, task, result: result.result, steps: stepLog, stepsCompleted: result.stepsCompleted };
+        surface: dailySurface ? "daily-browser" : (context.surface || "managed-browser"),
+        approvedExternal: context.confirmed === true,
+        prepareOnlyText: cleanString(args.prepareOnlyText || args.prepare_only_text, 2000),
+        taskId: context.actionTaskId || cleanString(args.taskId, 200) || undefined,
+        resume: args._commitBoundary || null,
+        delivery: context.placement === "visible" ? "visible" : "runtime",
+        startUrl,
+        focusSurface: dailySurface && startUrl ? async () => desktopControl({ action: "activate_site", target: startUrl }) : null,
+        onStep: async (s) => {
+          if (s.phase !== "planned") stepLog.push({ step: s.step, phase: s.phase, mode: s.mode, action: s.action, reasoning: s.reasoning, done: s.done, error: s.error || null });
+          await context.onRuntimeActionStep?.(s);
+        },
+        controlState: context.controlState,
+      };
+      let takeoverStarted = false;
+      if (dailySurface && desktopTakeover) {
+        automationOptions.taskId ||= `desktop-${crypto.randomUUID()}`;
+        desktopTakeover.start({ taskId: automationOptions.taskId, objective: task, mode: "takeover", sessionId: context.sessionId });
+        desktopTakeover.observe("Reading the active Windows desktop before the first action");
+        takeoverStarted = true;
+      }
+      const actionRuntimeControl = automationOptions.controlState;
+      automationOptions.controlState = async () => {
+        const takeoverControl = desktopTakeover?.controlState?.() || "running";
+        if (takeoverControl !== "running") return takeoverControl;
+        return typeof actionRuntimeControl === "function" ? actionRuntimeControl() : "running";
+      };
+      const runtimeStep = automationOptions.onStep;
+      automationOptions.onStep = async (step) => {
+        if (dailySurface) desktopTakeover?.applyAgentStep?.(step);
+        await runtimeStep?.(step);
+      };
+      let result;
+      try {
+        result = dailySurface
+          ? await computerUse.execute(task, automationOptions)
+          : await universalHeadlessBrowser.execute(task, automationOptions);
+      } catch (error) {
+        if (takeoverStarted) desktopTakeover?.fail?.(error.message);
+        throw error;
+      }
+      if (takeoverStarted) {
+        if (result.requiresConfirmation) desktopTakeover?.pause?.("Waiting for owner approval before the consequential action");
+        else if (result.success) desktopTakeover?.complete?.(result.result || "Desktop task completed and verified");
+        else if (result.cancelled) desktopTakeover?.cancel?.(result.result || "Desktop task cancelled");
+        else desktopTakeover?.fail?.(result.error || result.result || "Desktop task did not reach a verified outcome");
+      }
+      if (result.requiresConfirmation && context.confirmed !== true) {
+        return { confirmationRequired: true, task, prepared: result.result, pendingAction: result.pendingAction || null, steps: stepLog, stepsCompleted: result.stepsCompleted };
+      }
+      if (result.requiresLogin) {
+        return { ok: true, completed: false, requiresLogin: true, task, result: result.result, loginUrl: result.loginUrl || result.finalUrl || startUrl || null, taskId: result.taskId || automationOptions.taskId || null, statePath: result.statePath || null, steps: stepLog.length ? stepLog : result.history || [], mode: result.mode };
+      }
+      // The universal browser presents the completed page from the authenticated
+      // JARVIS profile when visible delivery was explicitly requested. Opening
+      // the URL again through the desktop browser created duplicate, often
+      // unauthenticated tabs and broke task ownership.
+      const reveal = result.handoff || null;
+      return { ok: result.success, task, result: result.result, steps: stepLog.length ? stepLog : result.history || result.steps || [], evidence: result.evidence || [], statePath: result.statePath || null, taskId: result.taskId || automationOptions.taskId || null, stepsCompleted: result.stepsCompleted, mode: result.mode, finalUrl: result.finalUrl || null, finalTitle: result.finalTitle || null, reveal };
     },
     screen_locate: async (args) => {
       if (!computerUse) throw errorWithStatus("screen_locate requires screen capture.", 412);
@@ -2066,8 +2617,8 @@ function createCapabilityEngine({
         try {
           const cap = await screenCapture({ reason: "mouse_scroll center" });
           const dims = (cap?.dimensions || "1920x1080").split("x");
-          if (sx == null) sx = Math.round(Number(dims[0]) / 2);
-          if (sy == null) sy = Math.round(Number(dims[1]) / 2);
+          if (sx == null) sx = (Number(cap?.bounds?.x) || 0) + Math.round(Number(dims[0]) / 2);
+          if (sy == null) sy = (Number(cap?.bounds?.y) || 0) + Math.round(Number(dims[1]) / 2);
         } catch { sx = sx ?? 960; sy = sy ?? 540; }
       }
       const scrollResult = await computerUse.mouseScroll(sx, sy, direction, amount);
@@ -2152,6 +2703,7 @@ function createCapabilityEngine({
       "browser_navigate",
       "browser_status",
       "browser_login_handoff",
+      "browser_login_complete",
       "browser_page_brief",
       "browser_snapshot",
       "browser_tabs",
@@ -2206,6 +2758,7 @@ function createCapabilityEngine({
       "memory_os_v4_run_agent",
       "mesh_self_test",
       "desktop_control",
+      "computer_use",
     ]);
     const indirectBlocked = context.indirect && !safeBrowserContinuation.has(tool) && (
       definition.risk !== "observe"
@@ -2232,16 +2785,51 @@ function createCapabilityEngine({
     const started = Date.now();
     try {
       const result = await handler(args, context);
+      if (result?.confirmationRequired && !context.confirmed) {
+        const confirmationArgs = { ...args, _commitBoundary: result.pendingAction || null };
+        return {
+          ok: false,
+          status: "confirmation_required",
+          confirmation: requestConfirmation(tool, confirmationArgs, context),
+          capability: definition,
+          prepared: result.prepared || null,
+        };
+      }
+      const explicitlyFailed = result && typeof result === "object"
+        && (result.ok === false || result.success === false);
+      if (explicitlyFailed) {
+        throw errorWithStatus(
+          cleanString(result.error || result.result || `${tool} completed without verifying the requested outcome.`, 1000),
+          502,
+        );
+      }
       if (definition.risk !== "observe") actionHistory.push(Date.now());
+      // "verified" used to be a hardcoded string on every handler that did not throw, so the word
+      // meant only "no exception was raised". Downstream — jarvis-bridge's `execution.receipt
+      // ?.status === "verified"` and the owner-approval receipt — treated it as proof the action
+      // landed. An observation is complete the moment it returns; a side-effecting action is not,
+      // and now has to show a positive signal from its adapter to earn the word.
+      const outcomeSignal = (() => {
+        if (definition.risk === "observe") return "observation returned";
+        if (result && typeof result === "object") {
+          if (result.verified === true) return "adapter reported verified === true";
+          if (result.confirmed === true) return "adapter reported confirmed === true";
+          if (typeof result.verification === "string" && result.verification.trim()) return `adapter verification: ${result.verification.trim().slice(0, 120)}`;
+        }
+        return null;
+      })();
+      const durationMs = Date.now() - started;
       const receipt = createReceipt({
         action: `capability.${tool}`,
         target: tool,
         risk: definition.risk,
-        status: "verified",
+        status: outcomeSignal ? "verified" : "executed_unverified",
         input: hash(args),
         plan: [`Validate ${tool} arguments`, "Execute bounded adapter", "Verify provider or local result"],
         result: JSON.stringify(result).slice(0, 2000),
-        verification: ["Executor returned successfully", `Duration ${Date.now() - started}ms`],
+        verification: outcomeSignal
+          ? [outcomeSignal, `Duration ${durationMs}ms`]
+          : ["Executor returned without throwing; the adapter reported no verified outcome", `Duration ${durationMs}ms`],
         deviceId: context.deviceId || "local-browser",
       });
       return { ok: true, status: "completed", capability: definition, result, receipt };
@@ -2272,7 +2860,12 @@ function createCapabilityEngine({
       throw errorWithStatus("Owner confirmation challenge is invalid", 403);
     }
     writeJsonAtomic(confirmationsPath, confirmations.filter((item) => item.id !== id));
-    return execute(confirmation.tool, confirmation.args, { ...context, confirmed: true, confirmationId: id });
+    return execute(confirmation.tool, confirmation.args, {
+      ...confirmation.continuation,
+      ...context,
+      confirmed: true,
+      confirmationId: id,
+    });
   }
 
   function denyConfirmation(id, context = {}) {
@@ -2304,6 +2897,9 @@ function createCapabilityEngine({
     declarations,
     apps: Object.keys(appCatalog),
     execute,
+    privateBrowser: managedBrowser,
+    browserNavigationMemory: universalHeadlessBrowser.navigationMemory,
+    desktopTakeover,
     close: () => {
       browser.close?.();
       pcGraph.close();
@@ -2311,6 +2907,21 @@ function createCapabilityEngine({
     },
     approveConfirmation,
     denyConfirmation,
+    cancelConfirmationsForTask: (taskId) => {
+      const id = cleanString(taskId, 160);
+      const active = loadConfirmations();
+      const cancelled = active.filter((item) => item.continuation?.actionTaskId === id);
+      if (cancelled.length) writeJsonAtomic(confirmationsPath, active.filter((item) => item.continuation?.actionTaskId !== id));
+      return { taskId: id, cancelled: cancelled.length, confirmationIds: cancelled.map((item) => item.id) };
+    },
+    cancelAutomationTask: async (taskId) => {
+      const id = cleanString(taskId, 200);
+      const results = await Promise.allSettled([
+        managedBrowser.releaseTask({ taskId: id, close: true }),
+      ]);
+      if (desktopTakeover?.status?.().taskId === id) desktopTakeover.cancel("Runtime task cancelled by owner");
+      return { taskId: id, released: results.map((item) => item.status === "fulfilled") };
+    },
     pendingConfirmations: (sessionId, { includeOwnerChallenge = false } = {}) => loadConfirmations()
       .filter((item) => !sessionId || item.actor.sessionId === sessionId)
       .map((item) => ({
@@ -2321,6 +2932,10 @@ function createCapabilityEngine({
         createdAt: item.createdAt,
         expiresAt: item.expiresAt,
         argumentHash: item.argumentHash,
+        actionTaskId: item.continuation?.actionTaskId || null,
+        actionStepId: item.continuation?.actionStepId || null,
+        placement: item.continuation?.placement || null,
+        surface: item.continuation?.surface || null,
         ...(includeOwnerChallenge ? { ownerChallenge: item.ownerChallenge } : {}),
       })),
   };

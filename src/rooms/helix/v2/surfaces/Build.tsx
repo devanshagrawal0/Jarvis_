@@ -30,7 +30,7 @@ export function Build({ projectId }: { projectId?: string }) {
   const [folder, setFolder] = useState("Kalshi_Arbitrage_Brief");
   const [seg, setSeg] = useState("");
   const [op, setOp] = useState("Combine");
-  const [artifacts, setArtifacts] = useState(ARTIFACTS);
+  const [artifacts, setArtifacts] = useState<typeof ARTIFACTS>([]);   // real or empty — no fake fallback
   const [busy, setBusy] = useState("");
   const [flash, setFlash] = useState("");
 
@@ -38,16 +38,15 @@ export function Build({ projectId }: { projectId?: string }) {
   const loadArtifacts = () => {
     if (!projectId) return;
     fetch(`/api/helix/artifacts?projectId=${projectId}`).then(r => r.json()).then(d => {
-      if (Array.isArray(d?.artifacts) && d.artifacts.length) {
-        setIds(d.artifacts.map((a: any) => a.id));
-        setArtifacts(d.artifacts.map((a: any) => ({
-          n: (a.title || "artifact") + "." + ({ combine: "pdf", convert: "docx", compare: "xlsx", extract: "csv", package: "zip" }[a.artifact_type as string] || "pdf"),
-          type: (a.artifact_type || "brief").replace(/^\w/, (c: string) => c.toUpperCase()),
-          status: (a.status === "needs_review" ? "review" : a.status === "published" ? "ready" : "draft") as "ready" | "draft" | "review",
-          updated: "just now",
-        })));
-      }
-    }).catch(() => {});
+      const list = Array.isArray(d?.artifacts) ? d.artifacts : [];   // real or empty; never fake
+      setIds(list.map((a: any) => a.id));
+      setArtifacts(list.map((a: any) => ({
+        n: (a.title || "artifact") + "." + ({ combine: "pdf", convert: "docx", compare: "xlsx", extract: "csv", package: "zip" }[a.artifact_type as string] || "pdf"),
+        type: (a.artifact_type || "brief").replace(/^\w/, (c: string) => c.toUpperCase()),
+        status: (a.status === "needs_review" ? "review" : a.status === "published" ? "ready" : "draft") as "ready" | "draft" | "review",
+        updated: "just now",
+      })));
+    }).catch(() => { setIds([]); setArtifacts([]); });
   };
   // H11: export an artifact's real rendered content (markdown, cited) and download it.
   const exportArtifact = async (artifactId: string, name: string) => {
@@ -94,7 +93,7 @@ export function Build({ projectId }: { projectId?: string }) {
       <div className="hxv-build">
         {/* Folders + Segments */}
         <div className="hxv-panel" style={{ padding: 8, alignSelf: "start" }}>
-          <div className="hxv-u" style={{ padding: "6px 8px 8px" }}>Folders</div>
+          <div className="hxv-u" style={{ padding: "6px 8px 8px", display: "flex", alignItems: "center", gap: 6 }}>Folders <span className="hxv-demo-badge" title="Folders & segments are sample scaffolding — not yet wired to real project storage.">sample</span></div>
           {FOLDERS.map(([n, c]) => (
             <div key={n as string} className={"hxv-list-t" + (folder === n ? " on" : "")} onClick={() => setFolder(n as string)}>
               <span className="hxv-nav-ico" style={{ fontSize: 13 }}><Ico.projects /></span>{n}<span className="hxv-list-n">{c}</span>
@@ -130,6 +129,11 @@ export function Build({ projectId }: { projectId?: string }) {
           <div className="hxv-cols" style={{ gridTemplateColumns: "1fr 260px", alignItems: "start" }}>
             <div className="hxv-etable">
               <div className="hxv-art head"><span>Artifact</span><span>Type</span><span>Status</span><span style={{ textAlign: "right" }}>Updated</span></div>
+              {artifacts.length === 0 && (
+                <div style={{ padding: 22, fontSize: 12.5, color: "var(--v-text3)", textAlign: "center" }}>
+                  No artifacts yet — run an operation above (Combine / Extract / Package) to create your first deliverable.
+                </div>
+              )}
               {artifacts.map((a, i) => (
                 <div className="hxv-art" key={a.n + i} onClick={() => ids[i] && exportArtifact(ids[i], a.n)} title={ids[i] ? "Click to export (.md)" : ""} style={{ cursor: ids[i] ? "pointer" : "default" }}>
                   <span className="hxv-art-n"><span className="hxv-nav-ico" style={{ color: "var(--v-accent2)", fontSize: 13 }}><Ico.evidence /></span>{a.n}</span>
@@ -142,7 +146,7 @@ export function Build({ projectId }: { projectId?: string }) {
 
             {/* Artifact preview + citation check (ref_06 §5) */}
             <div className="hxv-panel" style={{ overflow: "hidden" }}>
-              <div className="hxv-panel-h"><span className="hxv-u">Preview</span><span className="hxv-link" style={{ cursor: "pointer" }} onClick={() => ids[0] ? exportArtifact(ids[0], artifacts[0]?.n) : setFlash("Generate an artifact first — nothing to open yet.")}>Open</span></div>
+              <div className="hxv-panel-h"><span className="hxv-u">Preview</span><span className="hxv-demo-badge" title="This preview + citation stats are a sample layout; use Open/export for the real artifact content.">sample</span><span style={{ flex: 1 }} /><span className="hxv-link" style={{ cursor: "pointer" }} onClick={() => ids[0] ? exportArtifact(ids[0], artifacts[0]?.n) : setFlash("Generate an artifact first — nothing to open yet.")}>Open</span></div>
               <div style={{ padding: 12 }}>
                 <div style={{ background: "#0f1626", border: "1px solid var(--v-line)", borderRadius: 6, padding: "16px 14px", minHeight: 150 }}>
                   <div style={{ fontSize: 13, fontWeight: 700, textAlign: "center" }}>Kalshi Cross-Exchange<br />Arbitrage Strategy</div>

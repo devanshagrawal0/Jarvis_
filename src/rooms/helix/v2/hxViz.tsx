@@ -1,7 +1,23 @@
 // Wave 3 — data-density primitives. Small, reusable, seeded (deterministic) viz that
 // turn blank cells into signal: delta chips, a confidence bar with an uncertainty band
 // (the shared "how sure are we" visual language), and compact ordinal confidence pips.
-import React from "react";
+import React, { useEffect, useRef, useState } from "react";
+
+// W8 #22 — tick-flash: flashes green (up) / red (down) when its numeric value changes, then
+// fades. Signals "this is live." Reduced-motion collapses the flash (CSS). Wrap any value that
+// updates from a refetch/stream: <TickFlash value={count} />.
+export function TickFlash({ value, format }: { value: number; format?: (v: number) => string }) {
+  const prev = useRef(value);
+  const [dir, setDir] = useState<"" | "up" | "down">("");
+  useEffect(() => {
+    if (value === prev.current) return;
+    setDir(value > prev.current ? "up" : "down");
+    prev.current = value;
+    const t = window.setTimeout(() => setDir(""), 500);
+    return () => clearTimeout(t);
+  }, [value]);
+  return <span className={"hxv-tick" + (dir ? " " + dir : "")}>{format ? format(value) : value}</span>;
+}
 
 // Compact ▲/▼ change chip. `unit` is appended ("%", "", "pts"); `invert` flips good/bad
 // (for metrics where down is good, e.g. contradictions).

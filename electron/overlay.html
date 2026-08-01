@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>JARVIS Desktop Overlay</title>
+  <style>
+    *{box-sizing:border-box}html,body{margin:0;width:100%;height:100%;overflow:hidden;background:transparent;color:#eaffff;font-family:Inter,Segoe UI,sans-serif;user-select:none}
+    #root{position:fixed;inset:0;pointer-events:none}
+    .rail{position:absolute;top:22px;left:50%;transform:translateX(-50%);display:flex;align-items:center;gap:14px;min-width:520px;max-width:min(900px,calc(100vw - 80px));padding:11px 16px;border:1px solid rgba(100,231,255,.55);border-radius:15px;background:linear-gradient(135deg,rgba(4,13,20,.94),rgba(5,26,32,.88));box-shadow:0 14px 55px rgba(0,0,0,.5),inset 0 0 25px rgba(70,224,255,.06);backdrop-filter:blur(18px)}
+    .reactor{width:14px;height:14px;border-radius:50%;background:#55f5ba;box-shadow:0 0 8px #55f5ba,0 0 26px #55f5ba;animation:pulse 1.25s infinite}.paused .reactor{background:#ffc35b;box-shadow:0 0 8px #ffc35b,0 0 26px #ffc35b}.fault .reactor{background:#ff5c74;box-shadow:0 0 8px #ff5c74,0 0 26px #ff5c74}
+    .copy{display:grid;min-width:0;flex:1}.copy strong{font-size:12px;letter-spacing:.18em}.copy span{font-size:11px;color:#8eb5c0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:3px}.phase{font:700 10px ui-monospace,Consolas;color:#65e6ff;border:1px solid rgba(101,230,255,.3);border-radius:999px;padding:6px 9px;text-transform:uppercase}.keys{font:10px ui-monospace,Consolas;color:#95aab2;white-space:nowrap}.keys b{color:#ffce72}
+    .mark{position:absolute;border:1.5px solid rgba(76,233,255,.88);border-radius:7px;box-shadow:0 0 0 1px rgba(3,10,15,.8),0 0 24px rgba(76,233,255,.28)}.mark span{position:absolute;left:-1px;top:-20px;padding:3px 6px;border-radius:5px 5px 5px 0;background:#49e5ff;color:#001116;font:800 9px ui-monospace,Consolas;white-space:nowrap;max-width:220px;overflow:hidden;text-overflow:ellipsis}
+    .target{position:absolute;width:56px;height:56px;transform:translate(-50%,-50%);border:2px solid #62f1bd;border-radius:50%;box-shadow:0 0 0 8px rgba(98,241,189,.1),0 0 35px rgba(98,241,189,.55);animation:target 1s infinite}.target:before,.target:after{content:"";position:absolute;background:#62f1bd}.target:before{width:80px;height:1px;left:-14px;top:26px}.target:after{height:80px;width:1px;top:-14px;left:26px}.target label{position:absolute;left:66px;top:15px;max-width:300px;padding:6px 9px;border-radius:7px;background:rgba(2,16,20,.94);border:1px solid rgba(98,241,189,.45);font:700 10px ui-monospace,Consolas;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+    .edge{position:absolute;inset:7px;border:1px solid rgba(79,226,255,.18);border-radius:20px;box-shadow:inset 0 0 65px rgba(35,215,255,.035)}
+    @keyframes pulse{50%{opacity:.5;transform:scale(.8)}}@keyframes target{50%{box-shadow:0 0 0 13px rgba(98,241,189,.03),0 0 42px rgba(98,241,189,.65)}}
+  </style>
+</head>
+<body><div id="root"></div><script>
+  const root=document.getElementById('root');
+  const safe=value=>String(value??'').replace(/[&<>"']/g,ch=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
+  function render(state={}){
+    const phase=String(state.phase||'idle');
+    const className=phase==='paused'||phase==='waiting_approval'?'paused':phase==='failed'?'fault':'';
+    const marks=(state.marks||[]).map((mark,index)=>`<div class="mark" style="left:${Number(mark.x)||0}px;top:${Number(mark.y)||0}px;width:${Number(mark.width)||0}px;height:${Number(mark.height)||0}px"><span>${index+1} · ${safe(mark.label||'target')}</span></div>`).join('');
+    const target=state.target&&Number.isFinite(Number(state.target.x))&&Number.isFinite(Number(state.target.y))?`<div class="target" style="left:${Number(state.target.x)}px;top:${Number(state.target.y)}px"><label>${safe(state.target.label||state.action||'next action')}</label></div>`:'';
+    root.className=className;
+    root.innerHTML=`<div class="edge"></div><div class="rail"><i class="reactor"></i><div class="copy"><strong>JARVIS DESKTOP ${safe(String(state.mode||'takeover').toUpperCase())}</strong><span>${safe(state.detail||state.objective||'Observing the active desktop')}</span></div><span class="phase">${safe(phase.replaceAll('_',' '))} · ${Number(state.step)||0}</span><span class="keys"><b>CTRL+ALT+SPACE</b> PAUSE · <b>CTRL+ALT+ESC</b> STOP</span></div>${marks}${target}`;
+  }
+  window.jarvisOverlay.onState(render);
+</script></body></html>

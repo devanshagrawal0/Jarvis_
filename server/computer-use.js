@@ -34,6 +34,34 @@ const MAX_SCROLL_SAME_DIR = 8;
 
 const BROWSER_PROC_RE = /^(chrome|msedge|firefox|brave|opera|vivaldi|arc|chromium)$/i;
 const WEB_TASK_RE = /https?:\/\/|instagram|youtube|google\.com|twitter|reddit|github\.com|facebook|linkedin|tiktok|spotify|netflix|amazon|kalshi|open.*browser|navigate to|go to .*(website|page|url)/i;
+const EXTERNAL_COMMIT_TASK_RE = /\b(send|reply|message|like|thumbs? up|post|publish|submit|comment|follow|subscribe|delete|remove|purchase|buy|checkout|pay|transfer|book|reserve)\b/i;
+const EXTERNAL_COMMIT_CONTROL_RE = /\b(send|reply|like|unlike|post|publish|submit|comment|follow|subscribe|delete|remove|purchase|buy|checkout|pay|transfer|confirm|place order|book|reserve)\b/i;
+
+function pendingExternalCommit(task, decision, elements = [], history = []) {
+  if (!EXTERNAL_COMMIT_TASK_RE.test(String(task || ""))) return null;
+  const ref = String(decision?.ref || "");
+  const element = elements.find((item) => String(item.ref || item.id || "") === ref || Number(item.id) === Number(decision?.elementId));
+  const label = [decision?.reasoning, element?.name, element?.text, element?.ariaLabel, element?.type, decision?.result].filter(Boolean).join(" ");
+  const action = String(decision?.action || "").toLowerCase();
+  const key = String(decision?.key || "").toLowerCase();
+  const explicitControl = EXTERNAL_COMMIT_CONTROL_RE.test(label);
+  const searchStep = /\b(search|find|locate|open (?:the )?chat|select (?:the )?(?:chat|recipient|result))\b/i.test(label);
+  const enterAfterTyping = ["press", "key"].includes(action)
+    && ["enter", "return"].includes(key)
+    && history.some((item) => ["fill", "type"].includes(String(item.action || "").toLowerCase()))
+    && !searchStep;
+  const clickingCommit = ["click", "double_click"].includes(action) && explicitControl;
+  const unapprovedDone = (decision?.done || action === "done") && history.length > 0;
+  if (!clickingCommit && !enterAfterTyping && !unapprovedDone) return null;
+  return {
+    action: action || "commit",
+    key: key || null,
+    ref: ref || null,
+    elementId: decision?.elementId || null,
+    label: String(label || "external account action").slice(0, 240),
+    task: String(task || "").slice(0, 600),
+  };
+}
 
 // ── PowerShell runner ─────────────────────────────────────────────────────────
 async function ps(script, timeoutMs = 18000) {
@@ -50,6 +78,7 @@ const MOUSE_TYPE = `Add-Type @'
 using System;
 using System.Runtime.InteropServices;
 public class CUMouseOps {
+  [DllImport("user32.dll")] public static extern bool SetProcessDPIAware();
   [DllImport("user32.dll")] public static extern bool SetCursorPos(int X, int Y);
   [DllImport("user32.dll")] public static extern void mouse_event(uint flags, uint dx, uint dy, uint data, UIntPtr extra);
   [DllImport("user32.dll")] public static extern int GetSystemMetrics(int nIndex);
@@ -71,9 +100,10 @@ async function mouseClick(x, y, button = "left", isDouble = false) {
 
   const script = [
     MOUSE_TYPE,
+    "[CUMouseOps]::SetProcessDPIAware() | Out-Null",
     `$x=${ix};$y=${iy}`,
-    `$sw=[CUMouseOps]::GetSystemMetrics(0);$sh=[CUMouseOps]::GetSystemMetrics(1)`,
-    `if($x -lt 0 -or $x -ge $sw -or $y -lt 0 -or $y -ge $sh){ throw "Coordinate ($x,$y) outside screen" }`,
+    `$sx=[CUMouseOps]::GetSystemMetrics(76);$sy=[CUMouseOps]::GetSystemMetrics(77);$sw=[CUMouseOps]::GetSystemMetrics(78);$sh=[CUMouseOps]::GetSystemMetrics(79)`,
+    `if($x -lt $sx -or $x -ge ($sx+$sw) -or $y -lt $sy -or $y -ge ($sy+$sh)){ throw "Coordinate ($x,$y) outside virtual desktop" }`,
     `[CUMouseOps]::SetCursorPos($x,$y) | Out-Null`,
     "Start-Sleep -Milliseconds 45",
     clickScript,
@@ -87,6 +117,7 @@ async function mouseScroll(x, y, direction, amount = 3) {
   const rawDelta = direction === "down" ? -(120 * amount) : (120 * amount);
   const script = [
     MOUSE_TYPE,
+    "[CUMouseOps]::SetProcessDPIAware() | Out-Null",
     `$x=${ix};$y=${iy}`,
     `$raw=${rawDelta}`,
     `$delta=[uint32]($raw -band 0xFFFFFFFF)`,
@@ -150,6 +181,8 @@ async function keyboardKey(keys) {
 async function buildSetOfMarks(screenCaptureResult) {
   const imagePath = screenCaptureResult?.path || "";
   const imgPs = imagePath ? JSON.stringify(imagePath) : "''";
+  const captureOriginX = Number(screenCaptureResult?.bounds?.x) || 0;
+  const captureOriginY = Number(screenCaptureResult?.bounds?.y) || 0;
 
   // Single merged PowerShell script
   const script = `
@@ -196,6 +229,8 @@ if(-not $isBrowser){
 }
 $annotatedB64=$null
 $imgPath=${imgPs}
+$captureOriginX=${captureOriginX}
+$captureOriginY=${captureOriginY}
 if($nodesList.Count -gt 0 -and $imgPath -and (Test-Path $imgPath)){
   try {
     Add-Type -AssemblyName System.Drawing -ErrorAction Stop
@@ -209,8 +244,10 @@ if($nodesList.Count -gt 0 -and $imgPath -and (Test-Path $imgPath)){
       $col=$colors[$idx % $colors.Count]
       $pen=New-Object System.Drawing.Pen($col,2)
       $brush=New-Object System.Drawing.SolidBrush($col)
-      $g.DrawRectangle($pen,[int]$el.x,[int]$el.y,[int]$el.w,[int]$el.h)
-      $g.DrawString([string]$idx,$font,$brush,[int]$el.x,[Math]::Max(0,[int]$el.y-14))
+      $drawX=[int]$el.x-$captureOriginX
+      $drawY=[int]$el.y-$captureOriginY
+      $g.DrawRectangle($pen,$drawX,$drawY,[int]$el.w,[int]$el.h)
+      $g.DrawString([string]$idx,$font,$brush,$drawX,[Math]::Max(0,$drawY-14))
       $pen.Dispose(); $brush.Dispose()
       $idx++
     }
@@ -328,7 +365,7 @@ function createComputerUse({ screenCapture, getSettings, browserService = null }
     else throw new Error("screenCapture returned no image data");
     const dims = c.dimensions || "1920x1080";
     const parts = dims.split("x");
-    return { b64, width: Number(parts[0]) || 1920, height: Number(parts[1]) || 1080, captureResult: c };
+    return { b64, width: Number(parts[0]) || 1920, height: Number(parts[1]) || 1080, originX: Number(c?.bounds?.x) || 0, originY: Number(c?.bounds?.y) || 0, captureResult: c };
   }
 
   function getApiKey() {
@@ -341,7 +378,7 @@ function createComputerUse({ screenCapture, getSettings, browserService = null }
   // ── locateElement: find element visually, return coordinates ───────────────
   async function locateElement(description) {
     const apiKey = getApiKey();
-    const { b64, width, height, captureResult } = await captureAndRead();
+    const { b64, width, height, originX, originY, captureResult } = await captureAndRead();
     const { elements, annotatedB64 } = await buildSetOfMarks(captureResult);
 
     if (annotatedB64 && elements.length) {
@@ -378,7 +415,7 @@ Return ONLY JSON:
   "description": "<what you found>"
 }`;
     const result = await callGeminiVision(b64, prompt, apiKey);
-    return { ...result, method: "direct" };
+    return { ...result, x: result.x == null ? result.x : Math.round(Number(result.x) + originX), y: result.y == null ? result.y : Math.round(Number(result.y) + originY), method: "direct" };
   }
 
   // ── executeViaPlaywright: browser-mode ReAct loop ─────────────────────────
@@ -432,6 +469,7 @@ Decide the NEXT SINGLE action. Rules:
 - When fully done: set done=true
 - For Instagram: after navigating to instagram.com, look for the + icon to create a post
 - For YouTube: use the search box, type the query, press Enter, then click a result
+- Keep the requested destination as the final active page. Never switch back to JARVIS to report progress.
 
 Return ONLY valid JSON:
 {
@@ -455,10 +493,17 @@ Return ONLY valid JSON:
 
       decision.step = i + 1;
       history.push(decision);
-      onStep?.({ step: i + 1, ...decision });
+      await onStep?.({ step: i + 1, phase: "planned", mode: "playwright", ...decision });
+
+      const pendingCommit = options.approvedExternal === true ? null : pendingExternalCommit(task, decision, elems, history.slice(0, -1));
+      if (pendingCommit) {
+        await onStep?.({ step: i + 1, phase: "waiting_approval", mode: "playwright", ...decision });
+        return { success: false, requiresConfirmation: true, pendingAction: pendingCommit, steps: history, result: "Navigation and preparation are complete. The external account action is paused at the final commit boundary.", stepsCompleted: i, mode: "playwright" };
+      }
 
       if (decision.done || decision.action === "done") {
-        return { success: true, steps: history, result: decision.result || "Task complete", stepsCompleted: i + 1, mode: "playwright" };
+        await onStep?.({ step: i + 1, phase: "done", mode: "playwright", ...decision });
+        return { success: true, steps: history, result: decision.result || "Task complete", stepsCompleted: i + 1, mode: "playwright", finalUrl: url, finalTitle: title };
       }
 
       // Execute via Playwright
@@ -520,6 +565,7 @@ Return ONLY valid JSON:
         // If browser action fails (stale ref, element gone), wait a beat and continue
         await new Promise((r) => setTimeout(r, 400));
       }
+      await onStep?.({ step: i + 1, phase: history[history.length - 1].error ? "failed" : "executed", mode: "playwright", ...decision, error: history[history.length - 1].error || null });
     }
 
     return { success: false, steps: history, result: `Reached max steps (${maxSteps}) without completing task`, stepsCompleted: maxSteps, mode: "playwright" };
@@ -533,8 +579,29 @@ Return ONLY valid JSON:
     const history = [];
     const scrollCounts = { up: 0, down: 0, left: 0, right: 0 };
 
+    async function controlCheckpoint(step) {
+      if (typeof options.controlState !== "function") return null;
+      let control = String(await options.controlState() || "running");
+      if (control === "paused") {
+        await onStep?.({ step, phase: "paused", mode: "screen", action: "pause", reasoning: "Owner paused desktop takeover" });
+        while (control === "paused") {
+          await new Promise((resolve) => setTimeout(resolve, 100));
+          control = String(await options.controlState() || "running");
+        }
+        if (control !== "cancelled") await onStep?.({ step, phase: "resumed", mode: "screen", action: "resume", reasoning: "Owner resumed desktop takeover" });
+      }
+      if (control !== "cancelled") return null;
+      await onStep?.({ step, phase: "cancelled", mode: "screen", action: "cancel", reasoning: "Owner cancelled desktop takeover" });
+      return { success: false, cancelled: true, steps: history, result: "Desktop takeover cancelled by the owner", stepsCompleted: history.length, mode: "screen" };
+    }
+
     for (let i = 0; i < maxSteps; i++) {
-      const { b64, width, height, captureResult } = await captureAndRead();
+      const stopped = await controlCheckpoint(i + 1);
+      if (stopped) return stopped;
+      if (typeof options.focusSurface === "function") {
+        try { await options.focusSurface({ step: i + 1, task }); } catch {}
+      }
+      const { b64, width, height, originX, originY, captureResult } = await captureAndRead();
       const { elements, annotatedB64, isBrowser } = await buildSetOfMarks(captureResult);
       const imageToSend = annotatedB64 || b64;
       const hasSoM = Boolean(annotatedB64 && elements.length);
@@ -560,17 +627,20 @@ ${somInstructions}
 Decide the NEXT SINGLE action. Rules:
 - Prefer elementId over raw x/y when numbered elements are visible
 - For web apps (Instagram, YouTube, Chrome) use visual position if no elementId
+- When elementId is unavailable, x and y MUST use a normalized 0-1000 coordinate space: left/top is 0,0 and right/bottom is 1000,1000
+- If the daily browser is on the wrong page, press ctrl+l, type the required https URL, then press return
 - After typing, use key:"return" to submit
 - For Instagram: tap the + or camera icon → then upload → find the file
 - For YouTube: click the search bar → type → press return → click a video
+- Keep the requested destination visible when finished. Never navigate back to JARVIS to report progress
 - When task is fully complete, set done:true
 
 Return ONLY valid JSON (no markdown):
 {
   "action": "click"|"double_click"|"right_click"|"type"|"key"|"scroll"|"wait"|"done",
   "elementId": <int from numbered overlay, preferred over x/y>,
-  "x": <int pixel X, only when elementId unavailable>,
-  "y": <int pixel Y, only when elementId unavailable>,
+  "x": <int normalized 0-1000 X, only when elementId unavailable>,
+  "y": <int normalized 0-1000 Y, only when elementId unavailable>,
   "text": "<text for type action>",
   "key": "<key: return/escape/tab/ctrl+a/ctrl+v/f5/etc>",
   "direction": "up"|"down"|"left"|"right",
@@ -595,6 +665,30 @@ Return ONLY valid JSON (no markdown):
       }
       if (decision.x != null) decision.x = Math.round(Number(decision.x));
       if (decision.y != null) decision.y = Math.round(Number(decision.y));
+      if (!decision._resolvedFromSoM && decision.x != null && decision.y != null) {
+        decision._normalizedPoint = { x: decision.x, y: decision.y };
+        decision.x = originX + Math.max(0, Math.min(width - 1, Math.round((decision.x / 1000) * width)));
+        decision.y = originY + Math.max(0, Math.min(height - 1, Math.round((decision.y / 1000) * height)));
+      }
+
+      const prepareOnlyText = String(options.prepareOnlyText || "");
+      const latestTyped = history.slice().reverse().find((item) => String(item.action || "").toLowerCase() === "type");
+      const decisionLabel = [decision.reasoning, decision.result, decision.text].filter(Boolean).join(" ");
+      const preparedEnter = prepareOnlyText
+        && ["key", "press"].includes(String(decision.action || "").toLowerCase())
+        && ["enter", "return"].includes(String(decision.key || "").toLowerCase())
+        && String(latestTyped?.text || "") === prepareOnlyText;
+      const preparedCommitClick = prepareOnlyText
+        && ["click", "double_click"].includes(String(decision.action || "").toLowerCase())
+        && /\b(send|submit)\b/i.test(decisionLabel);
+      if (preparedEnter || preparedCommitClick) {
+        decision.action = "done";
+        decision.done = true;
+        decision.result = "The exact draft is visibly prepared. Final submission was suppressed for the separate owner commit gate.";
+        history.push(decision);
+        await onStep?.({ step: i + 1, phase: "prepared", mode: "screen", ...decision });
+        return { success: true, steps: history, result: decision.result, stepsCompleted: i + 1, mode: "screen", preparedOnly: true };
+      }
 
       if (decision.action === "scroll") {
         const dir = decision.direction || "down";
@@ -609,14 +703,47 @@ Return ONLY valid JSON (no markdown):
         Object.keys(scrollCounts).forEach((k) => { scrollCounts[k] = 0; });
       }
 
+      const previous = history[history.length - 1];
+      const repeatedPoint = previous
+        && ["click", "double_click", "right_click"].includes(String(decision.action || "").toLowerCase())
+        && String(previous.action || "").toLowerCase() === String(decision.action || "").toLowerCase()
+        && Number.isFinite(decision.x) && Number.isFinite(decision.y)
+        && Number.isFinite(previous.x) && Number.isFinite(previous.y)
+        && Math.abs(decision.x - previous.x) <= Math.max(24, width * 0.03)
+        && Math.abs(decision.y - previous.y) <= Math.max(24, height * 0.03);
+      const repeatedPrior = repeatedPoint && history.length > 1 ? history[history.length - 2] : null;
+      const repeatedThreeTimes = repeatedPoint
+        && repeatedPrior
+        && String(repeatedPrior.action || "").toLowerCase() === String(decision.action || "").toLowerCase()
+        && Number.isFinite(repeatedPrior.x) && Number.isFinite(repeatedPrior.y)
+        && Math.abs(decision.x - repeatedPrior.x) <= Math.max(24, width * 0.03)
+        && Math.abs(decision.y - repeatedPrior.y) <= Math.max(24, height * 0.03);
+      if (repeatedThreeTimes) {
+        decision.action = "done";
+        decision.done = true;
+        decision.result = "Stopped because the same visible-screen action was proposed three times without progress.";
+        decision.stalled = true;
+      }
+
       history.push(decision);
-      onStep?.({ step: i + 1, ...decision });
+      await onStep?.({ step: i + 1, phase: "planned", mode: "screen", ...decision });
+
+      const pendingCommit = options.approvedExternal === true ? null : pendingExternalCommit(task, decision, elements, history.slice(0, -1));
+      if (pendingCommit) {
+        await onStep?.({ step: i + 1, phase: "waiting_approval", mode: "screen", ...decision });
+        return { success: false, requiresConfirmation: true, pendingAction: pendingCommit, steps: history, result: "Navigation and preparation are complete on the signed-in daily browser. The final external action is paused for owner approval.", stepsCompleted: i, mode: "screen" };
+      }
 
       if (decision.done || decision.action === "done") {
-        return { success: true, steps: history, result: decision.result || "Task complete", stepsCompleted: i + 1, mode: "screen" };
+        await onStep?.({ step: i + 1, phase: "done", mode: "screen", ...decision });
+        return decision.stalled
+          ? { success: false, steps: history, error: decision.result || "Visible-screen automation stalled.", result: decision.result, stepsCompleted: i + 1, mode: "screen", stalled: true }
+          : { success: true, steps: history, result: decision.result || "Task complete", stepsCompleted: i + 1, mode: "screen" };
       }
 
       try {
+        const stoppedBeforeAction = await controlCheckpoint(i + 1);
+        if (stoppedBeforeAction) return stoppedBeforeAction;
         switch (decision.action) {
           case "click":
             if (decision.x == null || decision.y == null) break;
@@ -644,9 +771,14 @@ Return ONLY valid JSON (no markdown):
             await new Promise((r) => setTimeout(r, ACTION_SETTLE_MS));
             break;
           case "scroll": {
-            const sx = decision.x ?? Math.round(width / 2);
-            const sy = decision.y ?? Math.round(height / 2);
-            await mouseScroll(sx, sy, decision.direction || "down", Math.max(1, Math.min(10, decision.amount || 3)));
+            const direction = decision.direction || "down";
+            if (isBrowser && (direction === "down" || direction === "up")) {
+              await keyboardKey(direction === "down" ? "pagedown" : "pageup");
+            } else {
+              const sx = decision.x ?? Math.round(width / 2);
+              const sy = decision.y ?? Math.round(height / 2);
+              await mouseScroll(sx, sy, direction, Math.max(1, Math.min(10, decision.amount || 3)));
+            }
             await new Promise((r) => setTimeout(r, SCROLL_SETTLE_MS));
             break;
           }
@@ -662,6 +794,7 @@ Return ONLY valid JSON (no markdown):
         history[history.length - 1].error = execErr.message;
         await new Promise((r) => setTimeout(r, 300));
       }
+      await onStep?.({ step: i + 1, phase: history[history.length - 1].error ? "failed" : "executed", mode: "screen", ...decision, error: history[history.length - 1].error || null });
     }
 
     return { success: false, steps: history, result: `Reached max steps (${maxSteps}) without completing task`, stepsCompleted: maxSteps, mode: "screen" };
@@ -674,7 +807,7 @@ Return ONLY valid JSON (no markdown):
     //  (b) task is clearly web-related (URL, known site name, etc.)
     //
     // This is 5-10x faster for web tasks: no screenshots, no SoM, direct DOM access.
-    const usePlaywright = browserService !== null && WEB_TASK_RE.test(task);
+    const usePlaywright = browserService !== null && WEB_TASK_RE.test(task) && options.surface !== "daily-browser";
 
     if (usePlaywright) {
       try {
@@ -727,4 +860,4 @@ Return JSON:
   };
 }
 
-module.exports = { createComputerUse };
+module.exports = { createComputerUse, pendingExternalCommit };

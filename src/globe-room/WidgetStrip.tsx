@@ -9,6 +9,7 @@ import { AgentsCommandCenter, ModulesCommandCenter, ProjectsCommandCenter } from
 import { ConnectionsCommandCenter, ReceiptsCommandCenter, TrustCommandCenter } from "./AssuranceCommandCenters";
 import { ProfileCommandCenter, VitalsCommandCenter, WeatherCommandCenter } from "./PersonalCommandCenters";
 import { MemoryCommandCenter } from "./MemoryCommandCenter";
+import { RuntimeMinimized, RuntimeWidget } from "./runtime/RuntimeWidget";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -64,6 +65,7 @@ interface WidgetDef {
 }
 
 const WIDGETS: WidgetDef[] = [
+  { id: "runtime",     label: "Runtime",     icon: "R" },
   { id: "profile",     label: "Profile",     icon: "◐" },
   { id: "weather",     label: "Weather",     icon: "☀" },
   { id: "vitals",      label: "Vitals",      icon: "◍" },
@@ -1367,6 +1369,7 @@ export function HelixExpanded({ onClose }: { onClose: () => void }) {
 function getChipStat(id: string, data: any): string {
   if (!data) return "—";
   switch (id) {
+    case "runtime":     return `${(data.tasks ?? []).filter((task: any) => ["queued", "planning", "ready", "running", "waiting_approval", "waiting_owner", "paused", "recovering", "verified"].includes(task.state)).length} active`;
     case "profile":     return data.identity?.preferred_name ?? "—";
     case "weather":     return data.current ? `${data.current.temp}°` : "—";
     case "vitals":      return data.memory ? `${data.memory.pct}%` : "—";
@@ -1392,6 +1395,9 @@ function getChipStatus(id: string, data: any): "active" | "warning" | "inactive"
   if (data.__state === "disconnected") return "inactive";
   if (data.__state === "stale") return "warning";
   switch (id) {
+    case "runtime":
+      if (data.status?.emergencyStop?.stopped) return "warning";
+      return data.status?.state === "ready" ? "active" : "inactive";
     case "connections": {
       const vals = Object.values(data.providers ?? {});
       if (vals.length > 0 && vals.every(providerConnected)) return "active";
@@ -1432,6 +1438,21 @@ async function widgetApi(path: string, empty: Record<string, unknown>): Promise<
 
 async function fetchWidgetData(id: string): Promise<any> {
   switch (id) {
+    case "runtime":
+      return Promise.all([
+        widgetApi("/api/action/status", { state: "unavailable", emergencyStop: { stopped: false } }),
+        widgetApi("/api/action/tasks?limit=100", { tasks: [] }),
+        widgetApi("/api/action/surfaces", { surfaces: [] }),
+        widgetApi("/api/action/automations", { automations: [] }),
+      ]).then(([status, tasks, surfaces, automations]) => ({
+        status,
+        tasks: tasks.tasks || [],
+        surfaces: surfaces.surfaces || [],
+        automations: automations.automations || [],
+        __state: [status, tasks, surfaces, automations].every((item) => item.__state === "live") ? "live" : "disconnected",
+        __error: [status, tasks, surfaces, automations].find((item) => item.__error)?.__error,
+        __fetchedAt: new Date().toISOString(),
+      }));
     case "profile":
       return widgetApi("/api/profile", { available: false });
     case "weather":
@@ -1942,12 +1963,13 @@ export function WidgetStrip({ mode }: { mode: string; showChips?: boolean }) {
     setWindows((current) => ({ ...current, [id]: { ...current[id], z: Math.max(300, ...Object.values(current).map((state) => state.z)) + 1 } }));
   };
 
-  function renderSpatialContent(id: string) {
+  function renderSpatialContent(id: string, state: SpatialWidgetState) {
     const data = widgetData[id];
     const loading = loadingIds.has(id);
     const onClose = () => closeWindow(id);
     const props = { data, loading, onClose };
     switch (id) {
+      case "runtime":     return <RuntimeWidget mode={state.mode} initialData={data} onRefresh={() => void refresh(id)} />;
       case "profile":     return <ProfileCommandCenter data={data} loading={loading} />;
       case "weather":     return <WeatherCommandCenter data={data} loading={loading} />;
       case "vitals":      return <VitalsCommandCenter data={data} loading={loading} />;
@@ -1969,8 +1991,14 @@ export function WidgetStrip({ mode }: { mode: string; showChips?: boolean }) {
   }
 
   const visibleWindows = Object.values(windows).filter((state) => state.mode !== "minimized").sort((left, right) => left.z - right.z);
+  const minimizedRuntime = windows.runtime?.mode === "minimized" ? windows.runtime : null;
   return (
     <div className="spatial-workspace">
+      {minimizedRuntime && <RuntimeMinimized
+        data={widgetData.runtime}
+        onRestore={() => patchWindow("runtime", { mode: "normal", z: Math.max(300, ...Object.values(windows).map((state) => state.z)) + 1 })}
+        onStop={() => { void api("/api/action/stop", { method: "POST", body: JSON.stringify({ reason: "Owner stopped Action Fabric from minimized Runtime" }) }).then(() => refresh("runtime")); }}
+      />}
       {visibleWindows.map((state) => {
         const widget = WIDGETS.find((item) => item.id === state.id)!;
         const data = widgetData[state.id];
@@ -1989,7 +2017,7 @@ export function WidgetStrip({ mode }: { mode: string; showChips?: boolean }) {
             onClose={() => closeWindow(state.id)}
             onRefresh={() => void refresh(state.id)}
           >
-            {renderSpatialContent(state.id)}
+            {renderSpatialContent(state.id, state)}
           </SpatialWidgetFrame>
         );
       })}

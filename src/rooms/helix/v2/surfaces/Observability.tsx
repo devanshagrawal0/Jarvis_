@@ -1,44 +1,47 @@
 // Observability (H9). Pixel target: ref_07 §4-6. Run log + citation trace +
-// reproducibility. Reads live runs/events from the substrate; sample fallback.
-import React, { useEffect, useState } from "react";
+// reproducibility. Reads live runs via the shared data layer (SWR + abort); honest
+// empty/loading/error states. NOTE: the per-run tab internals (Retrievals/Cost/Citation/
+// Reproduce) still show sample content — flagged for the W6 honesty sweep (#16).
+import React, { useState } from "react";
 import { Ico } from "../hxIcons";
+import { useHelixResource } from "../useHelixResource";
+import { SurfaceState } from "../SurfaceState";
 
 interface Run { id: string; status: string; stage?: string; trigger?: string; total_cost?: number; created_at?: string; }
-const SAMPLE: Run[] = [
-  { id: "RUN-2026-07-12-0941", status: "success", stage: "synthesize", trigger: "inquiry", total_cost: 0.014, created_at: "9:41 AM" },
-  { id: "RUN-2026-07-12-0830", status: "success", stage: "decide", trigger: "analysis", total_cost: 0.031, created_at: "8:30 AM" },
-  { id: "RUN-2026-07-11-1712", status: "failed", stage: "gather", trigger: "research", total_cost: 0.006, created_at: "5:12 PM" },
-];
 const STAGES = ["Ingest", "Retrieve", "Analyze", "Synthesize", "Decide"];
 const TABS = ["Overview", "Retrievals", "Cost", "Citation trace", "Reproduce"] as const;
 
 export function Observability({ projectId }: { projectId?: string }) {
-  const [runs, setRuns] = useState<Run[]>(SAMPLE);
+  const { data, loading, error, refetch } = useHelixResource<{ runs: any[] }>(
+    projectId ? `obs:${projectId}` : null,
+    projectId ? `/api/helix/runs?projectId=${projectId}` : null,
+  );
+  const runs: Run[] = (data?.runs || []).map((r: any) => ({
+    id: (r.id || "").slice(0, 8).toUpperCase(), status: r.status, stage: r.stage,
+    trigger: r.trigger, total_cost: r.total_cost, created_at: (r.created_at || "").slice(11, 16),
+  }));
   const [sel, setSel] = useState(0);
   const [tab, setTab] = useState<typeof TABS[number]>("Overview");
 
-  useEffect(() => {
-    if (!projectId) return;
-    fetch(`/api/helix/runs?projectId=${projectId}`).then(r => r.json()).then(d => {
-      if (d?.runs?.length) setRuns(d.runs.map((r: any) => ({
-        id: (r.id || "").slice(0, 8).toUpperCase(), status: r.status, stage: r.stage,
-        trigger: r.trigger, total_cost: r.total_cost, created_at: (r.created_at || "").slice(11, 16),
-      })));
-    }).catch(() => {});
-  }, [projectId]);
-
-  const run = runs[sel] || SAMPLE[0];
+  // Fallback keeps the (non-rendered) children JSX from throwing on undefined when there are
+  // no runs — SurfaceState shows the empty state instead, but React still evaluates children.
+  const run: Run = runs[Math.min(sel, Math.max(0, runs.length - 1))] || { id: "", status: "" };
   return (
     <div className="hxv-surface">
       <div className="hxv-surface-head">
         <div><div className="hxv-h1">Observability</div><div className="hxv-h1-sub">Every run, retrieval, citation, and cost — reproducible.</div></div>
       </div>
+      <SurfaceState
+        loading={loading} error={error} onRetry={refetch}
+        empty={!loading && !error && runs.length === 0}
+        emptyTitle="No runs yet"
+        emptyMsg="Ask a question and HELIX records every pipeline run here — retrievals, citations, cost, and reproducibility.">
       <div className="hxv-obs">
         <div className="hxv-panel" style={{ padding: 8, alignSelf: "start" }}>
           <div className="hxv-u" style={{ padding: "6px 8px 8px" }}>Runs</div>
           {runs.map((r, i) => (
             <div key={r.id + i} className={"hxv-runrow" + (sel === i ? " on" : "")} onClick={() => setSel(i)}>
-              <div style={{ flex: 1 }}><div className="hxv-run-id">{r.id}</div><div className="hxv-run-meta">{r.trigger} · {r.created_at}</div></div>
+              <div style={{ flex: 1 }}><div className="hxv-run-id">{r.id}</div><div className="hxv-run-meta">{r.trigger} · {r.created_at}{r.total_cost != null ? ` · $${Number(r.total_cost).toFixed(3)}` : ""}</div></div>
               <span className={"hxv-run-st " + r.status}>{r.status}</span>
             </div>
           ))}
@@ -49,6 +52,8 @@ export function Observability({ projectId }: { projectId?: string }) {
             <div className="hxv-panel-h">
               <span className="hxv-run-id">{run.id}</span>
               <span className={"hxv-run-st " + run.status}>{run.status}</span>
+              <span style={{ flex: 1 }} />
+              <span className="hxv-demo-badge" title="Per-run detail metrics (retrievals, cost breakdown, citations) are sample — not yet wired to this run.">sample detail</span>
             </div>
             <div style={{ display: "flex", gap: 2, padding: "0 14px", borderBottom: "1px solid var(--v-line)" }}>
               {TABS.map(t => <div key={t} className={"hxv-dtab" + (tab === t ? " on" : "")} onClick={() => setTab(t)}>{t}</div>)}
@@ -112,6 +117,8 @@ export function Observability({ projectId }: { projectId?: string }) {
           </div>
         </div>
       </div>
+      </SurfaceState>
     </div>
   );
 }
+

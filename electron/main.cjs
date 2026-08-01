@@ -1,4 +1,4 @@
-const { app, BrowserWindow, Menu, shell, dialog, Tray, nativeImage } = require("electron");
+const { app, BrowserWindow, Menu, shell, dialog, Tray, nativeImage, screen, globalShortcut } = require("electron");
 const { fork } = require("child_process");
 const fs = require("fs");
 const http = require("http");
@@ -23,9 +23,14 @@ const APP_URL = `http://${HOST}:${PORT}`;
 const SMOKE_TEST = process.argv.includes("--smoke-test");
 
 let mainWindow = null;
+let overlayWindow = null;
+let overlayBounds = null;
+let overlayPoll = null;
 let tray = null;
 let serverProcess = null;
 let ownsServer = false;
+let serverShutdownRequested = false;
+let serverShutdownTimer = null;
 
 function logLine(message) {
   try {
@@ -46,6 +51,17 @@ function runtimeDir() {
   return app.isPackaged ? path.join(app.getPath("userData"), "runtime") : path.join(DEV_ROOT, "runtime");
 }
 
+function serverNodeExecutable() {
+  if (app.isPackaged) return process.execPath;
+  const configured = process.env.JARVIS_NODE_EXECUTABLE;
+  if (configured && fs.existsSync(configured)) return configured;
+  const executable = process.platform === "win32" ? "node.exe" : "node";
+  const candidates = String(process.env.PATH || "").split(path.delimiter)
+    .filter(Boolean)
+    .map((directory) => path.join(directory.replace(/^"|"$/g, ""), executable));
+  return candidates.find((candidate) => fs.existsSync(candidate)) || process.execPath;
+}
+
 function requestJson(url, timeoutMs = 1500) {
   return new Promise((resolve, reject) => {
     const request = http.get(url, { timeout: timeoutMs }, (response) => {
@@ -64,6 +80,32 @@ function requestJson(url, timeoutMs = 1500) {
       request.destroy(new Error(`Timed out waiting for ${url}`));
     });
     request.on("error", reject);
+  });
+}
+
+function postJson(url, body = {}, timeoutMs = 1800) {
+  return new Promise((resolve, reject) => {
+    const payload = Buffer.from(JSON.stringify(body));
+    const parsed = new URL(url);
+    const request = http.request({
+      hostname: parsed.hostname,
+      port: parsed.port,
+      path: `${parsed.pathname}${parsed.search}`,
+      method: "POST",
+      timeout: timeoutMs,
+      headers: { "content-type": "application/json", "content-length": payload.length },
+    }, (response) => {
+      let responseBody = "";
+      response.setEncoding("utf8");
+      response.on("data", (chunk) => { responseBody += chunk; });
+      response.on("end", () => {
+        try { resolve({ statusCode: response.statusCode, body: JSON.parse(responseBody || "{}") }); }
+        catch (error) { reject(error); }
+      });
+    });
+    request.on("timeout", () => request.destroy(new Error(`Timed out waiting for ${url}`)));
+    request.on("error", reject);
+    request.end(payload);
   });
 }
 
@@ -100,6 +142,7 @@ function startServer() {
   fs.mkdirSync(logDir, { recursive: true });
   const out = fs.openSync(path.join(logDir, "electron-server.out.log"), "a");
   const err = fs.openSync(path.join(logDir, "electron-server.err.log"), "a");
+  const serverExecPath = serverNodeExecutable();
   serverProcess = fork(serverPath, [], {
     cwd: app.isPackaged ? app.getPath("userData") : DEV_ROOT,
     env: {
@@ -108,19 +151,27 @@ function startServer() {
       JARVIS_HOST: HOST,
       JARVIS_RUNTIME_DIR: runtimeDir(),
       JARVIS_DESKTOP_APP: "1",
-      ELECTRON_RUN_AS_NODE: "1",
+      ...(app.isPackaged ? { ELECTRON_RUN_AS_NODE: "1" } : {}),
     },
+    execPath: serverExecPath,
     stdio: ["ignore", out, err, "ipc"],
   });
   ownsServer = true;
-  logLine(`started server child pid=${serverProcess.pid} serverPath=${serverPath} cwd=${app.isPackaged ? app.getPath("userData") : DEV_ROOT}`);
+  serverProcess.on("message", (message) => {
+    if (message?.type === "jarvis.desktop-takeover") updateOverlay(message.state);
+  });
+  logLine(`started server child pid=${serverProcess.pid} execPath=${serverExecPath} serverPath=${serverPath} cwd=${app.isPackaged ? app.getPath("userData") : DEV_ROOT}`);
   serverProcess.once("exit", (code, signal) => {
+    const finishDesktopQuit = serverShutdownRequested;
+    if (serverShutdownTimer) clearTimeout(serverShutdownTimer);
+    serverShutdownTimer = null;
     logLine(`server child exited code=${code ?? ""} signal=${signal ?? ""}`);
     if (code !== 0 && !app.isQuitting) {
       dialog.showErrorBox("JARVIS server stopped", `The local server exited (${code ?? signal ?? "unknown"}).`);
     }
     serverProcess = null;
     ownsServer = false;
+    if (finishDesktopQuit) app.exit(0);
   });
 }
 
@@ -153,6 +204,113 @@ function createTray() {
     { label: "Quit", click: () => app.quit() },
   ]));
   tray.on("click", () => mainWindow?.show());
+}
+
+function virtualDisplayBounds() {
+  const displays = screen.getAllDisplays();
+  const left = Math.min(...displays.map((display) => display.bounds.x));
+  const top = Math.min(...displays.map((display) => display.bounds.y));
+  const right = Math.max(...displays.map((display) => display.bounds.x + display.bounds.width));
+  const bottom = Math.max(...displays.map((display) => display.bounds.y + display.bounds.height));
+  return { x: left, y: top, width: right - left, height: bottom - top };
+}
+
+function overlayCoordinates(state = {}) {
+  if (!overlayBounds) return state;
+  const shift = (point) => {
+    if (!point || !Number.isFinite(Number(point.x)) || !Number.isFinite(Number(point.y))) return point;
+    const physical = { x: Math.round(Number(point.x)), y: Math.round(Number(point.y)) };
+    const dip = typeof screen.screenToDipPoint === "function" ? screen.screenToDipPoint(physical) : physical;
+    const shifted = { ...point, x: dip.x - overlayBounds.x, y: dip.y - overlayBounds.y };
+    if (Number(point.width) > 0 || Number(point.height) > 0) {
+      const farPhysical = { x: physical.x + (Number(point.width) || 0), y: physical.y + (Number(point.height) || 0) };
+      const farDip = typeof screen.screenToDipPoint === "function" ? screen.screenToDipPoint(farPhysical) : farPhysical;
+      shifted.width = Math.max(1, farDip.x - dip.x);
+      shifted.height = Math.max(1, farDip.y - dip.y);
+    }
+    return shifted;
+  };
+  return {
+    ...state,
+    target: shift(state.target),
+    cursor: shift(state.cursor),
+    marks: Array.isArray(state.marks) ? state.marks.map(shift) : [],
+  };
+}
+
+function updateOverlay(state = {}) {
+  if (!overlayWindow || overlayWindow.isDestroyed()) return;
+  const active = Boolean(state.overlayVisible && state.active);
+  overlayWindow.webContents.send("desktop-takeover-state", overlayCoordinates(state));
+  if (active) overlayWindow.showInactive();
+  else overlayWindow.hide();
+}
+
+async function createOverlayWindow() {
+  overlayBounds = virtualDisplayBounds();
+  overlayWindow = new BrowserWindow({
+    ...overlayBounds,
+    title: "JARVIS Desktop Takeover Overlay",
+    frame: false,
+    transparent: true,
+    backgroundColor: "#00000000",
+    alwaysOnTop: true,
+    focusable: false,
+    skipTaskbar: true,
+    show: false,
+    hasShadow: false,
+    resizable: false,
+    movable: false,
+    enableLargerThanScreen: true,
+    webPreferences: {
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+      preload: path.join(__dirname, "overlay-preload.cjs"),
+    },
+  });
+  overlayWindow.setIgnoreMouseEvents(true, { forward: true });
+  overlayWindow.setContentProtection(true);
+  overlayWindow.setAlwaysOnTop(true, "screen-saver");
+  overlayWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+  await overlayWindow.loadFile(path.join(__dirname, "overlay.html"));
+  overlayWindow.on("closed", () => { overlayWindow = null; });
+  screen.on("display-added", () => {
+    overlayBounds = virtualDisplayBounds();
+    overlayWindow?.setBounds(overlayBounds, false);
+  });
+  screen.on("display-removed", () => {
+    overlayBounds = virtualDisplayBounds();
+    overlayWindow?.setBounds(overlayBounds, false);
+  });
+  screen.on("display-metrics-changed", () => {
+    overlayBounds = virtualDisplayBounds();
+    overlayWindow?.setBounds(overlayBounds, false);
+  });
+}
+
+function registerTakeoverShortcuts() {
+  globalShortcut.register("CommandOrControl+Alt+Escape", () => {
+    void postJson(`${APP_URL}/api/desktop-takeover/cancel`, { reason: "Owner pressed the global emergency-stop shortcut" }).catch(() => undefined);
+  });
+  globalShortcut.register("CommandOrControl+Alt+Space", async () => {
+    try {
+      const status = await requestJson(`${APP_URL}/api/desktop-takeover/status`);
+      const paused = status.body?.takeover?.phase === "paused";
+      await postJson(`${APP_URL}/api/desktop-takeover/${paused ? "resume" : "pause"}`, { reason: `Owner ${paused ? "resumed" : "paused"} using the global shortcut` });
+    } catch {}
+  });
+}
+
+function startOverlayPolling() {
+  if (overlayPoll) clearInterval(overlayPoll);
+  overlayPoll = setInterval(async () => {
+    try {
+      const response = await requestJson(`${APP_URL}/api/desktop-takeover/status`, 700);
+      if (response.statusCode === 200) updateOverlay(response.body?.takeover || {});
+    } catch {}
+  }, 350);
+  overlayPoll.unref?.();
 }
 
 async function createWindow() {
@@ -199,6 +357,9 @@ async function boot() {
     return;
   }
   await createWindow();
+  await createOverlayWindow();
+  registerTakeoverShortcuts();
+  startOverlayPolling();
   createTray();
 }
 
@@ -210,14 +371,28 @@ app.whenReady().then(() => boot().catch((error) => {
 }));
 
 app.on("activate", () => {
-  if (BrowserWindow.getAllWindows().length === 0 && !SMOKE_TEST) void createWindow();
+  if ((!mainWindow || mainWindow.isDestroyed()) && !SMOKE_TEST) void createWindow();
   else mainWindow?.show();
 });
 
-app.on("before-quit", () => {
+app.on("before-quit", (event) => {
   app.isQuitting = true;
-  if (ownsServer && serverProcess) {
-    serverProcess.kill();
-    serverProcess = null;
+  if (overlayPoll) clearInterval(overlayPoll);
+  overlayPoll = null;
+  globalShortcut.unregisterAll();
+  overlayWindow?.destroy();
+  overlayWindow = null;
+  if (ownsServer && serverProcess && !serverShutdownRequested) {
+    event.preventDefault();
+    serverShutdownRequested = true;
+    const child = serverProcess;
+    try { child.send({ type: "jarvis.shutdown" }); }
+    catch { child.kill(); }
+    serverShutdownTimer = setTimeout(() => {
+      try { if (!child.killed) child.kill(); } catch {}
+      app.exit(0);
+    }, 5_000);
+  } else if (ownsServer && serverProcess && serverShutdownRequested) {
+    event.preventDefault();
   }
 });

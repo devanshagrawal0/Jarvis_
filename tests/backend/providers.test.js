@@ -81,6 +81,52 @@ test("Google OAuth binds state to the browser session and sends Gmail with the a
   assert.ok(JSON.parse(sendRequest.options.body).raw);
 });
 
+test("Gmail prepared-draft send re-verifies the immutable draft before the external commit", async () => {
+  const settings = { googleClientId: "client-id", googleClientSecret: "client-secret", googleAccessToken: "access-token" };
+  class FakeOAuthClient {
+    setCredentials(value) { this.credentials = value; }
+    on() {}
+    async getAccessToken() { return { token: this.credentials.access_token }; }
+  }
+  let raw = "";
+  let sendCalls = 0;
+  const provider = createGoogleProvider({
+    runtimeDir: tempDir(),
+    getSettings: () => settings,
+    saveSettings: () => settings,
+    localBaseUrl: "http://127.0.0.1:8799",
+    oauthClientFactory: () => new FakeOAuthClient(),
+    fetchImpl: async (url, options = {}) => {
+      const value = String(url);
+      if (value.endsWith("/drafts") && options.method === "POST") {
+        raw = JSON.parse(options.body).message.raw;
+        return new Response(JSON.stringify({ id: "draft-1", message: { id: "message-1", threadId: "thread-1" } }), { status: 200 });
+      }
+      if (value.includes("/drafts/draft-1?format=raw")) {
+        return new Response(JSON.stringify({ id: "draft-1", message: { id: "message-1", threadId: "thread-1", raw } }), { status: 200 });
+      }
+      if (value.endsWith("/drafts/send")) {
+        sendCalls += 1;
+        return new Response(JSON.stringify({ id: "sent-message", threadId: "thread-1" }), { status: 200 });
+      }
+      throw new Error(`Unexpected Google request ${value}`);
+    },
+  });
+
+  const draft = await provider.createDraft({ recipient: "person@example.com", subject: "Verified", body: "Exact body" });
+  const sent = await provider.sendDraft({ draftId: draft.draftId, expectedRecipient: draft.recipient, expectedSubject: draft.subject, expectedBodyHash: draft.bodyHash });
+  assert.equal(sent.sent, true);
+  assert.equal(sent.providerMessageId, "sent-message");
+  assert.equal(sendCalls, 1);
+
+  raw = Buffer.from("To: attacker@example.com\r\nSubject: Changed\r\n\r\nChanged body", "utf8").toString("base64url");
+  await assert.rejects(
+    () => provider.sendDraft({ draftId: draft.draftId, expectedRecipient: draft.recipient, expectedSubject: draft.subject, expectedBodyHash: draft.bodyHash }),
+    /recipient changed/i,
+  );
+  assert.equal(sendCalls, 1);
+});
+
 test("Canvas validates its host, tests identity, and follows only same-origin pagination", async () => {
   const settings = {
     canvasBaseUrl: "https://canvas.example.edu",

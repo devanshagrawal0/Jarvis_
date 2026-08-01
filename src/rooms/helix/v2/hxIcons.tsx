@@ -25,6 +25,7 @@ export const Ico = {
   dot:     (p: any) => S(p, <circle cx="12" cy="12" r="4" fill="currentColor" stroke="none" />),
   layers:  (p: any) => S(p, <><path d="M12 2 2 7l10 5 10-5z" /><path d="m2 12 10 5 10-5M2 17l10 5 10-5" /></>),
   clock:   (p: any) => S(p, <><circle cx="12" cy="12" r="9" /><path d="M12 7v5l3 2" /></>),
+  trash:   (p: any) => S(p, <><path d="M4 7h16M10 11v6M14 11v6" /><path d="M6 7l1 12a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1l1-12M9 7V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v3" /></>),
 };
 
 // Deterministic sparkline (seeded by string) so renders are stable.

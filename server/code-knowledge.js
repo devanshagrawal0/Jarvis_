@@ -64,9 +64,12 @@ function createCodeKnowledge({ rootDir, runtimeDir, getSettings }) {
     }
   }
 
-  function sourceFiles() {
+  const yieldEventLoop = () => new Promise((resolve) => setImmediate(resolve));
+
+  async function sourceFiles() {
     const files = [];
     const queue = [rootDir];
+    let scannedDirectories = 0;
     while (queue.length) {
       const current = queue.shift();
       for (const entry of fs.readdirSync(current, { withFileTypes: true })) {
@@ -79,6 +82,8 @@ function createCodeKnowledge({ rootDir, runtimeDir, getSettings }) {
           if (stat.size <= MAX_FILE_BYTES) files.push({ path: target, size: stat.size, mtimeMs: stat.mtimeMs });
         }
       }
+      scannedDirectories += 1;
+      if (scannedDirectories % 20 === 0) await yieldEventLoop();
     }
     return files.sort((a, b) => a.path.localeCompare(b.path));
   }
@@ -161,7 +166,7 @@ function createCodeKnowledge({ rootDir, runtimeDir, getSettings }) {
   async function rebuild(options = {}) {
     if (building) return building;
     building = (async () => {
-      const files = sourceFiles();
+      const files = await sourceFiles();
       const hash = corpusHash(files);
       if (!options.force && hash === index.hash && index.chunks.length) {
         if (options.embeddings !== false && !index.embeddingComplete) {
@@ -172,7 +177,11 @@ function createCodeKnowledge({ rootDir, runtimeDir, getSettings }) {
         return index;
       }
       const oldEmbeddings = new Map(index.chunks.map((chunk) => [chunk.id, chunk.embedding]));
-      const chunks = files.flatMap(chunkFile);
+      const chunks = [];
+      for (let index = 0; index < files.length; index += 1) {
+        chunks.push(...chunkFile(files[index]));
+        if (index > 0 && index % 20 === 0) await yieldEventLoop();
+      }
       for (const chunk of chunks) chunk.embedding = oldEmbeddings.get(chunk.id) || null;
       index = {
         version: 1,

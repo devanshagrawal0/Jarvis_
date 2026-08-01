@@ -47,6 +47,44 @@ function auc(scores: number[], y: number[]): number {
   return c / (pos.length * neg.length);
 }
 
+/* Per-trade OUT-OF-SAMPLE win probabilities + labels — the raw material for
+   probabilistic-forecast scores (Brier / ROC-AUC / PR-AUC / log-loss). Same K-fold
+   scoring as the labeler, exposed so the multi-measure analyzer can grade calibration. */
+export interface MetaScores { scores: number[]; y: number[]; auc: number; features: { name: string; weight: number }[]; nTrades: number }
+export async function runMetaScores(spec: BotSpec, result: BacktestResult): Promise<MetaScores | null> {
+  try {
+    const sym = spec.universe.symbols[0] || result.symbol || "SPY";
+    const raw = await fetchBars(sym, spec.universe.bar, RANGE_FOR[spec.universe.bar] || "2y");
+    const bars = toBars(raw); if (bars.length < 40) return null;
+    const run = buildRun(spec, result, bars);
+    if (run.ledger.length < 12) return null;
+    const series = computeSignals(spec.signals, bars);
+    const sigIds = Object.keys(series);
+    const featNames = [...sigIds, "regime"];
+    const REG: Record<string, number> = { "calm-bull": 0, "volatile-bull": 1, "grind-bear": 2, "crisis": 3 };
+    const rawX: number[][] = [], y: number[] = [];
+    for (const t of run.ledger) {
+      const i = t.entryBarIdx;
+      const row = sigIds.map(id => { const v = series[id]?.[i]; return Number.isFinite(v) ? v : 0; });
+      row.push(REG[t.regimeAtEntry] ?? 0);
+      rawX.push(row); y.push(t.outcome === "win" ? 1 : 0);
+    }
+    const { Z } = standardize(rawX); const nn = Z.length;
+    const K = Math.min(5, Math.max(2, Math.floor(nn / 6)));
+    const scores = new Array(nn).fill(0.5);
+    for (let k = 0; k < K; k++) {
+      const trX: number[][] = [], trY: number[] = [];
+      for (let idx = 0; idx < nn; idx++) if (idx % K !== k) { trX.push(Z[idx]); trY.push(y[idx]); }
+      if (trX.length < 4 || trY.every(v => v === trY[0])) continue;
+      const wk = trainLogit(trX, trY);
+      for (let idx = 0; idx < nn; idx++) if (idx % K === k) scores[idx] = predict(Z[idx], wk);
+    }
+    const w = trainLogit(Z, y);
+    const features = featNames.map((name, j) => ({ name, weight: +w[j].toFixed(3) })).sort((a, b) => Math.abs(b.weight) - Math.abs(a.weight)).slice(0, 6);
+    return { scores, y, auc: +auc(scores, y).toFixed(3), features, nTrades: nn };
+  } catch { return null; }
+}
+
 export async function runMetaLabeler(spec: BotSpec, result: BacktestResult): Promise<MetaResult | null> {
   try {
     const sym = spec.universe.symbols[0] || result.symbol || "SPY";

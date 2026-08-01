@@ -53,13 +53,24 @@ async function binance24h(symbol = "BTCUSDT") {
 }
 
 /* ── Equities / indices — Yahoo public chart+quote (keyless, unofficial) ── */
-async function yahooChart(symbol, range = "6mo", interval = "1d") {
-  const d = await fetchJson(`https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?range=${range}&interval=${interval}`);
-  const r = d && d.chart && d.chart.result && d.chart.result[0];
+// Shared parser. `adjc` = split/dividend-adjusted close (a NON-breaking extra field so long-horizon
+// backtests can use total-return-correct prices; charts wanting nominal prices keep reading `c`).
+function _parseChartResult(r) {
   if (!r) return { meta: null, bars: [] };
   const ts = r.timestamp || [], q = (r.indicators && r.indicators.quote && r.indicators.quote[0]) || {};
-  const bars = ts.map((t, i) => ({ t: new Date(t * 1000).toISOString(), o: q.open && q.open[i], h: q.high && q.high[i], l: q.low && q.low[i], c: q.close && q.close[i], v: q.volume && q.volume[i] })).filter((b) => b.c != null);
+  const adj = (r.indicators && r.indicators.adjclose && r.indicators.adjclose[0] && r.indicators.adjclose[0].adjclose) || null;
+  const bars = ts.map((t, i) => ({ t: new Date(t * 1000).toISOString(), o: q.open && q.open[i], h: q.high && q.high[i], l: q.low && q.low[i], c: q.close && q.close[i], adjc: adj && adj[i] != null ? adj[i] : (q.close && q.close[i]), v: q.volume && q.volume[i] })).filter((b) => b.c != null);
   return { meta: { symbol: r.meta && r.meta.symbol, price: r.meta && r.meta.regularMarketPrice, prevClose: r.meta && r.meta.chartPreviousClose, currency: r.meta && r.meta.currency }, bars };
+}
+async function yahooChart(symbol, range = "6mo", interval = "1d") {
+  const d = await fetchJson(`https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?range=${range}&interval=${interval}`);
+  return _parseChartResult(d && d.chart && d.chart.result && d.chart.result[0]);
+}
+// Explicit date-range bars (period1/period2 in SECONDS). Yahoo returns TRUE daily bars for any span
+// this way — unlike range=max, which silently coerces multi-year daily requests to monthly (~331 pts).
+async function yahooChartPeriod(symbol, period1Sec, period2Sec, interval = "1d") {
+  const d = await fetchJson(`https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?period1=${Math.floor(period1Sec)}&period2=${Math.floor(period2Sec)}&interval=${interval}&events=div%2Csplit`);
+  return _parseChartResult(d && d.chart && d.chart.result && d.chart.result[0]);
 }
 // v7 /quote now requires a crumb+cookie; the keyless v8 /chart endpoint doesn't,
 // so we derive quotes from each symbol's chart meta (small default set, cadence 60s).
@@ -231,4 +242,4 @@ async function btcNetwork() {
   };
 }
 
-module.exports = { binanceKlines, binanceDepth, binance24h, coinbaseDepth, coinbaseTrades, yahooChart, yahooQuotes, gdeltNews, nwsAlerts, edgarTickers, treasuryYields, tvScan, tvMovers, tvBreadth, cryptoFearGreed, wikiAttention, secFormFour, btcNetwork };
+module.exports = { binanceKlines, binanceDepth, binance24h, coinbaseDepth, coinbaseTrades, yahooChart, yahooChartPeriod, yahooQuotes, gdeltNews, nwsAlerts, edgarTickers, treasuryYields, tvScan, tvMovers, tvBreadth, cryptoFearGreed, wikiAttention, secFormFour, btcNetwork };

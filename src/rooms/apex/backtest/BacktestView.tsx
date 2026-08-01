@@ -1,224 +1,304 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { templateSpecs, type BotSpec } from "../forge/forge-spec";
+import { useStrategies, fetchStrategy } from "../forge/forge-data";
+import { runBacktestFull } from "./bt-engine";
+import type { BacktestRun, BtConfig, Timeframe } from "./bt-types";
+import { BT_CSS } from "./bt-css";
+import { BtEquityChart } from "./BtEquityChart";
+import { BtGauge } from "./BtGauge";
+import { BtMcHisto } from "./BtMcHisto";
+import { TradeDistribution, TradeDuration, MonthlyHeatmap, DrawdownTable, EquityStatsCard } from "./BtWidgets";
+import { PerformanceTab, TradesTab, EquityTab, AnalysisTab, RiskTab, WalkForwardTab, MonteCarloTab, ReportsTab } from "./BtTabs";
+import { BtLiveRun } from "./BtLiveRun";
+import { AutopsyTab, ImproveTab } from "./BtLabs";
+import { NewsTab, RegimeTab, StressTab } from "./BtLabs2";
 
-// APEX · Backtesting — the flagship agentic room. A plain-English strategy goes
-// to the Vibe-Trading engine (agent plans → generates code → runs it in the
-// sandbox) and returns metrics + a 501-point equity curve. Styled with the
-// shared Apex theme vars so it sits seamlessly next to Home / Scanner.
+/* APEX · BACKTEST ENGINE — institutional strategy research lab.
+   Drives Forge "Engine B" (event-driven, no look-ahead, real commission/slippage/sizing)
+   via bt-engine.runBacktestFull. Every number traces to a real computation on free-feed bars;
+   modeled assumptions (costs, MC, walk-forward) are labeled. W3+W4: real charts + analytics. */
 
-const EXAMPLES = [
-  "Backtest a 50/200-day SMA crossover on AAPL from 2022-01-01 to 2024-01-01: long when the 50-day SMA is above the 200-day, else flat.",
-  "Backtest an RSI(14) mean-reversion on SPY, 2021–2024: buy when RSI < 30, sell when RSI > 70.",
-  "Backtest a 20-day Bollinger-band breakout on TSLA, 2022–2024: long on a close above the upper band, exit on a close below the middle band.",
-];
-const PROGRESS = ["Planning the strategy…", "Generating the code…", "Running it in the sandbox…", "Scoring the results…"];
+const SUBTABS = ["Overview", "Performance", "Trades", "Equity Curve", "Analysis", "Risk", "Walk-Forward", "Monte Carlo", "Autopsy", "Improve", "News", "Regime", "Stress", "Reports"] as const;
+type SubTab = typeof SUBTABS[number];
 
-const pct = (v: any) => (v == null || isNaN(Number(v)) ? "—" : `${(Number(v) * 100).toFixed(1)}%`);
-const num = (v: any, d = 2) => (v == null || isNaN(Number(v)) ? "—" : Number(v).toFixed(d));
-const signCol = (v: any) => (Number(v) >= 0 ? "var(--ax-pos)" : "var(--ax-neg)");
+const TF_OPTS: { k: Timeframe; label: string }[] = [{ k: "1d", label: "1D" }, { k: "1h", label: "1H" }, { k: "15m", label: "15m" }];
+const POPULAR = ["NVDA", "AAPL", "MSFT", "TSLA", "SPY", "QQQ", "AMZN", "META", "GOOGL", "BTCUSDT"];
 
-function EquityChart({ curve }: { curve: any[] }) {
-  const ref = useRef<HTMLCanvasElement | null>(null);
-  useEffect(() => {
-    const cv = ref.current; if (!cv) return;
-    const dpr = window.devicePixelRatio || 1;
-    const w = cv.clientWidth, h = cv.clientHeight;
-    cv.width = w * dpr; cv.height = h * dpr;
-    const ctx = cv.getContext("2d"); if (!ctx) return;
-    ctx.scale(dpr, dpr); ctx.clearRect(0, 0, w, h);
-    const pts = (curve || []).map((p) => Number(p.equity)).filter((v) => Number.isFinite(v));
-    if (pts.length < 2) return;
-    const lo = Math.min(...pts), hi = Math.max(...pts), rg = hi - lo || 1;
-    const X = (i: number) => (i / (pts.length - 1)) * (w - 10) + 5;
-    const Y = (v: number) => h - 12 - ((v - lo) / rg) * (h - 24);
-    const up = pts[pts.length - 1] >= pts[0];
-    const col = up ? "#34d399" : "#f43f5e";
-    // baseline (starting equity)
-    ctx.strokeStyle = "rgba(150,190,225,.18)"; ctx.setLineDash([3, 4]); ctx.beginPath();
-    ctx.moveTo(5, Y(pts[0])); ctx.lineTo(w - 5, Y(pts[0])); ctx.stroke(); ctx.setLineDash([]);
-    // area
-    ctx.beginPath(); ctx.moveTo(X(0), h); pts.forEach((v, i) => ctx.lineTo(X(i), Y(v))); ctx.lineTo(X(pts.length - 1), h); ctx.closePath();
-    const g = ctx.createLinearGradient(0, 0, 0, h); g.addColorStop(0, col + "3a"); g.addColorStop(1, col + "00"); ctx.fillStyle = g; ctx.fill();
-    // line
-    ctx.beginPath(); pts.forEach((v, i) => (i ? ctx.lineTo(X(i), Y(v)) : ctx.moveTo(X(i), Y(v))));
-    ctx.strokeStyle = col; ctx.lineWidth = 1.8; ctx.shadowColor = col; ctx.shadowBlur = 7; ctx.stroke(); ctx.shadowBlur = 0;
-    const ex = X(pts.length - 1), ey = Y(pts[pts.length - 1]);
-    ctx.beginPath(); ctx.arc(ex, ey, 3, 0, 7); ctx.fillStyle = "#fff"; ctx.fill();
-  }, [curve]);
-  return <canvas ref={ref} className="axb-canvas" />;
+const fmtPct = (v: number | null | undefined, d = 2) => (v == null || !Number.isFinite(v) ? "—" : `${v >= 0 ? "+" : ""}${v.toFixed(d)}%`);
+const fmtNum = (v: number | null | undefined, d = 2) => (v == null || !Number.isFinite(v) ? "—" : v.toFixed(d));
+const fmtMoney = (v: number | null | undefined, d = 0) => (v == null || !Number.isFinite(v) ? "—" : `$${v.toLocaleString(undefined, { minimumFractionDigits: d, maximumFractionDigits: d })}`);
+const sign = (v: number | null | undefined) => (v == null || !Number.isFinite(v) ? "var(--ax-mut)" : v >= 0 ? "var(--ax-pos)" : "var(--ax-neg)");
+
+const DEFAULT_CONFIG: BtConfig = {
+  strategyId: null, strategyName: "EMA Trend", symbol: "NVDA", assetClass: "stocks",
+  timeframe: "1d", benchmark: "SPY", startCash: 100_000, commissionPct: 0.05, slippagePct: 0.05, mode: "long",
+};
+
+function specForConfig(base: BotSpec, cfg: BtConfig): BotSpec {
+  return { ...base, universe: { ...base.universe, symbols: [cfg.symbol], bar: cfg.timeframe, assetClass: (cfg.assetClass as BotSpec["universe"]["assetClass"]) || base.universe.assetClass } };
 }
 
+const KPIS: { key: string; label: string; get: (r: BacktestRun) => string; col: (r: BacktestRun) => string }[] = [
+  { key: "tr", label: "TOTAL RETURN", get: (r) => fmtPct(r.metrics.totalReturnPct), col: (r) => sign(r.metrics.totalReturnPct) },
+  { key: "cagr", label: "CAGR", get: (r) => fmtPct(r.metrics.cagrPct), col: (r) => sign(r.metrics.cagrPct) },
+  { key: "sharpe", label: "SHARPE", get: (r) => fmtNum(r.metrics.sharpe), col: () => "var(--ax-tx)" },
+  { key: "sortino", label: "SORTINO", get: (r) => fmtNum(r.metrics.sortino), col: () => "var(--ax-tx)" },
+  { key: "mdd", label: "MAX DRAWDOWN", get: (r) => fmtPct(r.metrics.maxDrawdownPct), col: () => "var(--ax-neg)" },
+  { key: "win", label: "WIN RATE", get: (r) => fmtPct(r.metrics.winRatePct, 1), col: () => "var(--ax-tx)" },
+  { key: "pf", label: "PROFIT FACTOR", get: (r) => fmtNum(r.metrics.profitFactor), col: (r) => sign(r.metrics.profitFactor - 1) },
+  { key: "exp", label: "EXPECTANCY", get: (r) => fmtMoney(r.metrics.expectancy, 2), col: (r) => sign(r.metrics.expectancy) },
+  { key: "sqn", label: "SQN", get: (r) => fmtNum(r.metrics.sqn), col: () => "var(--ax-tx)" },
+];
+
+const PERF_ROWS: { label: string; get: (r: BacktestRun) => string; col: (r: BacktestRun) => string }[] = [
+  { label: "Total Return", get: (r) => fmtPct(r.metrics.totalReturnPct), col: (r) => sign(r.metrics.totalReturnPct) },
+  { label: "CAGR", get: (r) => fmtPct(r.metrics.cagrPct), col: (r) => sign(r.metrics.cagrPct) },
+  { label: "Sharpe", get: (r) => fmtNum(r.metrics.sharpe), col: () => "var(--ax-tx)" },
+  { label: "Sortino", get: (r) => fmtNum(r.metrics.sortino), col: () => "var(--ax-tx)" },
+  { label: "Calmar", get: (r) => fmtNum(r.metrics.calmar), col: () => "var(--ax-tx)" },
+  { label: "Max Drawdown", get: (r) => fmtPct(r.metrics.maxDrawdownPct), col: () => "var(--ax-neg)" },
+  { label: "Win Rate", get: (r) => fmtPct(r.metrics.winRatePct, 1), col: () => "var(--ax-tx)" },
+  { label: "Expectancy", get: (r) => fmtMoney(r.metrics.expectancy, 2), col: (r) => sign(r.metrics.expectancy) },
+  { label: "Total Trades", get: (r) => String(r.metrics.trades), col: () => "var(--ax-tx)" },
+  { label: "Avg Win", get: (r) => fmtPct(r.metrics.avgWinPct), col: () => "var(--ax-pos)" },
+  { label: "Avg Loss", get: (r) => fmtPct(r.metrics.avgLossPct), col: () => "var(--ax-neg)" },
+  { label: "Best / Worst", get: (r) => `${fmtPct(r.metrics.bestPct)} / ${fmtPct(r.metrics.worstPct)}`, col: () => "var(--ax-mut)" },
+];
+
 export function BacktestView() {
-  const [prompt, setPrompt] = useState(EXAMPLES[0]);
+  const { list: dbStrategies } = useStrategies();
+  const builtIns = useMemo(() => templateSpecs(1), []);
+  const [cfg, setCfg] = useState<BtConfig>(DEFAULT_CONFIG);
+  const [selId, setSelId] = useState<string>(() => builtIns[0]?.meta.id || "");
+  const [tab, setTab] = useState<SubTab>("Overview");
+  const [run, setRun] = useState<BacktestRun | null>(null);
   const [running, setRunning] = useState(false);
-  const [step, setStep] = useState(0);
-  const [result, setResult] = useState<any>(null);
-  const [error, setError] = useState<string>("");
-  const [engine, setEngine] = useState<{ connected: boolean } | null>(null);
+  const [err, setErr] = useState<string>("");
+  const [search, setSearch] = useState("");
+  const [showTrades, setShowTrades] = useState(true);
+  const [logScale, setLogScale] = useState(false);
+  const [lastSpec, setLastSpec] = useState<BotSpec | null>(null);
+  const [showLive, setShowLive] = useState(false);
+  const [newBest, setNewBest] = useState(false);
+  const specCache = useRef<Record<string, BotSpec>>({});
 
-  useEffect(() => {
-    fetch("/api/apex/engine/health").then((r) => r.json()).then(setEngine).catch(() => setEngine({ connected: false }));
-  }, []);
-  useEffect(() => {
-    if (!running) return;
-    const t = setInterval(() => setStep((s) => (s + 1) % PROGRESS.length), 4000);
-    return () => clearInterval(t);
-  }, [running]);
+  const library = useMemo(() => {
+    const cards = builtIns.map((s) => ({ id: s.meta.id, name: s.meta.name, tags: s.meta.tags || [], desc: s.meta.description || "", builtin: true }));
+    for (const s of dbStrategies) if (!cards.some((c) => c.id === s.id)) cards.push({ id: s.id, name: s.name, tags: s.tags || [], desc: s.description || "", builtin: false });
+    const q = search.trim().toLowerCase();
+    return q ? cards.filter((c) => c.name.toLowerCase().includes(q) || c.tags.some((t) => t.toLowerCase().includes(q))) : cards;
+  }, [builtIns, dbStrategies, search]);
 
-  // pinnedCode: re-run the exact strategy the agent wrote last time. Without it
-  // the same prompt regenerates the strategy from scratch, so results move for
-  // reasons that have nothing to do with the market.
-  const run = (pinnedCode: string | null = null) => {
-    const p = prompt.trim();
-    if (!p || running) return;
-    setRunning(true); setError(""); setResult(null); setStep(0);
-    fetch("/api/apex/engine/backtest", {
-      method: "POST", headers: { "content-type": "application/json" },
-      body: JSON.stringify({ prompt: p, ...(pinnedCode ? { pinnedCode } : {}) }),
-    })
-      .then((r) => r.json())
-      .then((d) => { if (d?.run?.metrics) setResult(d); else setError(d?.error || "The engine didn't return a result."); })
-      .catch((e) => setError(e.message || "Request failed."))
-      .finally(() => setRunning(false));
-  };
+  useEffect(() => { for (const s of builtIns) specCache.current[s.meta.id] = s; }, [builtIns]);
 
-  const m = result?.run?.metrics || {};
-  const curve = result?.run?.equity_curve || [];
-  const code: string = result?.code?.code || "";
-  const codeName: string = result?.code?.primary || "strategy.py";
+  async function resolveSpec(id: string): Promise<BotSpec | null> {
+    if (specCache.current[id]) return specCache.current[id];
+    const full = await fetchStrategy(id);
+    if (full?.spec) { specCache.current[id] = full.spec; return full.spec; }
+    return null;
+  }
+  function pickStrategy(id: string, name: string) { setSelId(id); setCfg((c) => ({ ...c, strategyId: id, strategyName: name })); }
+
+  async function doRun() {
+    if (running) return;
+    setRunning(true); setErr("");
+    try {
+      const base = await resolveSpec(selId);
+      if (!base) { setErr("Could not load that strategy spec."); setRunning(false); return; }
+      const spec = specForConfig(base, cfg); setLastSpec(spec);
+      const r = await runBacktestFull(spec, cfg);
+      if (r.error) setErr(r.error);
+      setRun(r);
+      // 🎉 new all-time-best Sharpe → cinematic shockwave (only on a genuine improvement, real trades)
+      if (!r.error && r.metrics.trades >= 5) {
+        try {
+          const best = parseFloat(localStorage.getItem("apex.bt.bestsharpe") || "-999");
+          if (r.metrics.sharpe > best) { localStorage.setItem("apex.bt.bestsharpe", String(r.metrics.sharpe)); setNewBest(true); window.setTimeout(() => setNewBest(false), 2800); }
+        } catch { /* */ }
+      }
+    } catch (e) { setErr((e as Error).message || "Backtest failed."); }
+    finally { setRunning(false); }
+  }
+
+  const cfgRows: [string, string][] = [
+    ["Symbol", cfg.symbol], ["Asset Class", cfg.assetClass], ["Data Source", "Yahoo Finance (Free)"],
+    ["Timeframe", cfg.timeframe.toUpperCase()], ["Benchmark", cfg.benchmark],
+    ["Initial Capital", fmtMoney(cfg.startCash)], ["Commission", `${cfg.commissionPct}%`],
+    ["Slippage", `${cfg.slippagePct}%`], ["Mode", cfg.mode], ["Bars Used", run ? String(run.barsUsed) : "—"], ["As Of", run?.asOf || "—"],
+  ];
+  const hasRun = !!run && !err && !!run.strategyEquity.length;
+  const stratFinal = run ? run.config.startCash * (1 + run.metrics.totalReturnPct / 100) : 0;
 
   return (
-    <div className="ax-bt">
+    <div className="ax-bte">
       <style>{BT_CSS}</style>
-      <div className="axb-head">
-        <span className="axb-title">◈ BACKTESTING</span>
-        <span className="axb-sub">plain-English strategy → sandboxed run</span>
-        <div className="axb-engine">
-          <span className={`axb-dot${engine?.connected ? " on" : ""}`} />
-          {engine?.connected ? "Engine connected" : "Engine offline"}
+
+      {/* HEADER */}
+      <div className="bte-head">
+        <div className="bte-titleblock">
+          <div className="bte-title">BACKTEST ENGINE</div>
+          <div className="bte-sub">▸ STRATEGY RESEARCH &amp; PERFORMANCE LAB</div>
+        </div>
+        <div className="bte-subtabs">
+          {SUBTABS.map((t) => <button key={t} className={`bte-tab${tab === t ? " on" : ""}`} onClick={() => setTab(t)}>{t}{t === "Trades" && run ? <span className="bte-tc">{run.metrics.trades}</span> : null}</button>)}
+        </div>
+        <div className="bte-actions">
+          <button className="bte-b live" disabled={!hasRun} onClick={() => setShowLive(true)} title="Cinematic live replay of this run">🎬 Live Run</button>
+          <button className="bte-b" disabled={!run} onClick={() => setTab("Reports")}>Save</button>
+          <button className="bte-b" disabled={!run} onClick={() => setTab("Reports")}>Export</button>
+          <button className="bte-b" disabled={!run} onClick={() => setTab("Reports")}>Share</button>
+          <button className="bte-b deploy" onClick={() => { setRun(null); setErr(""); }}>+ New Backtest</button>
         </div>
       </div>
 
-      {/* Composer */}
-      <div className="axb-composer">
-        <textarea className="axb-input" value={prompt} onChange={(e) => setPrompt(e.target.value)}
-          placeholder="Describe a strategy to backtest — instrument, rules, date range…" rows={2} />
-        {/* () => run() — a bare onClick={run} would hand the MouseEvent in as pinnedCode */}
-        <button className="axb-run" onClick={() => run()} disabled={running || !engine?.connected}>
-          {running ? "Running…" : "▶ Run backtest"}
-        </button>
-      </div>
-      <div className="axb-examples">
-        {EXAMPLES.map((ex, i) => (
-          <button key={i} className="axb-eg" onClick={() => setPrompt(ex)} title={ex}>{ex.replace(/^Backtest an? /, "").split(":")[0]}</button>
-        ))}
-      </div>
-
-      {/* Body */}
-      <div className="axb-body">
-        {running ? (
-          <div className="axb-running">
-            <div className="axb-spin" />
-            <div className="axb-run-t">{PROGRESS[step]}</div>
-            <div className="axb-run-s">The agent is working — this usually takes 10–30 seconds.</div>
+      <div className="bte-scroll">
+        <div className="bte-grid">
+          {/* LEFT */}
+          <div className="bte-left">
+            <div className="bte-pnl bte-lib">
+              <div className="bte-ph"><span className="bte-pt">STRATEGIES</span><span className="bte-count">{library.length}</span></div>
+              <div className="bte-search"><span>⌕</span><input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search strategies…" /></div>
+              <div className="bte-liblist">
+                {library.map((c) => (
+                  <button key={c.id} className={`bte-strat${selId === c.id ? " on" : ""}`} onClick={() => pickStrategy(c.id, c.name)}>
+                    <div className="bte-strat-top"><span className="bte-strat-ic">◈</span><span className="bte-strat-n">{c.name}</span>{c.builtin && <span className="bte-strat-star">★</span>}</div>
+                    <div className="bte-strat-tags">{c.tags.slice(0, 3).map((t) => <span key={t} className="bte-tag">{t}</span>)}</div>
+                  </button>
+                ))}
+              </div>
+              <div className="bte-lib-foot"><button className="bte-b sm">New Strategy</button><button className="bte-b sm">Import</button></div>
+            </div>
+            <div className="bte-pnl bte-cfgcard">
+              <div className="bte-ph"><span className="bte-pt">CURRENT CONFIGURATION</span></div>
+              <div className="bte-cfgrows">{cfgRows.map(([k, v]) => <div key={k} className="bte-cfgrow"><span className="bte-cfgk">{k}</span><span className="bte-cfgv">{v}</span></div>)}</div>
+            </div>
           </div>
-        ) : error ? (
-          <div className="axb-empty axb-err">⚠ {error}{!engine?.connected ? " — start the engine with ./scripts/vibe-up.sh" : ""}</div>
-        ) : !result ? (
-          <div className="axb-empty">Describe a strategy above and hit <b>Run backtest</b>. The agent generates and runs the code, then shows the metrics and equity curve.</div>
-        ) : (
-          <>
-            <div className="axb-metrics">
-              {metric("TOTAL RETURN", pct(m.total_return), signCol(m.total_return))}
-              {metric("CAGR", pct(m.annual_return), signCol(m.annual_return))}
-              {metric("SHARPE", num(m.sharpe), "var(--ax-tx)")}
-              {metric("MAX DRAWDOWN", pct(m.max_drawdown), "var(--ax-neg)")}
-              {metric("WIN RATE", pct(m.win_rate), "var(--ax-tx)")}
-              {metric("SORTINO", num(m.sortino), "var(--ax-tx)")}
-              {metric("CALMAR", num(m.calmar), "var(--ax-tx)")}
-              {metric("VS BENCHMARK", pct(m.excess_return), signCol(m.excess_return))}
-              {metric("TRADES", num(m.trade_count, 0), "var(--ax-tx)")}
+
+          {/* CENTER */}
+          <div className="bte-center">
+            <div className="bte-configbar">
+              <Field label="Strategy"><select value={selId} onChange={(e) => { const c = library.find((x) => x.id === e.target.value); pickStrategy(e.target.value, c?.name || ""); }}>{library.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}</select></Field>
+              <Field label="Symbol"><select value={cfg.symbol} onChange={(e) => setCfg((c) => ({ ...c, symbol: e.target.value }))}>{POPULAR.map((s) => <option key={s} value={s}>{s}</option>)}</select></Field>
+              <Field label="Timeframe"><select value={cfg.timeframe} onChange={(e) => setCfg((c) => ({ ...c, timeframe: e.target.value as Timeframe }))}>{TF_OPTS.map((t) => <option key={t.k} value={t.k}>{t.label}</option>)}</select></Field>
+              <Field label="Capital"><input type="number" value={cfg.startCash} onChange={(e) => setCfg((c) => ({ ...c, startCash: Math.max(1000, +e.target.value || 0) }))} /></Field>
+              <Field label="Commission %"><input type="number" step="0.01" value={cfg.commissionPct} onChange={(e) => setCfg((c) => ({ ...c, commissionPct: Math.max(0, +e.target.value || 0) }))} /></Field>
+              <Field label="Benchmark"><select value={cfg.benchmark} onChange={(e) => setCfg((c) => ({ ...c, benchmark: e.target.value }))}>{["SPY", "QQQ", "BTCUSDT", "NONE"].map((s) => <option key={s} value={s}>{s}</option>)}</select></Field>
+              <Field label="Mode"><select value={cfg.mode} onChange={(e) => setCfg((c) => ({ ...c, mode: e.target.value as BtConfig["mode"] }))}>{["long", "short", "both"].map((m) => <option key={m} value={m}>{m}</option>)}</select></Field>
+              <button className="bte-run" onClick={doRun} disabled={running}>{running ? "Running…" : "▶ Run Backtest"}</button>
             </div>
-            <div className="axb-chart-wrap">
-              <div className="axb-sec-h">EQUITY CURVE {curve.length ? `· ${curve[0]?.time} → ${curve[curve.length - 1]?.time}` : ""}</div>
-              <EquityChart curve={curve} />
-            </div>
-            {/* The agent writes a fresh strategy per run, so the same prompt can
-                score differently for reasons unrelated to the market. Show what
-                was ACTUALLY tested, and allow re-running it verbatim. */}
-            {code && (
-              <div className="axb-code-wrap">
-                <div className="axb-sec-h axb-code-h">
-                  <span>STRATEGY THE AGENT WROTE <em>{codeName}</em>{result?.pinned && <b className="axb-pin"> · pinned</b>}</span>
-                  <button className="axb-repin" onClick={() => run(code)} disabled={running}>↻ Re-run this exact code</button>
+
+            {tab === "Overview" ? (
+              <div className="bte-pnl bte-hero">
+                <div className="bte-ph">
+                  <span className="bte-pt">EQUITY CURVE</span>
+                  {hasRun && <div className="bte-legend">
+                    <span><i style={{ background: "#34d399" }} />Strategy <b>{fmtMoney(stratFinal)}</b></span>
+                    <span><i style={{ background: "#a98bff" }} />Buy&amp;Hold <b>{fmtMoney(run!.buyHold[run!.buyHold.length - 1]?.v)}</b></span>
+                    {run!.benchmark && <span><i style={{ background: "#5ec8ff" }} />{run!.benchmarkSymbol} <b>{fmtMoney(run!.benchmark[run!.benchmark.length - 1]?.v)}</b></span>}
+                  </div>}
+                  {hasRun && <div className="bte-chartctl">
+                    <label><input type="checkbox" checked={logScale} onChange={(e) => setLogScale(e.target.checked)} />Log</label>
+                    <label><input type="checkbox" checked={showTrades} onChange={(e) => setShowTrades(e.target.checked)} />Trades</label>
+                  </div>}
                 </div>
-                <pre className="axb-code">{code.trim()}</pre>
-                <div className="axb-code-note">
-                  {result?.pinned
-                    ? "This run used the pinned code above — no regeneration, so the result is repeatable."
-                    : "A plain re-run regenerates this from the prompt and may differ. Pin it to compare like for like."}
+                <div className="bte-herobody">
+                  {running ? <div className="bte-empty"><div className="bte-spin" />Running the strategy over real bars…</div>
+                    : err ? <div className="bte-empty bte-err">⚠ {err}</div>
+                    : hasRun ? <BtEquityChart run={run!} showTrades={showTrades} logScale={logScale} />
+                    : <div className="bte-empty">Pick a strategy + symbol and hit <b>Run Backtest</b>. The engine runs it over real free-feed bars — no look-ahead, modeled costs.</div>}
                 </div>
               </div>
+            ) : !hasRun ? (
+              <div className="bte-pnl bte-tabstage"><div className="bte-ph"><span className="bte-pt">{tab.toUpperCase()}</span></div><div className="bte-stage-body">Run a backtest to populate the {tab} view.</div></div>
+            ) : (
+              <div className="bte-tabhost">
+                {tab === "Performance" && <PerformanceTab run={run!} />}
+                {tab === "Trades" && <TradesTab run={run!} />}
+                {tab === "Equity Curve" && <EquityTab run={run!} />}
+                {tab === "Analysis" && <AnalysisTab run={run!} />}
+                {tab === "Risk" && <RiskTab run={run!} spec={lastSpec} config={cfg} />}
+                {tab === "Walk-Forward" && <WalkForwardTab run={run!} />}
+                {tab === "Monte Carlo" && <MonteCarloTab run={run!} />}
+                {tab === "Autopsy" && <AutopsyTab run={run!} spec={lastSpec} config={cfg} />}
+                {tab === "Improve" && <ImproveTab run={run!} spec={lastSpec} config={cfg} />}
+                {tab === "News" && <NewsTab run={run!} config={cfg} />}
+                {tab === "Regime" && <RegimeTab run={run!} spec={lastSpec} config={cfg} />}
+                {tab === "Stress" && <StressTab run={run!} spec={lastSpec} config={cfg} />}
+                {tab === "Reports" && <ReportsTab run={run!} />}
+              </div>
             )}
-            <div className="axb-foot">
-              Ran in {num(result?.run?.elapsed_seconds, 1)}s on the Vibe-Trading sandbox · benchmark return {pct(m.benchmark_return)} · avg hold {num(m.avg_holding_days, 0)}d.
-              Simulated backtest — past performance is not indicative of future results. Informational, not financial advice.
+          </div>
+
+          {/* RIGHT */}
+          <div className="bte-right">
+            <div className="bte-pnl">
+              <div className="bte-ph"><span className="bte-pt">PERFORMANCE SUMMARY</span></div>
+              {hasRun ? (
+                <>
+                  <BtGauge value={run!.metrics.profitFactor} max={4} label="PROFIT FACTOR" />
+                  <div className="bte-perflist">{PERF_ROWS.map((r) => <div key={r.label} className="bte-perfrow"><span>{r.label}</span><b style={{ color: r.col(run!) }}>{r.get(run!)}</b></div>)}</div>
+                </>
+              ) : <div className="bte-stage-body">Run a backtest to see the report.</div>}
+            </div>
+            <div className="bte-pnl">
+              <div className="bte-ph"><span className="bte-pt">WALK-FORWARD ANALYSIS</span></div>
+              {run?.walkForward ? (
+                <>
+                  <div className="bte-wf-sq">{run.walkForward.folds.map((f) => <span key={f.i} className={f.passed ? "pass" : "fail"} title={`OOS ${f.oosFrom}→${f.oosTo} · Sharpe ${f.oosSharpe}`} />)}<em>{run.walkForward.folds.filter((f) => f.passed).length}/{run.walkForward.folds.length}</em></div>
+                  <div className="bte-perfrow"><span>OOS Sharpe</span><b style={{ color: sign(run.walkForward.oosSharpe) }}>{fmtNum(run.walkForward.oosSharpe)}</b></div>
+                  <div className="bte-perfrow"><span>OOS Return</span><b style={{ color: sign(run.walkForward.oosRetPct) }}>{fmtPct(run.walkForward.oosRetPct)}</b></div>
+                  <div className="bte-mc-note">Rolling OOS re-evaluation of the same spec (no re-fit)</div>
+                </>
+              ) : <div className="bte-stage-body">{run ? "Not enough bars for walk-forward." : "—"}</div>}
+            </div>
+            <div className="bte-pnl">
+              <div className="bte-ph"><span className="bte-pt">MONTE CARLO SIMULATION</span></div>
+              {run?.mc ? (
+                <>
+                  <BtMcHisto mc={run.mc} />
+                  <div className="bte-perfrow"><span>Simulations</span><b>{run.mc.runs.toLocaleString()}</b></div>
+                  <div className="bte-perfrow"><span>Prob. of Profit</span><b style={{ color: sign(run.mc.pProfit - 0.5) }}>{(run.mc.pProfit * 100).toFixed(1)}%</b></div>
+                  <div className="bte-perfrow"><span>5th / 95th Pctile</span><b>{fmtMoney(run.mc.p5)} / {fmtMoney(run.mc.p95)}</b></div>
+                  <div className="bte-perfrow"><span>Avg Final Equity</span><b>{fmtMoney(run.mc.avgFinal)}</b></div>
+                  <div className="bte-mc-note">Seeded bootstrap of realized trades · reproducible</div>
+                </>
+              ) : <div className="bte-stage-body">{run ? "Not enough trades for MC." : "—"}</div>}
+            </div>
+          </div>
+        </div>
+
+        {/* FULL-WIDTH KPI STRIP + WIDGET ROW (Overview) */}
+        {tab === "Overview" && hasRun && (
+          <>
+            <div className="bte-kpis">{KPIS.map((k) => <div key={k.key} className="bte-kpi"><div className="bte-kpi-l">{k.label}</div><div className="bte-kpi-v" style={{ color: k.col(run!) }}>{k.get(run!)}</div></div>)}</div>
+            {run!.metrics.trades < 20 && <div className="bte-caveat">⚠ Only {run!.metrics.trades} trades — Sharpe / profit-factor / win-rate are statistically noisy at this sample size; treat them as indicative (see PSR under the Improve tab).</div>}
+            <div className="bte-widgets">
+              <div className="bte-pnl bte-w"><div className="bte-ph"><span className="bte-pt">TRADE DISTRIBUTION</span></div><TradeDistribution run={run!} /></div>
+              <div className="bte-pnl bte-w bte-w-wide"><div className="bte-ph"><span className="bte-pt">MONTHLY RETURNS</span></div><MonthlyHeatmap run={run!} /></div>
+              <div className="bte-pnl bte-w"><div className="bte-ph"><span className="bte-pt">DRAWDOWN ANALYSIS</span></div><DrawdownTable run={run!} /></div>
+              <div className="bte-pnl bte-w"><div className="bte-ph"><span className="bte-pt">TRADE DURATION</span></div><TradeDuration run={run!} /></div>
+              <div className="bte-pnl bte-w"><div className="bte-ph"><span className="bte-pt">EQUITY CURVE STATS</span></div><EquityStatsCard run={run!} /></div>
             </div>
           </>
         )}
       </div>
+
+      {/* FOOTER */}
+      <div className="bte-foot">
+        <span className={`bte-dot${run ? " on" : ""}`} /> {run ? "READY" : "IDLE"}
+        <span className="bte-fsep" /> DATA: <b>Yahoo Finance (Free)</b>
+        <span className="bte-fsep" /> ENGINE: <b>Forge · no look-ahead · modeled costs</b>
+        {run?.synthetic && <><span className="bte-fsep" /><span className="bte-badge warn">SYNTHETIC DATA</span></>}
+        {run?.delayed && <><span className="bte-fsep" /><span className="bte-badge">PRICES DELAYED</span></>}
+        <span className="bte-fright">Simulated backtest — past performance is not indicative of future results. Not financial advice.</span>
+      </div>
+
+      {showLive && run && !err && <BtLiveRun run={run} onClose={() => setShowLive(false)} />}
+      {newBest && run && <div className="bte-shock"><span className="bte-shock-ring" /><span className="bte-shock-ring r2" /><div className="bte-shock-toast">★ NEW BEST · Sharpe {run.metrics.sharpe.toFixed(2)}</div></div>}
     </div>
   );
 }
 
-function metric(label: string, value: string, color: string) {
-  return (
-    <div className="axb-m">
-      <div className="axb-m-l">{label}</div>
-      <div className="axb-m-v" style={{ color }}>{value}</div>
-    </div>
-  );
+function Field({ label, children }: { label: string; children: React.ReactNode }) {
+  return <div className="bte-field"><label>{label}</label>{children}</div>;
 }
-
-const BT_CSS = `
-.ax-bt { height:100%; display:flex; flex-direction:column; gap:13px; padding:2px 2px 8px; font-family:var(--ax-sans); color:var(--ax-tx); min-height:0; }
-.axb-head { display:flex; align-items:baseline; gap:12px; }
-.axb-title { font-family:var(--ax-disp); font-size:15px; font-weight:800; letter-spacing:.12em; color:var(--ax-acc); }
-.axb-sub { font-size:11px; color:var(--ax-mut); }
-.axb-engine { margin-left:auto; display:flex; align-items:center; gap:7px; font-size:10.5px; font-weight:700; letter-spacing:.06em; color:var(--ax-mut); padding:4px 11px; border:1px solid var(--ax-bd); border-radius:20px; background:var(--ax-panel); }
-.axb-dot { width:7px; height:7px; border-radius:50%; background:var(--ax-neg); box-shadow:0 0 6px var(--ax-neg); }
-.axb-dot.on { background:var(--ax-pos); box-shadow:0 0 7px var(--ax-posglow); }
-.axb-composer { display:flex; gap:10px; align-items:stretch; }
-.axb-input { flex:1; background:var(--ax-surface); border:1px solid var(--ax-bd); border-radius:11px; padding:11px 13px; color:var(--ax-tx); font-size:12.5px; line-height:1.5; font-family:var(--ax-sans); outline:none; resize:none; }
-.axb-input::placeholder { color:var(--ax-dim); }
-.axb-run { flex:0 0 auto; padding:0 20px; border-radius:11px; cursor:pointer; background:color-mix(in srgb, var(--ax-acc) 16%, transparent); border:1px solid var(--ax-bdglow); color:var(--ax-acc); font-family:var(--ax-sans); font-size:13px; font-weight:800; letter-spacing:.03em; white-space:nowrap; }
-.axb-run:disabled { opacity:.5; cursor:default; }
-.axb-examples { display:flex; gap:6px; flex-wrap:wrap; }
-.axb-eg { font-size:10px; padding:4px 10px; border-radius:14px; cursor:pointer; background:transparent; border:1px solid var(--ax-bdsoft); color:var(--ax-mut); font-family:var(--ax-sans); max-width:280px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-.axb-eg:hover { border-color:var(--ax-bd); color:var(--ax-cydim); }
-.axb-body { flex:1; min-height:0; overflow-y:auto; }
-.axb-empty { color:var(--ax-mut); font-size:12.5px; line-height:1.6; padding:26px 4px; max-width:640px; }
-.axb-empty b { color:var(--ax-acc); }
-.axb-err { color:var(--ax-neg); }
-.axb-running { display:flex; flex-direction:column; align-items:center; justify-content:center; gap:12px; height:100%; min-height:220px; }
-.axb-spin { width:34px; height:34px; border-radius:50%; border:2.5px solid var(--ax-bdsoft); border-top-color:var(--ax-acc); animation:axb-rot .9s linear infinite; }
-@keyframes axb-rot { to { transform:rotate(360deg); } }
-.axb-run-t { font-size:14px; font-weight:600; color:var(--ax-tx); }
-.axb-run-s { font-size:11px; color:var(--ax-mut); }
-.axb-metrics { display:grid; grid-template-columns:repeat(auto-fit,minmax(120px,1fr)); gap:9px; margin-bottom:14px; }
-.axb-m { background:var(--ax-elev); border:1px solid var(--ax-bdsoft); border-radius:10px; padding:10px 12px; }
-.axb-m-l { font-size:8px; letter-spacing:.08em; color:var(--ax-dim); margin-bottom:5px; }
-.axb-m-v { font-family:var(--ax-disp); font-size:20px; font-weight:800; }
-.axb-chart-wrap { background:var(--ax-panel); border:1px solid var(--ax-bd); border-radius:13px; padding:14px 16px; }
-.axb-sec-h { font-size:9px; font-weight:700; letter-spacing:.1em; color:var(--ax-cydim); margin-bottom:10px; }
-.axb-canvas { width:100%; height:220px; display:block; }
-.axb-code-wrap { margin-top:14px; }
-.axb-code-h { display:flex; align-items:center; justify-content:space-between; gap:10px; }
-.axb-code-h em { font-style:normal; font-family:var(--ax-mono); color:var(--ax-dim); font-weight:500; margin-left:6px; }
-.axb-pin { color:var(--ax-pos); font-weight:700; }
-.axb-repin { background:transparent; border:1px solid var(--ax-bdsoft); color:var(--ax-mut); border-radius:7px; padding:4px 11px; font-size:10px; cursor:pointer; font-family:var(--ax-sans); }
-.axb-repin:hover { border-color:var(--ax-bdglow); color:var(--ax-acc); }
-.axb-repin:disabled { opacity:.4; cursor:not-allowed; }
-.axb-code { margin-top:7px; max-height:260px; overflow:auto; background:var(--ax-surface); border:1px solid var(--ax-bdsoft); border-radius:9px; padding:11px 13px; font-family:var(--ax-mono); font-size:10.5px; line-height:1.55; color:var(--ax-tx); white-space:pre; }
-.axb-code-note { font-size:9px; color:var(--ax-dim); margin-top:6px; line-height:1.5; }
-.axb-foot { font-size:9.5px; color:var(--ax-dim); line-height:1.6; margin-top:12px; }
-`;

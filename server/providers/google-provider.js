@@ -1,9 +1,11 @@
 const { OAuth2Client } = require("google-auth-library");
+const crypto = require("crypto");
 const { cleanString, createOAuthStateStore, errorWithStatus, fetchJson } = require("./provider-utils");
 
 const GOOGLE_SCOPES = [
   "openid",
   "email",
+  "https://www.googleapis.com/auth/gmail.compose",
   "https://www.googleapis.com/auth/gmail.send",
 ];
 
@@ -150,18 +152,107 @@ function createGoogleProvider({
     return Buffer.from([...headers, "", cleanString(body, 10000)].join("\r\n")).toString("base64url");
   }
 
+  function normalizedMessage(message = {}) {
+    const recipient = cleanString(message.recipient, 320).replace(/[\r\n]/g, "");
+    const subject = cleanString(message.subject, 200).replace(/[\r\n]/g, " ");
+    const body = cleanString(message.body, 10000);
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(recipient)) throw errorWithStatus("A valid recipient email address is required", 400);
+    if (!subject) throw errorWithStatus("An email subject is required", 400);
+    if (!body) throw errorWithStatus("An email body is required", 400);
+    return { recipient, subject, body };
+  }
+
   async function sendEmail(message) {
+    const normalized = normalizedMessage(message);
     const token = await accessToken();
     const { data } = await fetchJson(fetchImpl, "https://gmail.googleapis.com/gmail/v1/users/me/messages/send", {
       method: "POST",
       headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
-      body: JSON.stringify({ raw: encodeEmail(message) }),
+      body: JSON.stringify({ raw: encodeEmail(normalized) }),
     });
     return {
       sent: true,
       providerMessageId: data.id,
       threadId: data.threadId,
-      recipient: cleanString(message.recipient, 320),
+      recipient: normalized.recipient,
+    };
+  }
+
+  async function createDraft(message) {
+    const normalized = normalizedMessage(message);
+    const token = await accessToken();
+    const raw = encodeEmail(normalized);
+    const { data } = await fetchJson(fetchImpl, "https://gmail.googleapis.com/gmail/v1/users/me/drafts", {
+      method: "POST",
+      headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+      body: JSON.stringify({ message: { raw } }),
+    });
+    return {
+      draftId: data.id,
+      providerMessageId: data.message?.id || null,
+      threadId: data.message?.threadId || null,
+      recipient: normalized.recipient,
+      subject: normalized.subject,
+      bodyHash: crypto.createHash("sha256").update(normalized.body).digest("hex"),
+      sent: false,
+    };
+  }
+
+  async function getDraft(draftId) {
+    const token = await accessToken();
+    const safeId = encodeURIComponent(cleanString(draftId, 200));
+    const { data } = await fetchJson(fetchImpl, `https://gmail.googleapis.com/gmail/v1/users/me/drafts/${safeId}?format=raw`, {
+      headers: { authorization: `Bearer ${token}` },
+    });
+    const raw = data.message?.raw ? Buffer.from(data.message.raw, "base64url").toString("utf8") : "";
+    const split = raw.split(/\r?\n\r?\n/);
+    const headers = split.shift() || "";
+    const header = (name) => headers.match(new RegExp(`^${name}:\\s*(.*)$`, "im"))?.[1]?.trim() || "";
+    const rawSubject = header("Subject");
+    const encodedSubject = rawSubject.match(/^=\?UTF-8\?B\?([^?]+)\?=$/i);
+    const subject = encodedSubject ? Buffer.from(encodedSubject[1], "base64").toString("utf8") : rawSubject;
+    return { draftId:data.id, providerMessageId:data.message?.id||null, threadId:data.message?.threadId||null,
+      recipient:header("To"), subject, rawBody:split.join("\n\n"), labelIds:data.message?.labelIds||[], sent:false };
+  }
+
+  async function deleteDraft(draftId) {
+    const token = await accessToken();
+    const safeId = encodeURIComponent(cleanString(draftId, 200));
+    const response = await fetchImpl(`https://gmail.googleapis.com/gmail/v1/users/me/drafts/${safeId}`, {
+      method: "DELETE", headers: { authorization: `Bearer ${token}` },
+    });
+    if (!response.ok) throw errorWithStatus(`Google draft deletion failed (${response.status})`, 502);
+    return { deleted:true, draftId };
+  }
+
+  async function sendDraft({ draftId, expectedRecipient, expectedSubject, expectedBodyHash } = {}) {
+    const id = cleanString(draftId, 200);
+    if (!id) throw errorWithStatus("A Gmail draft id is required", 400);
+    const current = await getDraft(id);
+    const actualBodyHash = crypto.createHash("sha256").update(cleanString(current.rawBody, 10000)).digest("hex");
+    if (expectedRecipient && current.recipient.toLowerCase() !== cleanString(expectedRecipient, 320).toLowerCase()) {
+      throw errorWithStatus("The Gmail draft recipient changed after approval preparation", 409);
+    }
+    if (expectedSubject && current.subject !== cleanString(expectedSubject, 200)) {
+      throw errorWithStatus("The Gmail draft subject changed after approval preparation", 409);
+    }
+    if (expectedBodyHash && actualBodyHash !== cleanString(expectedBodyHash, 128)) {
+      throw errorWithStatus("The Gmail draft body changed after approval preparation", 409);
+    }
+    const token = await accessToken();
+    const { data } = await fetchJson(fetchImpl, "https://gmail.googleapis.com/gmail/v1/users/me/drafts/send", {
+      method: "POST",
+      headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+      body: JSON.stringify({ id }),
+    });
+    return {
+      sent: true,
+      draftId: id,
+      providerMessageId: data.id || current.providerMessageId || null,
+      threadId: data.threadId || current.threadId || null,
+      recipient: current.recipient,
+      subject: current.subject,
+      bodyHash: actualBodyHash,
     };
   }
 
@@ -181,7 +272,7 @@ function createGoogleProvider({
     return { disconnected: true };
   }
 
-  return { accessToken, callback, disconnect, redirectUri, sendEmail, start, status, test };
+  return { accessToken, callback, createDraft, deleteDraft, disconnect, getDraft, redirectUri, sendDraft, sendEmail, start, status, test };
 }
 
 module.exports = { createGoogleProvider, GOOGLE_SCOPES };

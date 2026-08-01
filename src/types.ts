@@ -23,6 +23,13 @@ export type ApiSettings = {
   webhookBaseUrl?: string;
   wakePhrase?: string;
   keySource?: "env" | "local" | "missing";
+  personalBrowserBridge?: {
+    configured: boolean;
+    source: "disabled";
+    mode: "retired";
+    deprecated: true;
+    replacement: "jarvis-private-browser";
+  };
   providers?: Record<string, ProviderStatus>;
 };
 

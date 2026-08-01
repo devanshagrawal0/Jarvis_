@@ -7,8 +7,9 @@ import { useDrawer } from "../Drawer";
 import { useUI } from "../HxUI";
 import { useSelection } from "../HxInspector";
 import { useContextMenu } from "../HxContextMenu";
-import { ConfBar } from "../hxViz";
+import { ConfBar, TickFlash } from "../hxViz";
 import { Radar, Donut, BarMini } from "../hxCharts";
+import { useHelixResource } from "../useHelixResource";
 
 const METRICS = [
   { v: "1,248", k: "Total Evidence", sub: "", tone: "" },
@@ -55,8 +56,8 @@ export function Evidence({ projectId }: { projectId?: string }) {
   const { select: inspSelect, togglePin, isPinned, toggleCompare, addNote } = useSelection();
   const { show: showCtx } = useContextMenu();
   const [tab, setTab] = useState("All Evidence");
-  const [rows, setRows] = useState<typeof ROWS>(ROWS);
-  const [loading, setLoading] = useState(false);
+  const [rows, setRows] = useState<typeof ROWS>([]);   // seeded from real entries below (no fake fallback)
+  const [selIdx, setSelIdx] = useState<number | null>(null);   // W8 #21: keep the opened row anchored
   const [search, setSearch] = useState("");
   const [sort, setSort] = useState<"Recent" | "Strength" | "Sources">("Recent");
   const [views, setViews] = useState<{ name: string; tab: string; on: Record<string, boolean>; search: string; sort: string }[]>(() => { try { return JSON.parse(localStorage.getItem("helix-ev-views") || "[]"); } catch { return []; } });
@@ -66,15 +67,25 @@ export function Evidence({ projectId }: { projectId?: string }) {
   const showPeek = (e: React.MouseEvent, r: typeof rows[number]) => { const rect = (e.currentTarget as HTMLElement).getBoundingClientRect(); clearTimeout(peekTimer.current); peekTimer.current = setTimeout(() => setPeek({ r, x: rect.right + 12, y: rect.top }), 360); };
   const hidePeek = () => { clearTimeout(peekTimer.current); setPeek(null); };
   useEffect(() => () => clearTimeout(peekTimer.current), []);
-
+  // ⌘K "Add an evidence source" navigates here then fires helix:cmd → open the ingest dialog.
+  const ingestRef = useRef<() => void>(() => {});
   useEffect(() => {
-    if (!projectId) return;
-    setLoading(true);
-    fetch(`/api/helix/entries?projectId=${projectId}`).then(r => r.json()).then(d => {
-      const entries = (d?.entries || []).filter((e: any) => !e.voided);
-      if (entries.length) setRows(entries.map(entryToRow));
-    }).catch(() => {}).finally(() => setLoading(false));
-  }, [projectId]);
+    const on = (e: Event) => { if ((e as CustomEvent).detail?.type === "ingest") ingestRef.current(); };
+    window.addEventListener("helix:cmd", on);
+    return () => window.removeEventListener("helix:cmd", on);
+  }, []);
+
+  // Shared data layer: SWR + abort on project switch (docs/ux/04). Rows seed from REAL
+  // entries only — no sample fallback (honesty). Local `rows` state is kept so optimistic
+  // ingest still works.
+  const { data: evData, loading, error, refetch } = useHelixResource<{ entries: any[] }>(
+    projectId ? `ev:${projectId}` : null,
+    projectId ? `/api/helix/entries?projectId=${projectId}` : null,
+  );
+  useEffect(() => {
+    const entries = (evData?.entries || []).filter((e: any) => !e.voided);
+    setRows(entries.map(entryToRow));
+  }, [evData]);
   const [on, setOn] = useState<Record<string, boolean>>({ Supported: true, Contradictory: true });
   // #2 fix: all counts derive from the actual rows (no contradictory hardcoded totals).
   const cSup = rows.filter(r => r.support === "sup").length;
@@ -116,6 +127,7 @@ export function Evidence({ projectId }: { projectId?: string }) {
       } else toast("Ingest failed", "bad");
     } catch { toast("Network error", "bad"); }
   };
+  ingestRef.current = ingestSource;
 
   // Saved views (#4): persist a named filter/sort/tab/search state and re-apply instantly.
   const persistViews = (v: typeof views) => { setViews(v); localStorage.setItem("helix-ev-views", JSON.stringify(v)); };
@@ -137,7 +149,7 @@ export function Evidence({ projectId }: { projectId?: string }) {
     backlinks: rows.map((rr, ii) => ({ rr, ii })).filter(x => x.ii !== i && x.rr.topic === r.topic).slice(0, 6)
       .map(({ rr, ii }) => ({ kind: rr.support === "con" ? "claim" : rr.type.toLowerCase(), title: rr.claim, via: "same topic", onClick: () => selectRow(rr, ii) })),
   });
-  const selectRow = (r: typeof rows[number], i: number) => inspSelect(rowItem(r, i));
+  const selectRow = (r: typeof rows[number], i: number) => { setSelIdx(i); inspSelect(rowItem(r, i)); };
   const rowContext = (e: React.MouseEvent, r: typeof rows[number], i: number) => {
     e.preventDefault(); const it = rowItem(r, i);
     showCtx(e.clientX, e.clientY, [
@@ -160,6 +172,9 @@ export function Evidence({ projectId }: { projectId?: string }) {
         <button className="hxv-btn" onClick={ingestSource}><Ico.plus /> Ingest source</button>
       </div>
 
+      {error && <div className="hxv-integrity block" style={{ marginBottom: 12 }}><span>⛔</span><span>Couldn't load evidence — {error}. <span className="hxv-link" onClick={refetch}>Retry</span></span></div>}
+      {loading && rows.length === 0 && <div className="hxv-h1-sub" style={{ marginBottom: 12 }}>Loading evidence…</div>}
+
       <div className="hxv-metrics">
         {(() => {
           const total = rows.length;
@@ -175,7 +190,7 @@ export function Evidence({ projectId }: { projectId?: string }) {
           ];
           return live.map(m => (
             <div className="hxv-metric" key={m.k} onClick={() => setTab(m.k === "Contradictory" ? "Contradictions" : m.k === "Unsupported" ? "Unsupported" : "All Evidence")}>
-              <div className="hxv-metric-v">{m.v}</div>
+              <div className="hxv-metric-v"><TickFlash value={Number(m.v)} /></div>
               <div className="hxv-metric-k">{m.k}</div>
               {m.sub && <div className={"hxv-metric-sub hxv-val-" + m.tone}>{m.sub}</div>}
             </div>
@@ -231,13 +246,13 @@ export function Evidence({ projectId }: { projectId?: string }) {
             ))}
           </div>
 
-          <div className="hxv-etable">
+          <div className="hxv-etable hxv-stag">
             <div className="hxv-erow head">
               <span>Type</span><span>Claim</span><span>Support</span><span>Strength</span><span style={{ textAlign: "center" }}>Sources</span><span style={{ textAlign: "right" }}>Updated</span>
             </div>
             {displayed.length === 0 && <div style={{ padding: 24, textAlign: "center", fontSize: 12, color: "var(--v-text3)" }}>No evidence matches these filters.</div>}
             {displayed.map((r, i) => (
-              <div className="hxv-erow" key={i} onMouseEnter={e => showPeek(e, r)} onMouseLeave={hidePeek} onContextMenu={e => { hidePeek(); rowContext(e, r, i); }} onClick={() => { hidePeek(); selectRow(r, i); open({
+              <div className={"hxv-erow" + (selIdx === i ? " sel" : "") + (r.support === "con" ? " con" : "")} key={i} onMouseEnter={e => showPeek(e, r)} onMouseLeave={hidePeek} onContextMenu={e => { hidePeek(); rowContext(e, r, i); }} onClick={() => { hidePeek(); selectRow(r, i); open({
                 type: "Evidence · " + r.type,
                 title: r.claim,
                 quote: r.claim,

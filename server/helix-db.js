@@ -635,6 +635,7 @@ function createHelixDb(runtimeDir) {
     listProjects:   db.prepare(`SELECT * FROM helix_projects ORDER BY updated_at DESC`),
     updateProject:  db.prepare(`UPDATE helix_projects SET name = ?, objective = ?, updated_at = ? WHERE id = ?`),
     updateScore:    db.prepare(`UPDATE helix_projects SET helix_score = ?, updated_at = ? WHERE id = ?`),
+    deleteProjectRow: db.prepare(`DELETE FROM helix_projects WHERE id = ?`),
 
     createInquiry:  db.prepare(`INSERT INTO helix_inquiries (id, project_id, text, strand, created_at) VALUES (?, ?, ?, ?, ?)`),
 
@@ -943,6 +944,26 @@ function createHelixDb(runtimeDir) {
       stmts.updateProject.run(name, objective, isoNow(), id);
       return stmts.getProject.get(id);
     },
+    // Hard-delete a project and cascade every row keyed to it. Purges every table that has
+    // a project_id/projectId column (all helix_* tables AND the shared substrate — and any
+    // future project-scoped table, automatically), so nothing orphans. Table/column names
+    // come from the schema catalog, never user input, so quoting them here is safe.
+    deleteProject: db.transaction((id) => {
+      const proj = stmts.getProject.get(id);
+      if (!proj) return { deleted: false, notFound: true };
+      let purgedRows = 0;
+      const tables = db.prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'`).all();
+      for (const { name } of tables) {
+        if (name === "helix_projects") continue;
+        let cols;
+        try { cols = db.prepare(`PRAGMA table_info("${name}")`).all(); } catch { continue; }
+        const pc = cols.find((c) => c.name === "project_id" || c.name === "projectId");
+        if (!pc) continue;
+        try { purgedRows += db.prepare(`DELETE FROM "${name}" WHERE "${pc.name}" = ?`).run(id).changes; } catch {}
+      }
+      const info = stmts.deleteProjectRow.run(id);
+      return { deleted: info.changes > 0, name: proj.name, purgedRows };
+    }),
     getOrCreateDefaultProject,
 
     // Entries

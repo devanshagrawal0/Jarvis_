@@ -6,21 +6,38 @@ export function HxBoot({ onDone }: { onDone: () => void }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [pct, setPct] = useState(0);
   const [leaving, setLeaving] = useState(false);
+  // Keep onDone in a ref so the boot timer runs EXACTLY ONCE. Previously this effect
+  // depended on [onDone] — an inline arrow recreated every parent render — so any
+  // re-render during boot (e.g. the projects fetch resolving) cancelled and restarted
+  // the timer, and a tab hidden during launch (RAF paused) hung the boot forever,
+  // leaving its full-screen overlay swallowing every click in the room.
+  const onDoneRef = useRef(onDone);
+  useEffect(() => { onDoneRef.current = onDone; }, [onDone]);
 
   // progress 0→100 over ~1.6s, then fade out and reveal the room
   useEffect(() => {
     const start = performance.now();
     const DUR = 1600;
-    let raf: number;
+    let raf = 0;
+    let done = false;
+    const finish = () => {
+      if (done) return; done = true;
+      setPct(100); setLeaving(true);
+      setTimeout(() => onDoneRef.current(), 420);
+    };
     const tick = (now: number) => {
       const p = Math.min(1, (now - start) / DUR);
       setPct(Math.round(p * 100));
       if (p < 1) raf = requestAnimationFrame(tick);
-      else { setLeaving(true); setTimeout(onDone, 420); }
+      else finish();
     };
     raf = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(raf);
-  }, [onDone]);
+    // Wall-clock safety net: guarantees the boot dismisses even if RAF is throttled or
+    // paused (backgrounded tab), so the overlay can never trap the room permanently.
+    const failsafe = window.setTimeout(finish, DUR + 600);
+    return () => { cancelAnimationFrame(raf); clearTimeout(failsafe); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // star-warp
   useEffect(() => {

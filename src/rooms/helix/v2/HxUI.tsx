@@ -3,14 +3,15 @@
 import React, { createContext, useCallback, useContext, useRef, useState } from "react";
 
 interface PromptOpts { title: string; label?: string; placeholder?: string; defaultValue?: string; confirmText?: string; }
+interface ToastOpts { action?: { label: string; run: () => void }; duration?: number }
 interface Ctx {
-  toast: (msg: string, tone?: "info" | "good" | "warn" | "bad") => void;
+  toast: (msg: string, tone?: "info" | "good" | "warn" | "bad", opts?: ToastOpts) => void;
   prompt: (o: PromptOpts) => Promise<string | null>;
 }
 const UICtx = createContext<Ctx>({ toast: () => {}, prompt: async () => null });
 export const useUI = () => useContext(UICtx);
 
-interface Toast { id: number; msg: string; tone: string; }
+interface Toast { id: number; msg: string; tone: string; action?: { label: string; run: () => void }; }
 
 export function UIProvider({ children }: { children: React.ReactNode }) {
   const [toasts, setToasts] = useState<Toast[]>([]);
@@ -18,10 +19,10 @@ export function UIProvider({ children }: { children: React.ReactNode }) {
   const [val, setVal] = useState("");
   const idRef = useRef(0);
 
-  const toast = useCallback((msg: string, tone: string = "info") => {
+  const toast = useCallback((msg: string, tone: string = "info", opts?: ToastOpts) => {
     const id = ++idRef.current;
-    setToasts(t => [...t, { id, msg, tone }]);
-    setTimeout(() => setToasts(t => t.filter(x => x.id !== id)), 3600);
+    setToasts(t => [...t, { id, msg, tone, action: opts?.action }]);
+    setTimeout(() => setToasts(t => t.filter(x => x.id !== id)), opts?.duration ?? 3600);
   }, []);
 
   const prompt = useCallback((o: PromptOpts) => new Promise<string | null>((resolve) => {
@@ -38,7 +39,13 @@ export function UIProvider({ children }: { children: React.ReactNode }) {
       <div className="hxv-toasts">
         {toasts.map(t => (
           <div key={t.id} className={"hxv-toast " + t.tone}>
-            <span className="hxv-toast-dot" />{t.msg}
+            <span className="hxv-toast-dot" /><span>{t.msg}</span>
+            {t.action && (
+              <button className="hxv-toast-action"
+                onClick={() => { t.action!.run(); setToasts(ts => ts.filter(x => x.id !== t.id)); }}>
+                {t.action.label}
+              </button>
+            )}
           </div>
         ))}
       </div>

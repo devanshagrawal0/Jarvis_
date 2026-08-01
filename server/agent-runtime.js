@@ -1,4 +1,6 @@
 const { GoogleGenAI } = require("@google/genai");
+const { MODELS, fallbacksFor } = require("./gemini-models");
+const { declarationsForLane, routeExecutionLane } = require("./automation/execution-lane-router");
 
 function tokenize(value) {
   return [...new Set(String(value || "").toLowerCase().match(/[a-z0-9][a-z0-9_-]{1,}/g) || [])];
@@ -88,15 +90,19 @@ function createAgentRuntime({ getSettings, toolGateway, codeKnowledge, memorySto
   }
 
   function selectModel(route) {
+    // Models come from the single registry (server/gemini-models.js) — never hardcode
+    // a name here. A pinned name silently rots when Google 503s/404s it (that's how the
+    // whole brain went dark: this function returned the dead gemini-3.5-flash for every
+    // fresh/action turn). The registry + its failover ladder are the source of truth.
     const settings = getSettings();
-    const configured = settings.geminiModel || "gemini-3.5-flash";
+    const configured = settings.geminiModel || MODELS.main;
     if (route.complexity === "deep") {
-      return settings.geminiReasoningModel || "gemini-3.1-pro-preview";
+      return settings.geminiReasoningModel || MODELS.reasoning;
     }
     if (route.action || route.fresh) {
-      return settings.geminiActionModel || "gemini-3.5-flash";
+      return settings.geminiActionModel || MODELS.main;
     }
-    return settings.geminiFastModel || configured || "gemini-3.1-flash-lite";
+    return settings.geminiFastModel || configured || MODELS.main;
   }
 
   function shouldUseSemanticRouter(prompt, baseline, history = []) {
@@ -237,10 +243,20 @@ function createAgentRuntime({ getSettings, toolGateway, codeKnowledge, memorySto
       : (browserTask || screenTask || meshTask) ? 10
         : (route.action || route.agentSwarm) ? 8
           : 5;
-    const selectedTools = forgeGenerative ? []
+    let selectedTools = forgeGenerative ? []
       : (route.action || route.code || route.personal || route.fresh || browserTask || meshTask || forgeTask
         ? toolGateway.selectTools(toolPrompt, { limit: toolLimit, intent: route.intent, route })
         : []);
+    const execution = forgeGenerative ? { lane: "none", tools: [] } : routeExecutionLane(prompt, settings);
+    if (execution.lane !== "none") {
+      const laneDeclarations = typeof toolGateway.declarationsFor === "function"
+        ? toolGateway.declarationsFor(execution.tools || [])
+        : declarationsForLane(selectedTools, execution);
+      selectedTools = laneDeclarations.length ? laneDeclarations : declarationsForLane(selectedTools, execution);
+      route.executionLane = execution;
+      route.action = true;
+      route.intent = "action";
+    }
     const memories = memoryStore.search(prompt, {
       limit: route.personal ? 12 : 7,
       kinds: route.personal ? ["semantic", "procedural", "episodic"] : undefined,
@@ -250,14 +266,12 @@ function createAgentRuntime({ getSettings, toolGateway, codeKnowledge, memorySto
     return {
       route,
       model: selectModel(route),
-      // Cortex v4 · 0.2 — registry-only models. gemini-2.5-flash was purged: it
-      // refuses grounded/news queries when 3.5-flash falls back to it. The fallback
-      // ladder now stays on grounding-capable 3.x models.
-      fallbackModels: [
-        "gemini-3.5-flash",
-        getSettings().geminiModel,
-        "gemini-3.1-flash-lite",
-      ].filter(Boolean),
+      // Failover ladder for the chosen model, from the registry (verified-live rungs,
+      // grounding-capable first, self-healing *-latest aliases). The brain walks this on
+      // 503/429/500/404 so a single Google outage can't take the whole answer down —
+      // which is exactly what was happening (the old ladder led with the dead 3.5-flash,
+      // then fell to flash-lite which can't ground → fresh questions failed every time).
+      fallbackModels: [...fallbacksFor(selectModel(route)), getSettings().geminiModel].filter(Boolean),
       selectedTools,
       memories,
       codeContext,
@@ -268,14 +282,15 @@ function createAgentRuntime({ getSettings, toolGateway, codeKnowledge, memorySto
         classifier: route.classifier || "deterministic",
         routerModelCalls: route.routerModelCalls || 0,
         models: {
-          router: settings.geminiRouterModel || "gemini-3.1-flash-lite",
-        fast: settings.geminiFastModel || settings.geminiModel || "gemini-3.1-flash-lite",
-        action: settings.geminiActionModel || "gemini-3.5-flash",
-          reasoning: settings.geminiReasoningModel || "gemini-3.1-pro-preview",
-          live: settings.geminiLiveModel || "gemini-3.1-flash-live-preview",
-          embedding: settings.geminiEmbeddingModel || "gemini-embedding-2",
+          router: settings.geminiRouterModel || MODELS.router,
+          fast: settings.geminiFastModel || settings.geminiModel || MODELS.main,
+          action: settings.geminiActionModel || MODELS.main,
+          reasoning: settings.geminiReasoningModel || MODELS.reasoning,
+          live: settings.geminiLiveModel || MODELS.live,
+          embedding: settings.geminiEmbeddingModel || MODELS.embedding,
         },
         tools: selectedTools.map((tool) => tool.name),
+        executionLane: execution,
         memories: memories.map((memory) => ({ id: memory.id, kind: memory.kind, category: memory.category, score: memory.score })),
         code: codeContext.map((item) => `${item.path}:${item.startLine}`),
         activeRuntime: selfSnapshot?.activeRuntime,
@@ -291,11 +306,29 @@ function createAgentRuntime({ getSettings, toolGateway, codeKnowledge, memorySto
       toolNames.length
         ? `Relevant tools exposed for this turn: ${toolNames.join(", ")}. Do not claim access to tools that are not listed.`
         : "No local action tools are exposed for this turn.",
+      toolNames.includes("computer_use")
+        ? [
+            "Open-world browser execution:",
+            prepared.route.executionLane ? `Execution lane selected by policy: ${JSON.stringify(prepared.route.executionLane)}.` : "",
+            "For a multi-step website outcome, call computer_use once with the complete owner outcome and an optional startUrl. It owns observe-act-verify-replan, tabs, files, approvals, evidence, and Runtime frames.",
+            "Do not manually recreate a website workflow with browser_navigate/browser_snapshot/browser_act when computer_use can own the outcome end to end.",
+            "Background execution is the default. Use the daily visible screen only when the owner explicitly says on my screen/current window/control my cursor.",
+            "If the executor reports an ambiguous person, file, or repository, ask for the missing identity detail; never choose a weak match.",
+          ].join("\n")
+        : "",
+      toolNames.includes("gmail_prepare_email")
+        ? [
+            "Verified Gmail workflow:",
+            "First call gmail_prepare_email with the exact recipient address, subject, and body. It creates a real provider draft and reads it back without sending.",
+            "If the owner asked to send, call gmail_send_prepared using the exact draftId, recipient, subject, and bodyHash returned by gmail_prepare_email. That final call pauses for approval and re-verifies the unchanged provider draft before sending.",
+            "Never use a guessed email address. If only a contact name was supplied, the personal-browser lane must resolve the recipient or ask the owner when ambiguous.",
+          ].join("\n")
+        : "",
       toolNames.some((name) => name.startsWith("browser_"))
         ? [
             "Browser workflow rules:",
             "Use browser_status when you need to know the active browser page, tabs, or whether an old snapshot exists.",
-            "Use browser_login_handoff for any login-required site. Open the page and tell the user to finish authentication manually, then continue from a fresh snapshot.",
+            "Use browser_login_handoff for any login-required site. After the owner signs in, call browser_login_complete to save the session, close the visible login window, and resume headless background work.",
             "Use browser_page_brief after navigation or login to understand forms, file uploads, buttons, login signals, and safe next actions before manipulating the page.",
             "Use browser_navigate, then browser_snapshot. Act on short-lived refs returned by the latest snapshot.",
             "Take a fresh snapshot after navigation or page-changing actions and recover from stale refs by observing again.",
@@ -398,13 +431,13 @@ function createAgentRuntime({ getSettings, toolGateway, codeKnowledge, memorySto
         ? [
             "Visible screen operator workflow:",
             "When the user says do/click/type/press/fullscreen something on my screen, use screen_act. screen_act already captures before, inspects visible controls, acts on the located target, then captures after.",
-            "For YouTube or any website already visible on the laptop, do not jump to URL resolution first. Use screen_act to click visible search/results/player controls in the current foreground screen.",
+            "Use screen_act only when the user refers to a control or content that is already visibly loaded. Do not use it to perform a multi-page search workflow one guessed click at a time.",
             "For YouTube player full screen, use screen_act action fullscreen with fullscreenMode player unless the user explicitly says browser or Chrome fullscreen.",
             "If screen_act cannot locate the target, say exactly that and ask for a clearer visible label. Do not claim the action happened.",
           ].join("\n")
         : "",
       toolNames.includes("youtube_open_video")
-        ? "YouTube fallback workflow: use youtube_open_video only when screen_act is unavailable or the user explicitly asks to open a YouTube video by title without referring to the current visible screen."
+        ? "YouTube workflow: when the user asks to find/open/play a named, latest, or newest video, use youtube_open_video directly. It resolves the result and places the final watch page on the visible daily browser without a multi-round screen-click loop."
         : "",
       toolNames.includes("desktop_control")
         ? [
@@ -451,11 +484,11 @@ function createAgentRuntime({ getSettings, toolGateway, codeKnowledge, memorySto
     const settings = getSettings();
     return {
       architecture: "structured-route-context-act-verify",
-      configuredModel: settings.geminiModel,
-      routerModel: settings.geminiRouterModel || "gemini-3.1-flash-lite",
-      fastModel: settings.geminiFastModel || settings.geminiModel,
-      reasoningModel: settings.geminiReasoningModel || "gemini-3.1-pro-preview",
-      embeddingModel: settings.geminiEmbeddingModel || "gemini-embedding-2",
+      configuredModel: settings.geminiModel || MODELS.main,
+      routerModel: settings.geminiRouterModel || MODELS.router,
+      fastModel: settings.geminiFastModel || settings.geminiModel || MODELS.main,
+      reasoningModel: settings.geminiReasoningModel || MODELS.reasoning,
+      embeddingModel: settings.geminiEmbeddingModel || MODELS.embedding,
       codeKnowledge: codeKnowledge.stats(),
       toolGateway: toolGateway.catalog(),
     };

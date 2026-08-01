@@ -110,6 +110,17 @@ test("Kalshi is only selected for explicit Kalshi wording", () => {
   assert.ok(kalshiTools.includes("kalshi_market_discovery"));
 });
 
+test("browser typing is not mistaken for visible desktop control", () => {
+  const background = classifyIntent(
+    "In the background, use my connected personal Chrome to open Instagram Direct, search for Raghav Mittal, type exactly hi, and stop at Send for approval.",
+    {},
+  );
+  assert.equal(background.intent, "browser_action");
+
+  const visible = classifyIntent("On my screen, click the current Send button", {});
+  assert.equal(visible.intent, "screen_action");
+});
+
 test("debug traces are private and persisted", () => {
   const repair = createAgentRepair({ runtimeDir: tempDir("jarvis-repair-") });
   const turn = repair.prepareTurn({ prompt: "what fifa games are today", capabilityEngine: { definitions: [] }, providerStatus: {} });

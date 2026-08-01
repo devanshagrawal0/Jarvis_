@@ -1,0 +1,7175 @@
+{
+  "note": "Only file paths, line numbers, and environment-variable names are recorded. Source snippets and credential values are intentionally excluded.",
+  "categories": {
+    "sqliteConnection": [
+      {
+        "file": "check-prefs-w1.js",
+        "line": 1
+      },
+      {
+        "file": "check-prefs-w1.js",
+        "line": 2
+      },
+      {
+        "file": "server/agent-repair.js",
+        "line": 4
+      },
+      {
+        "file": "server/agent-repair.js",
+        "line": 235
+      },
+      {
+        "file": "server/apex-db.js",
+        "line": 4
+      },
+      {
+        "file": "server/apex-db.js",
+        "line": 13
+      },
+      {
+        "file": "server/apex-db.js",
+        "line": 65
+      },
+      {
+        "file": "server/coop-store.js",
+        "line": 2
+      },
+      {
+        "file": "server/coop-store.js",
+        "line": 8
+      },
+      {
+        "file": "server/coop-store.js",
+        "line": 14
+      },
+      {
+        "file": "server/coop-store.js",
+        "line": 26
+      },
+      {
+        "file": "server/deployable-agents.js",
+        "line": 5
+      },
+      {
+        "file": "server/deployable-agents.js",
+        "line": 24
+      },
+      {
+        "file": "server/helix-db.js",
+        "line": 4
+      },
+      {
+        "file": "server/helix-db.js",
+        "line": 60
+      },
+      {
+        "file": "server/helix-substrate.js",
+        "line": 9
+      },
+      {
+        "file": "server/helix-substrate.js",
+        "line": 45
+      },
+      {
+        "file": "server/local-file-access.js",
+        "line": 5
+      },
+      {
+        "file": "server/local-file-access.js",
+        "line": 62
+      },
+      {
+        "file": "server/memory-decay.js",
+        "line": 2
+      },
+      {
+        "file": "server/memory-decay.js",
+        "line": 162
+      },
+      {
+        "file": "server/memory-governance.js",
+        "line": 4
+      },
+      {
+        "file": "server/memory-governance.js",
+        "line": 55
+      },
+      {
+        "file": "server/memory-manager.js",
+        "line": 11
+      },
+      {
+        "file": "server/memory-manager.js",
+        "line": 357
+      },
+      {
+        "file": "server/memory-store.js",
+        "line": 4
+      },
+      {
+        "file": "server/memory-store.js",
+        "line": 20
+      },
+      {
+        "file": "server/memory-vectors.js",
+        "line": 6
+      },
+      {
+        "file": "server/memory-vectors.js",
+        "line": 26
+      },
+      {
+        "file": "server/mission-engine.js",
+        "line": 3
+      },
+      {
+        "file": "server/mission-engine.js",
+        "line": 58
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 4
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 166
+      },
+      {
+        "file": "server/pc-activity-graph.js",
+        "line": 10
+      },
+      {
+        "file": "server/pc-activity-graph.js",
+        "line": 43
+      },
+      {
+        "file": "server/pc-knowledge-graph.js",
+        "line": 5
+      },
+      {
+        "file": "server/pc-knowledge-graph.js",
+        "line": 87
+      },
+      {
+        "file": "server/skill-autopilot.js",
+        "line": 3
+      },
+      {
+        "file": "server/skill-autopilot.js",
+        "line": 96
+      },
+      {
+        "file": "server/task-to-skill.js",
+        "line": 4
+      },
+      {
+        "file": "server/task-to-skill.js",
+        "line": 42
+      },
+      {
+        "file": "server/user-context.js",
+        "line": 17
+      },
+      {
+        "file": "server/user-context.js",
+        "line": 23
+      },
+      {
+        "file": "server/eclipse/orchestration/store.js",
+        "line": 4
+      },
+      {
+        "file": "server/eclipse/evals/export-forge-demo.js",
+        "line": 6
+      },
+      {
+        "file": "server/eclipse/evals/export-forge-demo.js",
+        "line": 20
+      },
+      {
+        "file": "server/eclipse/evals/live-compare.js",
+        "line": 9
+      },
+      {
+        "file": "server/eclipse/evals/live-compare.js",
+        "line": 75
+      },
+      {
+        "file": "server/eclipse/evals/test-contracts.js",
+        "line": 4
+      },
+      {
+        "file": "server/eclipse/evals/test-contracts.js",
+        "line": 74
+      },
+      {
+        "file": "server/eclipse/evals/test-evidence.js",
+        "line": 4
+      },
+      {
+        "file": "server/eclipse/evals/test-evidence.js",
+        "line": 15
+      },
+      {
+        "file": "server/eclipse/evals/test-foundry.js",
+        "line": 4
+      },
+      {
+        "file": "server/eclipse/evals/test-foundry.js",
+        "line": 64
+      },
+      {
+        "file": "server/eclipse/evals/test-foundry.js",
+        "line": 74
+      },
+      {
+        "file": "server/eclipse/evals/test-foundry.js",
+        "line": 95
+      },
+      {
+        "file": "server/eclipse/evals/test-graph.js",
+        "line": 6
+      },
+      {
+        "file": "server/eclipse/evals/test-graph.js",
+        "line": 21
+      },
+      {
+        "file": "server/eclipse/evals/test-mission-e2e.js",
+        "line": 6
+      },
+      {
+        "file": "server/eclipse/evals/test-mission-e2e.js",
+        "line": 18
+      },
+      {
+        "file": "server/eclipse/evals/test-stream.js",
+        "line": 5
+      },
+      {
+        "file": "server/eclipse/evals/test-stream.js",
+        "line": 42
+      },
+      {
+        "file": "server/eclipse/evals/test-stream.js",
+        "line": 63
+      },
+      {
+        "file": "server/eclipse/evals/test-w5-e2e.js",
+        "line": 9
+      },
+      {
+        "file": "server/eclipse/evals/test-w5-e2e.js",
+        "line": 29
+      },
+      {
+        "file": "server/eclipse/evals/test-w5-e2e.js",
+        "line": 57
+      },
+      {
+        "file": "server/eclipse/evals/test-w5-e2e.js",
+        "line": 70
+      },
+      {
+        "file": "server/eclipse/db/migrations.js",
+        "line": 7
+      },
+      {
+        "file": "server/eclipse/db/migrations.js",
+        "line": 161
+      },
+      {
+        "file": "server/apex/apex-bots.js",
+        "line": 12
+      },
+      {
+        "file": "server/apex/apex-bots.js",
+        "line": 14
+      },
+      {
+        "file": "server/apex/apex-bots.js",
+        "line": 137
+      },
+      {
+        "file": "server/apex/apex-paper.js",
+        "line": 15
+      },
+      {
+        "file": "server/apex/apex-paper.js",
+        "line": 17
+      },
+      {
+        "file": "server/apex/apex-paper.js",
+        "line": 30
+      },
+      {
+        "file": "server/apex/predict/store.js",
+        "line": 1
+      },
+      {
+        "file": "server/apex/predict/store.js",
+        "line": 5
+      },
+      {
+        "file": "server/apex/predict/store.js",
+        "line": 8
+      },
+      {
+        "file": "scripts/memory-vnext-wave1-audit.mjs",
+        "line": 1
+      },
+      {
+        "file": "scripts/memory-vnext-wave1-audit.mjs",
+        "line": 102
+      },
+      {
+        "file": "scripts/memory-vnext-wave1-audit.mjs",
+        "line": 113
+      },
+      {
+        "file": "scripts/memory-vnext-wave1-audit.mjs",
+        "line": 223
+      },
+      {
+        "file": "scripts/memory-vnext-wave1-audit.mjs",
+        "line": 330
+      }
+    ],
+    "schemaOrWriteSql": [
+      {
+        "file": "server/agent-repair.js",
+        "line": 238
+      },
+      {
+        "file": "server/agent-repair.js",
+        "line": 243
+      },
+      {
+        "file": "server/agent-repair.js",
+        "line": 256
+      },
+      {
+        "file": "server/agent-repair.js",
+        "line": 286
+      },
+      {
+        "file": "server/agent-repair.js",
+        "line": 397
+      },
+      {
+        "file": "server/apex-db.js",
+        "line": 71
+      },
+      {
+        "file": "server/apex-db.js",
+        "line": 77
+      },
+      {
+        "file": "server/apex-db.js",
+        "line": 83
+      },
+      {
+        "file": "server/apex-db.js",
+        "line": 89
+      },
+      {
+        "file": "server/apex-db.js",
+        "line": 92
+      },
+      {
+        "file": "server/apex-db.js",
+        "line": 96
+      },
+      {
+        "file": "server/apex-db.js",
+        "line": 99
+      },
+      {
+        "file": "server/apex-db.js",
+        "line": 104
+      },
+      {
+        "file": "server/apex-db.js",
+        "line": 113
+      },
+      {
+        "file": "server/apex-db.js",
+        "line": 119
+      },
+      {
+        "file": "server/apex-db.js",
+        "line": 125
+      },
+      {
+        "file": "server/apex-db.js",
+        "line": 129
+      },
+      {
+        "file": "server/apex-db.js",
+        "line": 132
+      },
+      {
+        "file": "server/apex-db.js",
+        "line": 137
+      },
+      {
+        "file": "server/apex-db.js",
+        "line": 145
+      },
+      {
+        "file": "server/apex-db.js",
+        "line": 152
+      },
+      {
+        "file": "server/apex-db.js",
+        "line": 164
+      },
+      {
+        "file": "server/apex-db.js",
+        "line": 172
+      },
+      {
+        "file": "server/apex-db.js",
+        "line": 182
+      },
+      {
+        "file": "server/apex-db.js",
+        "line": 193
+      },
+      {
+        "file": "server/apex-db.js",
+        "line": 212
+      },
+      {
+        "file": "server/apex-db.js",
+        "line": 219
+      },
+      {
+        "file": "server/apex-db.js",
+        "line": 222
+      },
+      {
+        "file": "server/apex-db.js",
+        "line": 229
+      },
+      {
+        "file": "server/apex-db.js",
+        "line": 231
+      },
+      {
+        "file": "server/apex-db.js",
+        "line": 239
+      },
+      {
+        "file": "server/apex-db.js",
+        "line": 241
+      },
+      {
+        "file": "server/apex-db.js",
+        "line": 249
+      },
+      {
+        "file": "server/apex-db.js",
+        "line": 251
+      },
+      {
+        "file": "server/apex-db.js",
+        "line": 258
+      },
+      {
+        "file": "server/apex-db.js",
+        "line": 264
+      },
+      {
+        "file": "server/apex-db.js",
+        "line": 267
+      },
+      {
+        "file": "server/apex-db.js",
+        "line": 275
+      },
+      {
+        "file": "server/apex-db.js",
+        "line": 280
+      },
+      {
+        "file": "server/apex-db.js",
+        "line": 281
+      },
+      {
+        "file": "server/apex-db.js",
+        "line": 286
+      },
+      {
+        "file": "server/apex-db.js",
+        "line": 292
+      },
+      {
+        "file": "server/apex-db.js",
+        "line": 293
+      },
+      {
+        "file": "server/apex-db.js",
+        "line": 294
+      },
+      {
+        "file": "server/apex-db.js",
+        "line": 297
+      },
+      {
+        "file": "server/apex-db.js",
+        "line": 305
+      },
+      {
+        "file": "server/apex-db.js",
+        "line": 400
+      },
+      {
+        "file": "server/apex-db.js",
+        "line": 402
+      },
+      {
+        "file": "server/apex-db.js",
+        "line": 404
+      },
+      {
+        "file": "server/coop-store.js",
+        "line": 32
+      },
+      {
+        "file": "server/coop-store.js",
+        "line": 45
+      },
+      {
+        "file": "server/coop-store.js",
+        "line": 57
+      },
+      {
+        "file": "server/coop-store.js",
+        "line": 66
+      },
+      {
+        "file": "server/coop-store.js",
+        "line": 76
+      },
+      {
+        "file": "server/coop-store.js",
+        "line": 81
+      },
+      {
+        "file": "server/coop-store.js",
+        "line": 83
+      },
+      {
+        "file": "server/coop-store.js",
+        "line": 99
+      },
+      {
+        "file": "server/deployable-agents.js",
+        "line": 30
+      },
+      {
+        "file": "server/deployable-agents.js",
+        "line": 64
+      },
+      {
+        "file": "server/deployable-agents.js",
+        "line": 101
+      },
+      {
+        "file": "server/helix-db.js",
+        "line": 65
+      },
+      {
+        "file": "server/helix-db.js",
+        "line": 75
+      },
+      {
+        "file": "server/helix-db.js",
+        "line": 83
+      },
+      {
+        "file": "server/helix-db.js",
+        "line": 96
+      },
+      {
+        "file": "server/helix-db.js",
+        "line": 109
+      },
+      {
+        "file": "server/helix-db.js",
+        "line": 117
+      },
+      {
+        "file": "server/helix-db.js",
+        "line": 131
+      },
+      {
+        "file": "server/helix-db.js",
+        "line": 142
+      },
+      {
+        "file": "server/helix-db.js",
+        "line": 160
+      },
+      {
+        "file": "server/helix-db.js",
+        "line": 168
+      },
+      {
+        "file": "server/helix-db.js",
+        "line": 180
+      },
+      {
+        "file": "server/helix-db.js",
+        "line": 191
+      },
+      {
+        "file": "server/helix-db.js",
+        "line": 206
+      },
+      {
+        "file": "server/helix-db.js",
+        "line": 218
+      },
+      {
+        "file": "server/helix-db.js",
+        "line": 230
+      },
+      {
+        "file": "server/helix-db.js",
+        "line": 246
+      },
+      {
+        "file": "server/helix-db.js",
+        "line": 256
+      },
+      {
+        "file": "server/helix-db.js",
+        "line": 264
+      },
+      {
+        "file": "server/helix-db.js",
+        "line": 279
+      },
+      {
+        "file": "server/helix-db.js",
+        "line": 292
+      },
+      {
+        "file": "server/helix-db.js",
+        "line": 308
+      },
+      {
+        "file": "server/helix-db.js",
+        "line": 317
+      },
+      {
+        "file": "server/helix-db.js",
+        "line": 331
+      },
+      {
+        "file": "server/helix-db.js",
+        "line": 339
+      },
+      {
+        "file": "server/helix-db.js",
+        "line": 351
+      },
+      {
+        "file": "server/helix-db.js",
+        "line": 362
+      },
+      {
+        "file": "server/helix-db.js",
+        "line": 372
+      },
+      {
+        "file": "server/helix-db.js",
+        "line": 391
+      },
+      {
+        "file": "server/helix-db.js",
+        "line": 403
+      },
+      {
+        "file": "server/helix-db.js",
+        "line": 418
+      },
+      {
+        "file": "server/helix-db.js",
+        "line": 433
+      },
+      {
+        "file": "server/helix-db.js",
+        "line": 445
+      },
+      {
+        "file": "server/helix-db.js",
+        "line": 456
+      },
+      {
+        "file": "server/helix-db.js",
+        "line": 474
+      },
+      {
+        "file": "server/helix-db.js",
+        "line": 490
+      },
+      {
+        "file": "server/helix-db.js",
+        "line": 505
+      },
+      {
+        "file": "server/helix-db.js",
+        "line": 523
+      },
+      {
+        "file": "server/helix-db.js",
+        "line": 532
+      },
+      {
+        "file": "server/helix-db.js",
+        "line": 536
+      },
+      {
+        "file": "server/helix-db.js",
+        "line": 545
+      },
+      {
+        "file": "server/helix-db.js",
+        "line": 556
+      },
+      {
+        "file": "server/helix-db.js",
+        "line": 572
+      },
+      {
+        "file": "server/helix-db.js",
+        "line": 583
+      },
+      {
+        "file": "server/helix-db.js",
+        "line": 587
+      },
+      {
+        "file": "server/helix-db.js",
+        "line": 608
+      },
+      {
+        "file": "server/helix-db.js",
+        "line": 609
+      },
+      {
+        "file": "server/helix-db.js",
+        "line": 610
+      },
+      {
+        "file": "server/helix-db.js",
+        "line": 611
+      },
+      {
+        "file": "server/helix-db.js",
+        "line": 612
+      },
+      {
+        "file": "server/helix-db.js",
+        "line": 613
+      },
+      {
+        "file": "server/helix-db.js",
+        "line": 618
+      },
+      {
+        "file": "server/helix-db.js",
+        "line": 633
+      },
+      {
+        "file": "server/helix-db.js",
+        "line": 638
+      },
+      {
+        "file": "server/helix-db.js",
+        "line": 640
+      },
+      {
+        "file": "server/helix-db.js",
+        "line": 642
+      },
+      {
+        "file": "server/helix-db.js",
+        "line": 650
+      },
+      {
+        "file": "server/helix-db.js",
+        "line": 655
+      },
+      {
+        "file": "server/helix-db.js",
+        "line": 662
+      },
+      {
+        "file": "server/helix-db.js",
+        "line": 667
+      },
+      {
+        "file": "server/helix-db.js",
+        "line": 671
+      },
+      {
+        "file": "server/helix-db.js",
+        "line": 674
+      },
+      {
+        "file": "server/helix-db.js",
+        "line": 677
+      },
+      {
+        "file": "server/helix-db.js",
+        "line": 683
+      },
+      {
+        "file": "server/helix-db.js",
+        "line": 688
+      },
+      {
+        "file": "server/helix-db.js",
+        "line": 689
+      },
+      {
+        "file": "server/helix-db.js",
+        "line": 693
+      },
+      {
+        "file": "server/helix-db.js",
+        "line": 698
+      },
+      {
+        "file": "server/helix-db.js",
+        "line": 702
+      },
+      {
+        "file": "server/helix-db.js",
+        "line": 704
+      },
+      {
+        "file": "server/helix-db.js",
+        "line": 711
+      },
+      {
+        "file": "server/helix-db.js",
+        "line": 717
+      },
+      {
+        "file": "server/helix-db.js",
+        "line": 718
+      },
+      {
+        "file": "server/helix-db.js",
+        "line": 722
+      },
+      {
+        "file": "server/helix-db.js",
+        "line": 723
+      },
+      {
+        "file": "server/helix-db.js",
+        "line": 726
+      },
+      {
+        "file": "server/helix-db.js",
+        "line": 727
+      },
+      {
+        "file": "server/helix-db.js",
+        "line": 732
+      },
+      {
+        "file": "server/helix-db.js",
+        "line": 739
+      },
+      {
+        "file": "server/helix-db.js",
+        "line": 740
+      },
+      {
+        "file": "server/helix-db.js",
+        "line": 745
+      },
+      {
+        "file": "server/helix-db.js",
+        "line": 748
+      },
+      {
+        "file": "server/helix-db.js",
+        "line": 750
+      },
+      {
+        "file": "server/helix-db.js",
+        "line": 751
+      },
+      {
+        "file": "server/helix-db.js",
+        "line": 753
+      },
+      {
+        "file": "server/helix-db.js",
+        "line": 757
+      },
+      {
+        "file": "server/helix-db.js",
+        "line": 759
+      },
+      {
+        "file": "server/helix-db.js",
+        "line": 764
+      },
+      {
+        "file": "server/helix-db.js",
+        "line": 766
+      },
+      {
+        "file": "server/helix-db.js",
+        "line": 769
+      },
+      {
+        "file": "server/helix-db.js",
+        "line": 773
+      },
+      {
+        "file": "server/helix-db.js",
+        "line": 774
+      },
+      {
+        "file": "server/helix-db.js",
+        "line": 776
+      },
+      {
+        "file": "server/helix-db.js",
+        "line": 780
+      },
+      {
+        "file": "server/helix-db.js",
+        "line": 784
+      },
+      {
+        "file": "server/helix-db.js",
+        "line": 789
+      },
+      {
+        "file": "server/helix-db.js",
+        "line": 790
+      },
+      {
+        "file": "server/helix-db.js",
+        "line": 793
+      },
+      {
+        "file": "server/helix-db.js",
+        "line": 796
+      },
+      {
+        "file": "server/helix-db.js",
+        "line": 800
+      },
+      {
+        "file": "server/helix-db.js",
+        "line": 802
+      },
+      {
+        "file": "server/helix-db.js",
+        "line": 807
+      },
+      {
+        "file": "server/helix-db.js",
+        "line": 812
+      },
+      {
+        "file": "server/helix-db.js",
+        "line": 822
+      },
+      {
+        "file": "server/helix-db.js",
+        "line": 827
+      },
+      {
+        "file": "server/helix-db.js",
+        "line": 832
+      },
+      {
+        "file": "server/helix-db.js",
+        "line": 836
+      },
+      {
+        "file": "server/helix-db.js",
+        "line": 840
+      },
+      {
+        "file": "server/helix-db.js",
+        "line": 846
+      },
+      {
+        "file": "server/helix-db.js",
+        "line": 849
+      },
+      {
+        "file": "server/helix-db.js",
+        "line": 962
+      },
+      {
+        "file": "server/helix-db.js",
+        "line": 1585
+      },
+      {
+        "file": "server/helix-db.js",
+        "line": 1610
+      },
+      {
+        "file": "server/helix-db.js",
+        "line": 1619
+      },
+      {
+        "file": "server/helix-substrate.js",
+        "line": 52
+      },
+      {
+        "file": "server/helix-substrate.js",
+        "line": 58
+      },
+      {
+        "file": "server/helix-substrate.js",
+        "line": 75
+      },
+      {
+        "file": "server/helix-substrate.js",
+        "line": 108
+      },
+      {
+        "file": "server/helix-substrate.js",
+        "line": 142
+      },
+      {
+        "file": "server/helix-substrate.js",
+        "line": 172
+      },
+      {
+        "file": "server/helix-substrate.js",
+        "line": 192
+      },
+      {
+        "file": "server/helix-substrate.js",
+        "line": 215
+      },
+      {
+        "file": "server/helix-substrate.js",
+        "line": 240
+      },
+      {
+        "file": "server/helix-substrate.js",
+        "line": 281
+      },
+      {
+        "file": "server/helix-substrate.js",
+        "line": 298
+      },
+      {
+        "file": "server/helix-substrate.js",
+        "line": 320
+      },
+      {
+        "file": "server/helix-substrate.js",
+        "line": 348
+      },
+      {
+        "file": "server/helix-substrate.js",
+        "line": 370
+      },
+      {
+        "file": "server/helix-substrate.js",
+        "line": 386
+      },
+      {
+        "file": "server/helix-substrate.js",
+        "line": 424
+      },
+      {
+        "file": "server/helix-substrate.js",
+        "line": 438
+      },
+      {
+        "file": "server/helix-substrate.js",
+        "line": 452
+      },
+      {
+        "file": "server/helix-substrate.js",
+        "line": 473
+      },
+      {
+        "file": "server/helix-substrate.js",
+        "line": 500
+      },
+      {
+        "file": "server/helix-substrate.js",
+        "line": 531
+      },
+      {
+        "file": "server/helix-substrate.js",
+        "line": 563
+      },
+      {
+        "file": "server/helix-substrate.js",
+        "line": 590
+      },
+      {
+        "file": "server/helix-substrate.js",
+        "line": 611
+      },
+      {
+        "file": "server/helix-substrate.js",
+        "line": 631
+      },
+      {
+        "file": "server/helix-substrate.js",
+        "line": 654
+      },
+      {
+        "file": "server/helix-substrate.js",
+        "line": 674
+      },
+      {
+        "file": "server/helix-substrate.js",
+        "line": 683
+      },
+      {
+        "file": "server/helix-substrate.js",
+        "line": 710
+      },
+      {
+        "file": "server/helix-substrate.js",
+        "line": 717
+      },
+      {
+        "file": "server/helix-substrate.js",
+        "line": 718
+      },
+      {
+        "file": "server/helix-substrate.js",
+        "line": 725
+      },
+      {
+        "file": "server/helix-substrate.js",
+        "line": 729
+      },
+      {
+        "file": "server/helix-substrate.js",
+        "line": 732
+      },
+      {
+        "file": "server/helix-substrate.js",
+        "line": 739
+      },
+      {
+        "file": "server/helix-substrate.js",
+        "line": 746
+      },
+      {
+        "file": "server/helix-substrate.js",
+        "line": 753
+      },
+      {
+        "file": "server/helix-substrate.js",
+        "line": 757
+      },
+      {
+        "file": "server/helix-substrate.js",
+        "line": 762
+      },
+      {
+        "file": "server/helix-substrate.js",
+        "line": 768
+      },
+      {
+        "file": "server/helix-substrate.js",
+        "line": 775
+      },
+      {
+        "file": "server/helix-substrate.js",
+        "line": 783
+      },
+      {
+        "file": "server/helix-substrate.js",
+        "line": 790
+      },
+      {
+        "file": "server/helix-substrate.js",
+        "line": 791
+      },
+      {
+        "file": "server/helix-substrate.js",
+        "line": 793
+      },
+      {
+        "file": "server/helix-substrate.js",
+        "line": 796
+      },
+      {
+        "file": "server/helix-substrate.js",
+        "line": 799
+      },
+      {
+        "file": "server/helix-substrate.js",
+        "line": 803
+      },
+      {
+        "file": "server/local-file-access.js",
+        "line": 75
+      },
+      {
+        "file": "server/local-file-access.js",
+        "line": 94
+      },
+      {
+        "file": "server/local-file-access.js",
+        "line": 110
+      },
+      {
+        "file": "server/local-file-access.js",
+        "line": 136
+      },
+      {
+        "file": "server/local-file-access.js",
+        "line": 219
+      },
+      {
+        "file": "server/local-file-access.js",
+        "line": 245
+      },
+      {
+        "file": "server/local-file-access.js",
+        "line": 386
+      },
+      {
+        "file": "server/local-file-access.js",
+        "line": 447
+      },
+      {
+        "file": "server/memory-decay.js",
+        "line": 40
+      },
+      {
+        "file": "server/memory-governance.js",
+        "line": 83
+      },
+      {
+        "file": "server/memory-governance.js",
+        "line": 103
+      },
+      {
+        "file": "server/memory-governance.js",
+        "line": 127
+      },
+      {
+        "file": "server/memory-governance.js",
+        "line": 146
+      },
+      {
+        "file": "server/memory-governance.js",
+        "line": 165
+      },
+      {
+        "file": "server/memory-governance.js",
+        "line": 233
+      },
+      {
+        "file": "server/memory-governance.js",
+        "line": 271
+      },
+      {
+        "file": "server/memory-governance.js",
+        "line": 361
+      },
+      {
+        "file": "server/memory-governance.js",
+        "line": 416
+      },
+      {
+        "file": "server/memory-governance.js",
+        "line": 446
+      },
+      {
+        "file": "server/memory-manager.js",
+        "line": 100
+      },
+      {
+        "file": "server/memory-manager.js",
+        "line": 107
+      },
+      {
+        "file": "server/memory-manager.js",
+        "line": 214
+      },
+      {
+        "file": "server/memory-manager.js",
+        "line": 217
+      },
+      {
+        "file": "server/memory-store.js",
+        "line": 24
+      },
+      {
+        "file": "server/memory-store.js",
+        "line": 41
+      },
+      {
+        "file": "server/memory-store.js",
+        "line": 47
+      },
+      {
+        "file": "server/memory-store.js",
+        "line": 54
+      },
+      {
+        "file": "server/memory-store.js",
+        "line": 61
+      },
+      {
+        "file": "server/memory-store.js",
+        "line": 72
+      },
+      {
+        "file": "server/memory-store.js",
+        "line": 78
+      },
+      {
+        "file": "server/memory-store.js",
+        "line": 251
+      },
+      {
+        "file": "server/memory-store.js",
+        "line": 261
+      },
+      {
+        "file": "server/memory-vectors.js",
+        "line": 28
+      },
+      {
+        "file": "server/memory-vectors.js",
+        "line": 31
+      },
+      {
+        "file": "server/mission-engine.js",
+        "line": 65
+      },
+      {
+        "file": "server/mission-engine.js",
+        "line": 85
+      },
+      {
+        "file": "server/mission-engine.js",
+        "line": 97
+      },
+      {
+        "file": "server/mission-engine.js",
+        "line": 104
+      },
+      {
+        "file": "server/mission-engine.js",
+        "line": 180
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 171
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 196
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 209
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 217
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 230
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 243
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 257
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 270
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 285
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 300
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 313
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 325
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 335
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 345
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 359
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 375
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 388
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 403
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 429
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 443
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 464
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 479
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 499
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 516
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 527
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 550
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 564
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 584
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 598
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 614
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 630
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 645
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 659
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 670
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 683
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 698
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 710
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 722
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 740
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 751
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 763
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 779
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 792
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 803
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 815
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 829
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 843
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 856
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 895
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 905
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 924
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 942
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 955
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 968
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 988
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 1002
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 1044
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 1045
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 1046
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 1047
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 1048
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 1049
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 1050
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 1051
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 1063
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 1070
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 1215
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 1243
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 1244
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 1304
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 1331
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 1391
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 1395
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 1526
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 1608
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 1646
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 1730
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 1992
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 2030
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 2142
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 2328
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 2364
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 2407
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 2472
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 2490
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 2627
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 2668
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 2714
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 2742
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 2753
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 2766
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 2819
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 2844
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 2888
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 2924
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 2935
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 2946
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 2973
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 2984
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 2995
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 3006
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 3017
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 3028
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 3148
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 3185
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 3203
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 3218
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 3224
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 3225
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 3272
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 3421
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 3422
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 3466
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 3549
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 3620
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 3720
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 3769
+      },
+      {
+        "file": "server/pc-activity-graph.js",
+        "line": 15
+      },
+      {
+        "file": "server/pc-knowledge-graph.js",
+        "line": 90
+      },
+      {
+        "file": "server/pc-knowledge-graph.js",
+        "line": 104
+      },
+      {
+        "file": "server/pc-knowledge-graph.js",
+        "line": 113
+      },
+      {
+        "file": "server/pc-knowledge-graph.js",
+        "line": 131
+      },
+      {
+        "file": "server/pc-knowledge-graph.js",
+        "line": 145
+      },
+      {
+        "file": "server/pc-knowledge-graph.js",
+        "line": 247
+      },
+      {
+        "file": "server/skill-autopilot.js",
+        "line": 99
+      },
+      {
+        "file": "server/skill-autopilot.js",
+        "line": 111
+      },
+      {
+        "file": "server/skill-autopilot.js",
+        "line": 166
+      },
+      {
+        "file": "server/skill-autopilot.js",
+        "line": 232
+      },
+      {
+        "file": "server/task-to-skill.js",
+        "line": 55
+      },
+      {
+        "file": "server/task-to-skill.js",
+        "line": 272
+      },
+      {
+        "file": "server/user-context.js",
+        "line": 29
+      },
+      {
+        "file": "server/user-context.js",
+        "line": 35
+      },
+      {
+        "file": "server/user-context.js",
+        "line": 39
+      },
+      {
+        "file": "server/user-context.js",
+        "line": 45
+      },
+      {
+        "file": "server/user-context.js",
+        "line": 51
+      },
+      {
+        "file": "server/user-context.js",
+        "line": 54
+      },
+      {
+        "file": "server/user-context.js",
+        "line": 59
+      },
+      {
+        "file": "server/user-context.js",
+        "line": 64
+      },
+      {
+        "file": "server/user-context.js",
+        "line": 70
+      },
+      {
+        "file": "server/user-context.js",
+        "line": 75
+      },
+      {
+        "file": "server/user-context.js",
+        "line": 79
+      },
+      {
+        "file": "server/user-context.js",
+        "line": 83
+      },
+      {
+        "file": "server/user-context.js",
+        "line": 87
+      },
+      {
+        "file": "server/user-context.js",
+        "line": 92
+      },
+      {
+        "file": "server/user-context.js",
+        "line": 96
+      },
+      {
+        "file": "server/user-context.js",
+        "line": 100
+      },
+      {
+        "file": "server/user-context.js",
+        "line": 104
+      },
+      {
+        "file": "server/user-context.js",
+        "line": 107
+      },
+      {
+        "file": "server/user-context.js",
+        "line": 111
+      },
+      {
+        "file": "server/user-context.js",
+        "line": 120
+      },
+      {
+        "file": "server/user-context.js",
+        "line": 124
+      },
+      {
+        "file": "server/user-context.js",
+        "line": 126
+      },
+      {
+        "file": "server/user-context.js",
+        "line": 129
+      },
+      {
+        "file": "server/user-context.js",
+        "line": 143
+      },
+      {
+        "file": "server/user-context.js",
+        "line": 156
+      },
+      {
+        "file": "server/user-context.js",
+        "line": 166
+      },
+      {
+        "file": "server/user-context.js",
+        "line": 175
+      },
+      {
+        "file": "server/user-context.js",
+        "line": 179
+      },
+      {
+        "file": "server/eclipse/orchestration/store.js",
+        "line": 17
+      },
+      {
+        "file": "server/eclipse/orchestration/store.js",
+        "line": 27
+      },
+      {
+        "file": "server/eclipse/memory/curator.js",
+        "line": 45
+      },
+      {
+        "file": "server/eclipse/evidence/store.js",
+        "line": 11
+      },
+      {
+        "file": "server/eclipse/evidence/store.js",
+        "line": 15
+      },
+      {
+        "file": "server/eclipse/evidence/store.js",
+        "line": 18
+      },
+      {
+        "file": "server/eclipse/evals/test-contracts.js",
+        "line": 84
+      },
+      {
+        "file": "server/eclipse/evals/test-foundry.js",
+        "line": 75
+      },
+      {
+        "file": "server/eclipse/db/migrations.js",
+        "line": 4
+      },
+      {
+        "file": "server/eclipse/db/migrations.js",
+        "line": 12
+      },
+      {
+        "file": "server/eclipse/db/migrations.js",
+        "line": 15
+      },
+      {
+        "file": "server/eclipse/db/migrations.js",
+        "line": 34
+      },
+      {
+        "file": "server/eclipse/db/migrations.js",
+        "line": 43
+      },
+      {
+        "file": "server/eclipse/db/migrations.js",
+        "line": 58
+      },
+      {
+        "file": "server/eclipse/db/migrations.js",
+        "line": 69
+      },
+      {
+        "file": "server/eclipse/db/migrations.js",
+        "line": 81
+      },
+      {
+        "file": "server/eclipse/db/migrations.js",
+        "line": 90
+      },
+      {
+        "file": "server/eclipse/db/migrations.js",
+        "line": 96
+      },
+      {
+        "file": "server/eclipse/db/migrations.js",
+        "line": 106
+      },
+      {
+        "file": "server/eclipse/db/migrations.js",
+        "line": 118
+      },
+      {
+        "file": "server/eclipse/db/migrations.js",
+        "line": 134
+      },
+      {
+        "file": "server/eclipse/db/migrations.js",
+        "line": 146
+      },
+      {
+        "file": "server/eclipse/db/migrations.js",
+        "line": 170
+      },
+      {
+        "file": "server/eclipse/db/migrations.js",
+        "line": 184
+      },
+      {
+        "file": "server/eclipse/agents/reputation.js",
+        "line": 13
+      },
+      {
+        "file": "server/arbiter/arbiter-db.js",
+        "line": 15
+      },
+      {
+        "file": "server/arbiter/arbiter-db.js",
+        "line": 48
+      },
+      {
+        "file": "server/arbiter/arbiter-db.js",
+        "line": 58
+      },
+      {
+        "file": "server/apex/apex-bots.js",
+        "line": 140
+      },
+      {
+        "file": "server/apex/apex-bots.js",
+        "line": 145
+      },
+      {
+        "file": "server/apex/apex-bots.js",
+        "line": 151
+      },
+      {
+        "file": "server/apex/apex-bots.js",
+        "line": 157
+      },
+      {
+        "file": "server/apex/apex-bots.js",
+        "line": 163
+      },
+      {
+        "file": "server/apex/apex-bots.js",
+        "line": 164
+      },
+      {
+        "file": "server/apex/apex-bots.js",
+        "line": 165
+      },
+      {
+        "file": "server/apex/apex-paper.js",
+        "line": 33
+      },
+      {
+        "file": "server/apex/apex-paper.js",
+        "line": 36
+      },
+      {
+        "file": "server/apex/apex-paper.js",
+        "line": 40
+      },
+      {
+        "file": "server/apex/apex-paper.js",
+        "line": 43
+      },
+      {
+        "file": "server/apex/apex-paper.js",
+        "line": 46
+      },
+      {
+        "file": "server/apex/apex-paper.js",
+        "line": 49
+      },
+      {
+        "file": "server/apex/apex-paper.js",
+        "line": 60
+      },
+      {
+        "file": "server/apex/apex-paper.js",
+        "line": 63
+      },
+      {
+        "file": "server/apex/apex-paper.js",
+        "line": 64
+      },
+      {
+        "file": "server/apex/apex-paper.js",
+        "line": 71
+      },
+      {
+        "file": "server/apex/apex-paper.js",
+        "line": 73
+      },
+      {
+        "file": "server/apex/apex-paper.js",
+        "line": 78
+      },
+      {
+        "file": "server/apex/apex-paper.js",
+        "line": 82
+      },
+      {
+        "file": "server/apex/predict/store.js",
+        "line": 11
+      },
+      {
+        "file": "server/apex/predict/store.js",
+        "line": 23
+      },
+      {
+        "file": "server/apex/predict/store.js",
+        "line": 29
+      },
+      {
+        "file": "server/apex/predict/store.js",
+        "line": 37
+      },
+      {
+        "file": "server/apex/predict/store.js",
+        "line": 42
+      },
+      {
+        "file": "server/apex/predict/store.js",
+        "line": 45
+      },
+      {
+        "file": "server/apex/predict/store.js",
+        "line": 54
+      },
+      {
+        "file": "server/apex/predict/store.js",
+        "line": 59
+      },
+      {
+        "file": "server/apex/predict/store.js",
+        "line": 64
+      },
+      {
+        "file": "server/apex/predict/store.js",
+        "line": 71
+      },
+      {
+        "file": "server/apex/predict/store.js",
+        "line": 75
+      },
+      {
+        "file": "scripts/post-repair-recheck.mjs",
+        "line": 112
+      },
+      {
+        "file": "scripts/post-repair-recheck.mjs",
+        "line": 229
+      }
+    ],
+    "legacyMemoryStore": [
+      {
+        "file": "server.js",
+        "line": 15
+      },
+      {
+        "file": "server.js",
+        "line": 167
+      },
+      {
+        "file": "server.js",
+        "line": 1423
+      },
+      {
+        "file": "server.js",
+        "line": 1507
+      },
+      {
+        "file": "server.js",
+        "line": 1566
+      },
+      {
+        "file": "server.js",
+        "line": 1605
+      },
+      {
+        "file": "server.js",
+        "line": 1842
+      },
+      {
+        "file": "server.js",
+        "line": 1943
+      },
+      {
+        "file": "server.js",
+        "line": 1944
+      },
+      {
+        "file": "server.js",
+        "line": 3156
+      },
+      {
+        "file": "server.js",
+        "line": 3673
+      },
+      {
+        "file": "server.js",
+        "line": 3674
+      },
+      {
+        "file": "server.js",
+        "line": 3960
+      },
+      {
+        "file": "server.js",
+        "line": 3961
+      },
+      {
+        "file": "server.js",
+        "line": 6795
+      },
+      {
+        "file": "server.js",
+        "line": 10147
+      },
+      {
+        "file": "server.js",
+        "line": 10154
+      },
+      {
+        "file": "server.js",
+        "line": 10155
+      },
+      {
+        "file": "server.js",
+        "line": 10162
+      },
+      {
+        "file": "server.js",
+        "line": 10168
+      },
+      {
+        "file": "server.js",
+        "line": 10174
+      },
+      {
+        "file": "server.js",
+        "line": 10181
+      },
+      {
+        "file": "server.js",
+        "line": 11752
+      },
+      {
+        "file": "server.js",
+        "line": 11753
+      },
+      {
+        "file": "server.js",
+        "line": 11779
+      },
+      {
+        "file": "server.js",
+        "line": 11783
+      },
+      {
+        "file": "server.js",
+        "line": 11784
+      },
+      {
+        "file": "server.js",
+        "line": 11785
+      },
+      {
+        "file": "server.js",
+        "line": 11849
+      },
+      {
+        "file": "server.js",
+        "line": 11889
+      },
+      {
+        "file": "server.js",
+        "line": 12139
+      },
+      {
+        "file": "stress-test-2.js",
+        "line": 69
+      },
+      {
+        "file": "stress-test-2.js",
+        "line": 71
+      },
+      {
+        "file": "tests/backend/advanced-core.test.js",
+        "line": 8
+      },
+      {
+        "file": "tests/backend/advanced-core.test.js",
+        "line": 60
+      },
+      {
+        "file": "tests/backend/advanced-core.test.js",
+        "line": 118
+      },
+      {
+        "file": "tests/backend/advanced-core.test.js",
+        "line": 121
+      },
+      {
+        "file": "tests/backend/jarvis-intelligence.test.js",
+        "line": 9
+      },
+      {
+        "file": "tests/backend/jarvis-intelligence.test.js",
+        "line": 38
+      },
+      {
+        "file": "tests/backend/jarvis-intelligence.test.js",
+        "line": 219
+      },
+      {
+        "file": "tests/backend/jarvis-intelligence.test.js",
+        "line": 249
+      },
+      {
+        "file": "tests/backend/jarvis-intelligence.test.js",
+        "line": 269
+      },
+      {
+        "file": "tests/backend/jarvis-intelligence.test.js",
+        "line": 286
+      },
+      {
+        "file": "tests/backend/jarvis-intelligence.test.js",
+        "line": 303
+      },
+      {
+        "file": "tests/backend/jarvis-intelligence.test.js",
+        "line": 322
+      },
+      {
+        "file": "tests/backend/jarvis-intelligence.test.js",
+        "line": 342
+      },
+      {
+        "file": "tests/backend/jarvis-personality-memory.test.js",
+        "line": 13
+      },
+      {
+        "file": "tests/backend/jarvis-personality-memory.test.js",
+        "line": 18
+      },
+      {
+        "file": "tests/backend/jarvis-personality-memory.test.js",
+        "line": 21
+      },
+      {
+        "file": "tests/backend/jarvis-personality-memory.test.js",
+        "line": 58
+      },
+      {
+        "file": "tests/backend/jarvis-personality-memory.test.js",
+        "line": 80
+      },
+      {
+        "file": "tests/backend/jarvis-personality-memory.test.js",
+        "line": 104
+      },
+      {
+        "file": "tests/backend/latency-reliability.test.js",
+        "line": 24
+      },
+      {
+        "file": "tests/backend/latency-reliability.test.js",
+        "line": 230
+      },
+      {
+        "file": "server/agent-runtime.js",
+        "line": 8
+      },
+      {
+        "file": "server/agent-runtime.js",
+        "line": 249
+      },
+      {
+        "file": "server/capability-engine.js",
+        "line": 105
+      },
+      {
+        "file": "server/capability-engine.js",
+        "line": 1411
+      },
+      {
+        "file": "server/capability-engine.js",
+        "line": 1412
+      },
+      {
+        "file": "server/capability-engine.js",
+        "line": 1420
+      },
+      {
+        "file": "server/capability-engine.js",
+        "line": 1421
+      },
+      {
+        "file": "server/capability-engine.js",
+        "line": 1431
+      },
+      {
+        "file": "server/capability-engine.js",
+        "line": 1745
+      },
+      {
+        "file": "server/code-knowledge.js",
+        "line": 265
+      },
+      {
+        "file": "server/memory-decay.js",
+        "line": 57
+      },
+      {
+        "file": "server/memory-extractor.js",
+        "line": 29
+      },
+      {
+        "file": "server/memory-extractor.js",
+        "line": 34
+      },
+      {
+        "file": "server/memory-extractor.js",
+        "line": 100
+      },
+      {
+        "file": "server/memory-full-test.js",
+        "line": 6
+      },
+      {
+        "file": "server/memory-full-test.js",
+        "line": 43
+      },
+      {
+        "file": "server/memory-full-test.js",
+        "line": 58
+      },
+      {
+        "file": "server/memory-full-test.js",
+        "line": 160
+      },
+      {
+        "file": "server/memory-full-test.js",
+        "line": 163
+      },
+      {
+        "file": "server/memory-full-test.js",
+        "line": 207
+      },
+      {
+        "file": "server/memory-full-test.js",
+        "line": 209
+      },
+      {
+        "file": "server/memory-manager.js",
+        "line": 253
+      },
+      {
+        "file": "server/memory-store.js",
+        "line": 15
+      },
+      {
+        "file": "server/memory-store.js",
+        "line": 437
+      },
+      {
+        "file": "server/smoke-tests.js",
+        "line": 46
+      },
+      {
+        "file": "server/smoke-tests.js",
+        "line": 47
+      },
+      {
+        "file": "server/smoke-tests.js",
+        "line": 48
+      },
+      {
+        "file": "server/smoke-tests.js",
+        "line": 50
+      },
+      {
+        "file": "server/smoke-tests.js",
+        "line": 51
+      },
+      {
+        "file": "server/smoke-tests.js",
+        "line": 55
+      },
+      {
+        "file": "server/smoke-tests.js",
+        "line": 67
+      },
+      {
+        "file": "scripts/jarvis-actions-memory-check.mjs",
+        "line": 107
+      },
+      {
+        "file": "scripts/memory-vnext-wave1-audit.mjs",
+        "line": 19
+      },
+      {
+        "file": "scripts/memory-vnext-wave1-audit.mjs",
+        "line": 225
+      }
+    ],
+    "neuralVault": [
+      {
+        "file": "check-prefs-w1.js",
+        "line": 2
+      },
+      {
+        "file": "live-test.js",
+        "line": 58
+      },
+      {
+        "file": "live-test.js",
+        "line": 70
+      },
+      {
+        "file": "live-test.js",
+        "line": 117
+      },
+      {
+        "file": "live-test.js",
+        "line": 126
+      },
+      {
+        "file": "live-test.js",
+        "line": 141
+      },
+      {
+        "file": "live-test.js",
+        "line": 154
+      },
+      {
+        "file": "live-test.js",
+        "line": 166
+      },
+      {
+        "file": "server.js",
+        "line": 22
+      },
+      {
+        "file": "server.js",
+        "line": 175
+      },
+      {
+        "file": "server.js",
+        "line": 553
+      },
+      {
+        "file": "server.js",
+        "line": 555
+      },
+      {
+        "file": "server.js",
+        "line": 1424
+      },
+      {
+        "file": "server.js",
+        "line": 1445
+      },
+      {
+        "file": "server.js",
+        "line": 1493
+      },
+      {
+        "file": "server.js",
+        "line": 1496
+      },
+      {
+        "file": "server.js",
+        "line": 1497
+      },
+      {
+        "file": "server.js",
+        "line": 1501
+      },
+      {
+        "file": "server.js",
+        "line": 1545
+      },
+      {
+        "file": "server.js",
+        "line": 1564
+      },
+      {
+        "file": "server.js",
+        "line": 1584
+      },
+      {
+        "file": "server.js",
+        "line": 1596
+      },
+      {
+        "file": "server.js",
+        "line": 1604
+      },
+      {
+        "file": "server.js",
+        "line": 1619
+      },
+      {
+        "file": "server.js",
+        "line": 1634
+      },
+      {
+        "file": "server.js",
+        "line": 1651
+      },
+      {
+        "file": "server.js",
+        "line": 1666
+      },
+      {
+        "file": "server.js",
+        "line": 1682
+      },
+      {
+        "file": "server.js",
+        "line": 1683
+      },
+      {
+        "file": "server.js",
+        "line": 1706
+      },
+      {
+        "file": "server.js",
+        "line": 1716
+      },
+      {
+        "file": "server.js",
+        "line": 1718
+      },
+      {
+        "file": "server.js",
+        "line": 1732
+      },
+      {
+        "file": "server.js",
+        "line": 1756
+      },
+      {
+        "file": "server.js",
+        "line": 1788
+      },
+      {
+        "file": "server.js",
+        "line": 1803
+      },
+      {
+        "file": "server.js",
+        "line": 1820
+      },
+      {
+        "file": "server.js",
+        "line": 1843
+      },
+      {
+        "file": "server.js",
+        "line": 2549
+      },
+      {
+        "file": "server.js",
+        "line": 2832
+      },
+      {
+        "file": "server.js",
+        "line": 3016
+      },
+      {
+        "file": "server.js",
+        "line": 3018
+      },
+      {
+        "file": "server.js",
+        "line": 3068
+      },
+      {
+        "file": "server.js",
+        "line": 3069
+      },
+      {
+        "file": "server.js",
+        "line": 3081
+      },
+      {
+        "file": "server.js",
+        "line": 4653
+      },
+      {
+        "file": "server.js",
+        "line": 5144
+      },
+      {
+        "file": "server.js",
+        "line": 5153
+      },
+      {
+        "file": "server.js",
+        "line": 5223
+      },
+      {
+        "file": "server.js",
+        "line": 5234
+      },
+      {
+        "file": "server.js",
+        "line": 5340
+      },
+      {
+        "file": "server.js",
+        "line": 5409
+      },
+      {
+        "file": "server.js",
+        "line": 5448
+      },
+      {
+        "file": "server.js",
+        "line": 5542
+      },
+      {
+        "file": "server.js",
+        "line": 5832
+      },
+      {
+        "file": "server.js",
+        "line": 6556
+      },
+      {
+        "file": "server.js",
+        "line": 6586
+      },
+      {
+        "file": "server.js",
+        "line": 9857
+      },
+      {
+        "file": "server.js",
+        "line": 9862
+      },
+      {
+        "file": "server.js",
+        "line": 9863
+      },
+      {
+        "file": "server.js",
+        "line": 9868
+      },
+      {
+        "file": "server.js",
+        "line": 9871
+      },
+      {
+        "file": "server.js",
+        "line": 9872
+      },
+      {
+        "file": "server.js",
+        "line": 9873
+      },
+      {
+        "file": "server.js",
+        "line": 9984
+      },
+      {
+        "file": "server.js",
+        "line": 9985
+      },
+      {
+        "file": "server.js",
+        "line": 9992
+      },
+      {
+        "file": "server.js",
+        "line": 9993
+      },
+      {
+        "file": "server.js",
+        "line": 9997
+      },
+      {
+        "file": "server.js",
+        "line": 9999
+      },
+      {
+        "file": "server.js",
+        "line": 10003
+      },
+      {
+        "file": "server.js",
+        "line": 10004
+      },
+      {
+        "file": "server.js",
+        "line": 10009
+      },
+      {
+        "file": "server.js",
+        "line": 10010
+      },
+      {
+        "file": "server.js",
+        "line": 10013
+      },
+      {
+        "file": "server.js",
+        "line": 10027
+      },
+      {
+        "file": "server.js",
+        "line": 10028
+      },
+      {
+        "file": "server.js",
+        "line": 10039
+      },
+      {
+        "file": "server.js",
+        "line": 10040
+      },
+      {
+        "file": "server.js",
+        "line": 10044
+      },
+      {
+        "file": "server.js",
+        "line": 10046
+      },
+      {
+        "file": "server.js",
+        "line": 10062
+      },
+      {
+        "file": "server.js",
+        "line": 10063
+      },
+      {
+        "file": "server.js",
+        "line": 10067
+      },
+      {
+        "file": "server.js",
+        "line": 10071
+      },
+      {
+        "file": "server.js",
+        "line": 10072
+      },
+      {
+        "file": "server.js",
+        "line": 10075
+      },
+      {
+        "file": "server.js",
+        "line": 10081
+      },
+      {
+        "file": "server.js",
+        "line": 10082
+      },
+      {
+        "file": "server.js",
+        "line": 10085
+      },
+      {
+        "file": "server.js",
+        "line": 10090
+      },
+      {
+        "file": "server.js",
+        "line": 10091
+      },
+      {
+        "file": "server.js",
+        "line": 10095
+      },
+      {
+        "file": "server.js",
+        "line": 10097
+      },
+      {
+        "file": "server.js",
+        "line": 10105
+      },
+      {
+        "file": "server.js",
+        "line": 10106
+      },
+      {
+        "file": "server.js",
+        "line": 10110
+      },
+      {
+        "file": "server.js",
+        "line": 10111
+      },
+      {
+        "file": "server.js",
+        "line": 10115
+      },
+      {
+        "file": "server.js",
+        "line": 10116
+      },
+      {
+        "file": "server.js",
+        "line": 10120
+      },
+      {
+        "file": "server.js",
+        "line": 10121
+      },
+      {
+        "file": "server.js",
+        "line": 10128
+      },
+      {
+        "file": "server.js",
+        "line": 10130
+      },
+      {
+        "file": "server.js",
+        "line": 10131
+      },
+      {
+        "file": "server.js",
+        "line": 10132
+      },
+      {
+        "file": "server.js",
+        "line": 10137
+      },
+      {
+        "file": "server.js",
+        "line": 10138
+      },
+      {
+        "file": "server.js",
+        "line": 10142
+      },
+      {
+        "file": "server.js",
+        "line": 10143
+      },
+      {
+        "file": "server.js",
+        "line": 10254
+      },
+      {
+        "file": "server.js",
+        "line": 10260
+      },
+      {
+        "file": "server.js",
+        "line": 10265
+      },
+      {
+        "file": "server.js",
+        "line": 10270
+      },
+      {
+        "file": "server.js",
+        "line": 10276
+      },
+      {
+        "file": "server.js",
+        "line": 10281
+      },
+      {
+        "file": "server.js",
+        "line": 10286
+      },
+      {
+        "file": "server.js",
+        "line": 10291
+      },
+      {
+        "file": "server.js",
+        "line": 10297
+      },
+      {
+        "file": "server.js",
+        "line": 10302
+      },
+      {
+        "file": "server.js",
+        "line": 10307
+      },
+      {
+        "file": "server.js",
+        "line": 10486
+      },
+      {
+        "file": "server.js",
+        "line": 10491
+      },
+      {
+        "file": "server.js",
+        "line": 10501
+      },
+      {
+        "file": "server.js",
+        "line": 10521
+      },
+      {
+        "file": "server.js",
+        "line": 10538
+      },
+      {
+        "file": "server.js",
+        "line": 10555
+      },
+      {
+        "file": "server.js",
+        "line": 10556
+      },
+      {
+        "file": "server.js",
+        "line": 10557
+      },
+      {
+        "file": "server.js",
+        "line": 10617
+      },
+      {
+        "file": "server.js",
+        "line": 10656
+      },
+      {
+        "file": "server.js",
+        "line": 10691
+      },
+      {
+        "file": "server.js",
+        "line": 10709
+      },
+      {
+        "file": "server.js",
+        "line": 10776
+      },
+      {
+        "file": "server.js",
+        "line": 10790
+      },
+      {
+        "file": "server.js",
+        "line": 10798
+      },
+      {
+        "file": "server.js",
+        "line": 10803
+      },
+      {
+        "file": "server.js",
+        "line": 10809
+      },
+      {
+        "file": "server.js",
+        "line": 10819
+      },
+      {
+        "file": "server.js",
+        "line": 10824
+      },
+      {
+        "file": "server.js",
+        "line": 10831
+      },
+      {
+        "file": "server.js",
+        "line": 10838
+      },
+      {
+        "file": "server.js",
+        "line": 10839
+      },
+      {
+        "file": "server.js",
+        "line": 10847
+      },
+      {
+        "file": "server.js",
+        "line": 10852
+      },
+      {
+        "file": "server.js",
+        "line": 10876
+      },
+      {
+        "file": "server.js",
+        "line": 10940
+      },
+      {
+        "file": "server.js",
+        "line": 11042
+      },
+      {
+        "file": "server.js",
+        "line": 11757
+      },
+      {
+        "file": "server.js",
+        "line": 11762
+      },
+      {
+        "file": "server.js",
+        "line": 11763
+      },
+      {
+        "file": "server.js",
+        "line": 11771
+      },
+      {
+        "file": "server.js",
+        "line": 11772
+      },
+      {
+        "file": "server.js",
+        "line": 11779
+      },
+      {
+        "file": "server.js",
+        "line": 11781
+      },
+      {
+        "file": "server.js",
+        "line": 11783
+      },
+      {
+        "file": "server.js",
+        "line": 11788
+      },
+      {
+        "file": "server.js",
+        "line": 11789
+      },
+      {
+        "file": "server.js",
+        "line": 11807
+      },
+      {
+        "file": "server.js",
+        "line": 11811
+      },
+      {
+        "file": "server.js",
+        "line": 11817
+      },
+      {
+        "file": "server.js",
+        "line": 11829
+      },
+      {
+        "file": "server.js",
+        "line": 11873
+      },
+      {
+        "file": "server.js",
+        "line": 11964
+      },
+      {
+        "file": "server.js",
+        "line": 12049
+      },
+      {
+        "file": "server.js",
+        "line": 12135
+      },
+      {
+        "file": "stress-test-1.js",
+        "line": 49
+      },
+      {
+        "file": "stress-test-1.js",
+        "line": 105
+      },
+      {
+        "file": "stress-test-1.js",
+        "line": 113
+      },
+      {
+        "file": "stress-test-2.js",
+        "line": 40
+      },
+      {
+        "file": "stress-test-2.js",
+        "line": 41
+      },
+      {
+        "file": "stress-test-2.js",
+        "line": 60
+      },
+      {
+        "file": "stress-test-2.js",
+        "line": 70
+      },
+      {
+        "file": "stress-test-2.js",
+        "line": 77
+      },
+      {
+        "file": "stress-test-2.js",
+        "line": 93
+      },
+      {
+        "file": "stress-test-2.js",
+        "line": 172
+      },
+      {
+        "file": "stress-test-2.js",
+        "line": 173
+      },
+      {
+        "file": "stress-test-3.js",
+        "line": 77
+      },
+      {
+        "file": "stress-test-3.js",
+        "line": 88
+      },
+      {
+        "file": "stress-test-3.js",
+        "line": 92
+      },
+      {
+        "file": "stress-test-3.js",
+        "line": 104
+      },
+      {
+        "file": "stress-test-3.js",
+        "line": 112
+      },
+      {
+        "file": "stress-test-3.js",
+        "line": 119
+      },
+      {
+        "file": "stress-test-3.js",
+        "line": 124
+      },
+      {
+        "file": "stress-test-4.js",
+        "line": 76
+      },
+      {
+        "file": "stress-test-4.js",
+        "line": 77
+      },
+      {
+        "file": "stress-test-4.js",
+        "line": 88
+      },
+      {
+        "file": "stress-test-4.js",
+        "line": 117
+      },
+      {
+        "file": "stress-test-4.js",
+        "line": 119
+      },
+      {
+        "file": "tests/backend/era4-operational-widgets.test.js",
+        "line": 118
+      },
+      {
+        "file": "tests/backend/era4-operational-widgets.test.js",
+        "line": 119
+      },
+      {
+        "file": "tests/backend/neural-vault.test.js",
+        "line": 7
+      },
+      {
+        "file": "tests/backend/neural-vault.test.js",
+        "line": 13
+      },
+      {
+        "file": "tests/backend/neural-vault.test.js",
+        "line": 19
+      },
+      {
+        "file": "tests/backend/neural-vault.test.js",
+        "line": 165
+      },
+      {
+        "file": "tests/backend/neural-vault.test.js",
+        "line": 166
+      },
+      {
+        "file": "src/App.tsx",
+        "line": 2647
+      },
+      {
+        "file": "src/App.tsx",
+        "line": 2659
+      },
+      {
+        "file": "src/globe-room/WidgetStrip.tsx",
+        "line": 842
+      },
+      {
+        "file": "src/globe-room/WidgetStrip.tsx",
+        "line": 1499
+      },
+      {
+        "file": "src/globe-room/WidgetStrip.tsx",
+        "line": 1500
+      },
+      {
+        "file": "src/globe-room/WidgetStrip.tsx",
+        "line": 1501
+      },
+      {
+        "file": "src/features/memory-os/protocols/UniversalObjectEnvelope.ts",
+        "line": 155
+      },
+      {
+        "file": "src/features/local-file-access/core/LocalFileAccessService.ts",
+        "line": 25
+      },
+      {
+        "file": "server/agent-loader.js",
+        "line": 93
+      },
+      {
+        "file": "server/agent-loader.js",
+        "line": 94
+      },
+      {
+        "file": "server/agent-loader.js",
+        "line": 95
+      },
+      {
+        "file": "server/capability-engine.js",
+        "line": 119
+      },
+      {
+        "file": "server/capability-engine.js",
+        "line": 222
+      },
+      {
+        "file": "server/capability-engine.js",
+        "line": 223
+      },
+      {
+        "file": "server/capability-engine.js",
+        "line": 224
+      },
+      {
+        "file": "server/capability-engine.js",
+        "line": 225
+      },
+      {
+        "file": "server/capability-engine.js",
+        "line": 226
+      },
+      {
+        "file": "server/capability-engine.js",
+        "line": 227
+      },
+      {
+        "file": "server/capability-engine.js",
+        "line": 228
+      },
+      {
+        "file": "server/capability-engine.js",
+        "line": 456
+      },
+      {
+        "file": "server/capability-engine.js",
+        "line": 457
+      },
+      {
+        "file": "server/capability-engine.js",
+        "line": 461
+      },
+      {
+        "file": "server/capability-engine.js",
+        "line": 464
+      },
+      {
+        "file": "server/capability-engine.js",
+        "line": 467
+      },
+      {
+        "file": "server/capability-engine.js",
+        "line": 470
+      },
+      {
+        "file": "server/capability-engine.js",
+        "line": 478
+      },
+      {
+        "file": "server/capability-engine.js",
+        "line": 723
+      },
+      {
+        "file": "server/capability-engine.js",
+        "line": 724
+      },
+      {
+        "file": "server/capability-engine.js",
+        "line": 725
+      },
+      {
+        "file": "server/capability-engine.js",
+        "line": 1746
+      },
+      {
+        "file": "server/capability-engine.js",
+        "line": 1747
+      },
+      {
+        "file": "server/capability-engine.js",
+        "line": 1751
+      },
+      {
+        "file": "server/capability-engine.js",
+        "line": 1752
+      },
+      {
+        "file": "server/capability-engine.js",
+        "line": 1753
+      },
+      {
+        "file": "server/capability-engine.js",
+        "line": 1761
+      },
+      {
+        "file": "server/capability-engine.js",
+        "line": 1762
+      },
+      {
+        "file": "server/capability-engine.js",
+        "line": 1769
+      },
+      {
+        "file": "server/capability-engine.js",
+        "line": 1770
+      },
+      {
+        "file": "server/capability-engine.js",
+        "line": 1779
+      },
+      {
+        "file": "server/capability-engine.js",
+        "line": 1780
+      },
+      {
+        "file": "server/capability-engine.js",
+        "line": 1781
+      },
+      {
+        "file": "server/capability-engine.js",
+        "line": 1785
+      },
+      {
+        "file": "server/capability-engine.js",
+        "line": 1786
+      },
+      {
+        "file": "server/capability-engine.js",
+        "line": 1879
+      },
+      {
+        "file": "server/capability-engine.js",
+        "line": 1889
+      },
+      {
+        "file": "server/capability-engine.js",
+        "line": 2196
+      },
+      {
+        "file": "server/capability-engine.js",
+        "line": 2197
+      },
+      {
+        "file": "server/capability-engine.js",
+        "line": 2198
+      },
+      {
+        "file": "server/capability-engine.js",
+        "line": 2199
+      },
+      {
+        "file": "server/capability-engine.js",
+        "line": 2200
+      },
+      {
+        "file": "server/capability-engine.js",
+        "line": 2201
+      },
+      {
+        "file": "server/capability-engine.js",
+        "line": 2202
+      },
+      {
+        "file": "server/coop-symbiote.js",
+        "line": 37
+      },
+      {
+        "file": "server/coop-symbiote.js",
+        "line": 169
+      },
+      {
+        "file": "server/coop-symbiote.js",
+        "line": 223
+      },
+      {
+        "file": "server/coop-symbiote.js",
+        "line": 232
+      },
+      {
+        "file": "server/coop-symbiote.js",
+        "line": 317
+      },
+      {
+        "file": "server/coop-symbiote.js",
+        "line": 429
+      },
+      {
+        "file": "server/coop-symbiote.js",
+        "line": 510
+      },
+      {
+        "file": "server/coop-symbiote.js",
+        "line": 535
+      },
+      {
+        "file": "server/coop-symbiote.js",
+        "line": 583
+      },
+      {
+        "file": "server/coop-symbiote.js",
+        "line": 636
+      },
+      {
+        "file": "server/coop-symbiote.js",
+        "line": 660
+      },
+      {
+        "file": "server/coop-symbiote.js",
+        "line": 771
+      },
+      {
+        "file": "server/coop-symbiote.js",
+        "line": 792
+      },
+      {
+        "file": "server/coop-symbiote.js",
+        "line": 830
+      },
+      {
+        "file": "server/coop-symbiote.js",
+        "line": 853
+      },
+      {
+        "file": "server/coop-symbiote.js",
+        "line": 892
+      },
+      {
+        "file": "server/deployable-agents.js",
+        "line": 23
+      },
+      {
+        "file": "server/local-file-access.js",
+        "line": 46
+      },
+      {
+        "file": "server/local-file-access.js",
+        "line": 59
+      },
+      {
+        "file": "server/local-file-access.js",
+        "line": 61
+      },
+      {
+        "file": "server/local-file-access.js",
+        "line": 223
+      },
+      {
+        "file": "server/local-file-access.js",
+        "line": 224
+      },
+      {
+        "file": "server/local-file-access.js",
+        "line": 249
+      },
+      {
+        "file": "server/local-file-access.js",
+        "line": 250
+      },
+      {
+        "file": "server/memory-decay.js",
+        "line": 52
+      },
+      {
+        "file": "server/memory-decay.js",
+        "line": 62
+      },
+      {
+        "file": "server/memory-full-test.js",
+        "line": 5
+      },
+      {
+        "file": "server/memory-full-test.js",
+        "line": 39
+      },
+      {
+        "file": "server/memory-full-test.js",
+        "line": 45
+      },
+      {
+        "file": "server/memory-full-test.js",
+        "line": 65
+      },
+      {
+        "file": "server/memory-full-test.js",
+        "line": 72
+      },
+      {
+        "file": "server/memory-full-test.js",
+        "line": 88
+      },
+      {
+        "file": "server/memory-full-test.js",
+        "line": 403
+      },
+      {
+        "file": "server/memory-governance.js",
+        "line": 50
+      },
+      {
+        "file": "server/memory-governance.js",
+        "line": 54
+      },
+      {
+        "file": "server/memory-governance.js",
+        "line": 390
+      },
+      {
+        "file": "server/memory-governance.js",
+        "line": 391
+      },
+      {
+        "file": "server/memory-manager.js",
+        "line": 6
+      },
+      {
+        "file": "server/memory-manager.js",
+        "line": 51
+      },
+      {
+        "file": "server/memory-manager.js",
+        "line": 53
+      },
+      {
+        "file": "server/memory-manager.js",
+        "line": 54
+      },
+      {
+        "file": "server/memory-manager.js",
+        "line": 191
+      },
+      {
+        "file": "server/memory-manager.js",
+        "line": 209
+      },
+      {
+        "file": "server/memory-manager.js",
+        "line": 210
+      },
+      {
+        "file": "server/memory-store.js",
+        "line": 15
+      },
+      {
+        "file": "server/memory-store.js",
+        "line": 16
+      },
+      {
+        "file": "server/memory-store.js",
+        "line": 17
+      },
+      {
+        "file": "server/memory-store.js",
+        "line": 19
+      },
+      {
+        "file": "server/memory-store.js",
+        "line": 127
+      },
+      {
+        "file": "server/memory-store.js",
+        "line": 129
+      },
+      {
+        "file": "server/mesh-hub.js",
+        "line": 51
+      },
+      {
+        "file": "server/mesh-hub.js",
+        "line": 359
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 69
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 70
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 165
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 1095
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 1104
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 1162
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 1640
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 1642
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 3642
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 3723
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 3753
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 3833
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 3840
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 3859
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 3995
+      },
+      {
+        "file": "server/pc-activity-graph.js",
+        "line": 3
+      },
+      {
+        "file": "server/pc-activity-graph.js",
+        "line": 40
+      },
+      {
+        "file": "server/proactive-intelligence.js",
+        "line": 3
+      },
+      {
+        "file": "server/proactive-intelligence.js",
+        "line": 9
+      },
+      {
+        "file": "server/proactive-intelligence.js",
+        "line": 27
+      },
+      {
+        "file": "server/proactive-intelligence.js",
+        "line": 35
+      },
+      {
+        "file": "server/proactive-intelligence.js",
+        "line": 38
+      },
+      {
+        "file": "server/proactive-intelligence.js",
+        "line": 53
+      },
+      {
+        "file": "server/proactive-intelligence.js",
+        "line": 56
+      },
+      {
+        "file": "server/proactive-intelligence.js",
+        "line": 86
+      },
+      {
+        "file": "server/proactive-intelligence.js",
+        "line": 88
+      },
+      {
+        "file": "server/procedural-memory.js",
+        "line": 2
+      },
+      {
+        "file": "server/procedural-memory.js",
+        "line": 74
+      },
+      {
+        "file": "server/procedural-memory.js",
+        "line": 96
+      },
+      {
+        "file": "server/procedural-memory.js",
+        "line": 100
+      },
+      {
+        "file": "server/procedural-memory.js",
+        "line": 129
+      },
+      {
+        "file": "server/procedural-memory.js",
+        "line": 163
+      },
+      {
+        "file": "server/procedural-memory.js",
+        "line": 185
+      },
+      {
+        "file": "server/smoke-tests.js",
+        "line": 110
+      },
+      {
+        "file": "server/smoke-tests.js",
+        "line": 111
+      },
+      {
+        "file": "server/smoke-tests.js",
+        "line": 112
+      },
+      {
+        "file": "server/smoke-tests.js",
+        "line": 114
+      },
+      {
+        "file": "server/smoke-tests.js",
+        "line": 115
+      },
+      {
+        "file": "server/smoke-tests.js",
+        "line": 119
+      },
+      {
+        "file": "server/smoke-tests.js",
+        "line": 123
+      },
+      {
+        "file": "server/smoke-tests.js",
+        "line": 127
+      },
+      {
+        "file": "server/smoke-tests.js",
+        "line": 136
+      },
+      {
+        "file": "server/smoke-tests.js",
+        "line": 140
+      },
+      {
+        "file": "server/smoke-tests.js",
+        "line": 144
+      },
+      {
+        "file": "server/smoke-tests.js",
+        "line": 166
+      },
+      {
+        "file": "server/smoke-tests.js",
+        "line": 171
+      },
+      {
+        "file": "server/smoke-tests.js",
+        "line": 177
+      },
+      {
+        "file": "server/task-to-skill.js",
+        "line": 39
+      },
+      {
+        "file": "server/task-to-skill.js",
+        "line": 41
+      },
+      {
+        "file": "server/task-to-skill.js",
+        "line": 276
+      },
+      {
+        "file": "server/task-to-skill.js",
+        "line": 277
+      },
+      {
+        "file": "server/tool-gateway.js",
+        "line": 87
+      },
+      {
+        "file": "server/tool-gateway.js",
+        "line": 90
+      },
+      {
+        "file": "server/tool-gateway.js",
+        "line": 96
+      },
+      {
+        "file": "server/tool-gateway.js",
+        "line": 99
+      },
+      {
+        "file": "server/tool-gateway.js",
+        "line": 114
+      },
+      {
+        "file": "scripts/cortex-v4-regression.cjs",
+        "line": 76
+      },
+      {
+        "file": "scripts/cortex-v4-regression.cjs",
+        "line": 113
+      },
+      {
+        "file": "scripts/cortex-v4-regression.cjs",
+        "line": 114
+      },
+      {
+        "file": "scripts/jarvis-actions-memory-check.mjs",
+        "line": 10
+      },
+      {
+        "file": "scripts/jarvis-actions-memory-check.mjs",
+        "line": 112
+      },
+      {
+        "file": "scripts/jarvis-actions-memory-check.mjs",
+        "line": 186
+      },
+      {
+        "file": "scripts/jarvis-system-check.mjs",
+        "line": 12
+      },
+      {
+        "file": "scripts/jarvis-system-check.mjs",
+        "line": 234
+      },
+      {
+        "file": "scripts/jarvis-system-check.mjs",
+        "line": 242
+      },
+      {
+        "file": "scripts/jarvis-system-check.mjs",
+        "line": 249
+      },
+      {
+        "file": "scripts/jarvis-system-check.mjs",
+        "line": 256
+      },
+      {
+        "file": "scripts/jarvis-system-check.mjs",
+        "line": 264
+      },
+      {
+        "file": "scripts/jarvis-system-check.mjs",
+        "line": 271
+      },
+      {
+        "file": "scripts/jarvis-system-check.mjs",
+        "line": 278
+      },
+      {
+        "file": "scripts/jarvis-system-check.mjs",
+        "line": 291
+      },
+      {
+        "file": "scripts/jarvis-system-check.mjs",
+        "line": 298
+      },
+      {
+        "file": "scripts/jarvis-system-check.mjs",
+        "line": 305
+      },
+      {
+        "file": "scripts/jarvis-system-check.mjs",
+        "line": 311
+      },
+      {
+        "file": "scripts/jarvis-system-check.mjs",
+        "line": 321
+      },
+      {
+        "file": "scripts/jarvis-system-check.mjs",
+        "line": 357
+      },
+      {
+        "file": "scripts/jarvis-system-check.mjs",
+        "line": 367
+      },
+      {
+        "file": "scripts/jarvis-system-check.mjs",
+        "line": 374
+      },
+      {
+        "file": "scripts/jarvis-system-check.mjs",
+        "line": 400
+      },
+      {
+        "file": "scripts/jarvis-system-check.mjs",
+        "line": 416
+      },
+      {
+        "file": "scripts/local-file-access-protocols-check.mjs",
+        "line": 8
+      },
+      {
+        "file": "scripts/local-file-access-protocols-check.mjs",
+        "line": 18
+      },
+      {
+        "file": "scripts/local-file-access-protocols-check.mjs",
+        "line": 19
+      },
+      {
+        "file": "scripts/local-file-access-protocols-check.mjs",
+        "line": 64
+      },
+      {
+        "file": "scripts/memory-governance-master-check.mjs",
+        "line": 8
+      },
+      {
+        "file": "scripts/memory-governance-master-check.mjs",
+        "line": 14
+      },
+      {
+        "file": "scripts/memory-governance-master-check.mjs",
+        "line": 15
+      },
+      {
+        "file": "scripts/memory-governance-master-check.mjs",
+        "line": 16
+      },
+      {
+        "file": "scripts/memory-governance-master-check.mjs",
+        "line": 75
+      },
+      {
+        "file": "scripts/memory-vnext-wave1-audit.mjs",
+        "line": 21
+      },
+      {
+        "file": "scripts/memory-vnext-wave1-audit.mjs",
+        "line": 226
+      },
+      {
+        "file": "scripts/post-repair-recheck.mjs",
+        "line": 10
+      },
+      {
+        "file": "scripts/post-repair-recheck.mjs",
+        "line": 19
+      },
+      {
+        "file": "scripts/post-repair-recheck.mjs",
+        "line": 99
+      },
+      {
+        "file": "scripts/post-repair-recheck.mjs",
+        "line": 109
+      },
+      {
+        "file": "scripts/post-repair-recheck.mjs",
+        "line": 110
+      },
+      {
+        "file": "scripts/post-repair-recheck.mjs",
+        "line": 116
+      },
+      {
+        "file": "scripts/post-repair-recheck.mjs",
+        "line": 180
+      },
+      {
+        "file": "scripts/post-repair-recheck.mjs",
+        "line": 239
+      },
+      {
+        "file": "scripts/post-repair-recheck.mjs",
+        "line": 417
+      },
+      {
+        "file": "scripts/post-repair-recheck.mjs",
+        "line": 667
+      },
+      {
+        "file": "scripts/task-to-skill-check.mjs",
+        "line": 8
+      },
+      {
+        "file": "scripts/task-to-skill-check.mjs",
+        "line": 13
+      },
+      {
+        "file": "scripts/task-to-skill-check.mjs",
+        "line": 14
+      },
+      {
+        "file": "scripts/task-to-skill-check.mjs",
+        "line": 84
+      }
+    ],
+    "memoryExtractor": [
+      {
+        "file": "server.js",
+        "line": 16
+      },
+      {
+        "file": "server.js",
+        "line": 168
+      },
+      {
+        "file": "server.js",
+        "line": 3685
+      },
+      {
+        "file": "server.js",
+        "line": 3972
+      },
+      {
+        "file": "server.js",
+        "line": 6905
+      },
+      {
+        "file": "server.js",
+        "line": 6908
+      },
+      {
+        "file": "server.js",
+        "line": 6910
+      },
+      {
+        "file": "server.js",
+        "line": 11753
+      },
+      {
+        "file": "server.js",
+        "line": 11784
+      },
+      {
+        "file": "server/memory-extractor.js",
+        "line": 29
+      },
+      {
+        "file": "server/memory-extractor.js",
+        "line": 50
+      },
+      {
+        "file": "server/memory-extractor.js",
+        "line": 137
+      },
+      {
+        "file": "server/smoke-tests.js",
+        "line": 62
+      },
+      {
+        "file": "server/smoke-tests.js",
+        "line": 63
+      },
+      {
+        "file": "server/smoke-tests.js",
+        "line": 64
+      },
+      {
+        "file": "server/smoke-tests.js",
+        "line": 65
+      },
+      {
+        "file": "server/smoke-tests.js",
+        "line": 66
+      },
+      {
+        "file": "scripts/memory-vnext-wave1-audit.mjs",
+        "line": 227
+      }
+    ],
+    "memoryVectors": [
+      {
+        "file": "server.js",
+        "line": 23
+      },
+      {
+        "file": "server.js",
+        "line": 138
+      },
+      {
+        "file": "server.js",
+        "line": 176
+      },
+      {
+        "file": "server.js",
+        "line": 736
+      },
+      {
+        "file": "server.js",
+        "line": 777
+      },
+      {
+        "file": "server.js",
+        "line": 1911
+      },
+      {
+        "file": "server.js",
+        "line": 3233
+      },
+      {
+        "file": "server.js",
+        "line": 3235
+      },
+      {
+        "file": "server.js",
+        "line": 3236
+      },
+      {
+        "file": "server.js",
+        "line": 3238
+      },
+      {
+        "file": "server.js",
+        "line": 10018
+      },
+      {
+        "file": "server.js",
+        "line": 10021
+      },
+      {
+        "file": "server.js",
+        "line": 10023
+      },
+      {
+        "file": "server.js",
+        "line": 10029
+      },
+      {
+        "file": "server.js",
+        "line": 10031
+      },
+      {
+        "file": "server.js",
+        "line": 10032
+      },
+      {
+        "file": "server.js",
+        "line": 11339
+      },
+      {
+        "file": "server.js",
+        "line": 11765
+      },
+      {
+        "file": "server.js",
+        "line": 11767
+      },
+      {
+        "file": "server.js",
+        "line": 11771
+      },
+      {
+        "file": "server.js",
+        "line": 11773
+      },
+      {
+        "file": "server.js",
+        "line": 11774
+      },
+      {
+        "file": "server.js",
+        "line": 11775
+      },
+      {
+        "file": "server.js",
+        "line": 11777
+      },
+      {
+        "file": "tests/backend/jarvis-intelligence.test.js",
+        "line": 84
+      },
+      {
+        "file": "src/rooms/helix/v2/surfaces/Observability.tsx",
+        "line": 93
+      },
+      {
+        "file": "src/rooms/helix/v2/surfaces/Observability.tsx",
+        "line": 109
+      },
+      {
+        "file": "server/agent-runtime.js",
+        "line": 279
+      },
+      {
+        "file": "server/agent-runtime.js",
+        "line": 461
+      },
+      {
+        "file": "server/code-knowledge.js",
+        "line": 106
+      },
+      {
+        "file": "server/code-knowledge.js",
+        "line": 124
+      },
+      {
+        "file": "server/code-knowledge.js",
+        "line": 138
+      },
+      {
+        "file": "server/code-knowledge.js",
+        "line": 143
+      },
+      {
+        "file": "server/code-knowledge.js",
+        "line": 152
+      },
+      {
+        "file": "server/code-knowledge.js",
+        "line": 167
+      },
+      {
+        "file": "server/code-knowledge.js",
+        "line": 169
+      },
+      {
+        "file": "server/code-knowledge.js",
+        "line": 174
+      },
+      {
+        "file": "server/code-knowledge.js",
+        "line": 176
+      },
+      {
+        "file": "server/code-knowledge.js",
+        "line": 183
+      },
+      {
+        "file": "server/code-knowledge.js",
+        "line": 188
+      },
+      {
+        "file": "server/code-knowledge.js",
+        "line": 190
+      },
+      {
+        "file": "server/code-knowledge.js",
+        "line": 214
+      },
+      {
+        "file": "server/code-knowledge.js",
+        "line": 220
+      },
+      {
+        "file": "server/code-knowledge.js",
+        "line": 224
+      },
+      {
+        "file": "server/code-knowledge.js",
+        "line": 231
+      },
+      {
+        "file": "server/code-knowledge.js",
+        "line": 241
+      },
+      {
+        "file": "server/code-knowledge.js",
+        "line": 243
+      },
+      {
+        "file": "server/code-knowledge.js",
+        "line": 244
+      },
+      {
+        "file": "server/code-knowledge.js",
+        "line": 247
+      },
+      {
+        "file": "server/code-knowledge.js",
+        "line": 258
+      },
+      {
+        "file": "server/code-knowledge.js",
+        "line": 294
+      },
+      {
+        "file": "server/code-knowledge.js",
+        "line": 295
+      },
+      {
+        "file": "server/cost-meter.js",
+        "line": 17
+      },
+      {
+        "file": "server/gemini-models.js",
+        "line": 16
+      },
+      {
+        "file": "server/gemini-models.js",
+        "line": 56
+      },
+      {
+        "file": "server/helix-gateway.js",
+        "line": 74
+      },
+      {
+        "file": "server/helix-retrieval.js",
+        "line": 6
+      },
+      {
+        "file": "server/helix-retrieval.js",
+        "line": 50
+      },
+      {
+        "file": "server/helix-substrate.js",
+        "line": 653
+      },
+      {
+        "file": "server/helix-substrate.js",
+        "line": 660
+      },
+      {
+        "file": "server/helix-substrate.js",
+        "line": 661
+      },
+      {
+        "file": "server/helix-substrate.js",
+        "line": 725
+      },
+      {
+        "file": "server/helix-substrate.js",
+        "line": 726
+      },
+      {
+        "file": "server/helix-substrate.js",
+        "line": 837
+      },
+      {
+        "file": "server/memory-vectors.js",
+        "line": 1
+      },
+      {
+        "file": "server/memory-vectors.js",
+        "line": 2
+      },
+      {
+        "file": "server/memory-vectors.js",
+        "line": 8
+      },
+      {
+        "file": "server/memory-vectors.js",
+        "line": 25
+      },
+      {
+        "file": "server/memory-vectors.js",
+        "line": 26
+      },
+      {
+        "file": "server/memory-vectors.js",
+        "line": 46
+      },
+      {
+        "file": "server/memory-vectors.js",
+        "line": 47
+      },
+      {
+        "file": "server/memory-vectors.js",
+        "line": 68
+      },
+      {
+        "file": "server/memory-vectors.js",
+        "line": 86
+      },
+      {
+        "file": "server/eclipse/model/capabilities.js",
+        "line": 14
+      },
+      {
+        "file": "server/eclipse/model/capabilities.js",
+        "line": 58
+      },
+      {
+        "file": "server/eclipse/memory/resonance.js",
+        "line": 3
+      },
+      {
+        "file": "server/eclipse/memory/resonance.js",
+        "line": 6
+      },
+      {
+        "file": "server/eclipse/memory/resonance.js",
+        "line": 22
+      },
+      {
+        "file": "scripts/jarvis-system-check.mjs",
+        "line": 69
+      },
+      {
+        "file": "scripts/jarvis-system-check.mjs",
+        "line": 333
+      },
+      {
+        "file": "scripts/jarvis-system-check.mjs",
+        "line": 341
+      },
+      {
+        "file": "scripts/jarvis-system-check.mjs",
+        "line": 351
+      },
+      {
+        "file": "scripts/memory-vnext-wave1-audit.mjs",
+        "line": 22
+      },
+      {
+        "file": "scripts/memory-vnext-wave1-audit.mjs",
+        "line": 228
+      }
+    ],
+    "userContext": [
+      {
+        "file": "server.js",
+        "line": 73
+      },
+      {
+        "file": "server.js",
+        "line": 184
+      },
+      {
+        "file": "server.js",
+        "line": 2088
+      },
+      {
+        "file": "server.js",
+        "line": 2089
+      },
+      {
+        "file": "server.js",
+        "line": 3221
+      },
+      {
+        "file": "server.js",
+        "line": 5939
+      },
+      {
+        "file": "server.js",
+        "line": 5980
+      },
+      {
+        "file": "server.js",
+        "line": 5982
+      },
+      {
+        "file": "server.js",
+        "line": 5983
+      },
+      {
+        "file": "server.js",
+        "line": 5984
+      },
+      {
+        "file": "server.js",
+        "line": 5987
+      },
+      {
+        "file": "server.js",
+        "line": 5988
+      },
+      {
+        "file": "server.js",
+        "line": 5991
+      },
+      {
+        "file": "server.js",
+        "line": 5994
+      },
+      {
+        "file": "server.js",
+        "line": 5995
+      },
+      {
+        "file": "server.js",
+        "line": 5999
+      },
+      {
+        "file": "server.js",
+        "line": 11750
+      },
+      {
+        "file": "server/user-context.js",
+        "line": 21
+      },
+      {
+        "file": "server/user-context.js",
+        "line": 23
+      },
+      {
+        "file": "server/user-context.js",
+        "line": 244
+      },
+      {
+        "file": "scripts/memory-vnext-wave1-audit.mjs",
+        "line": 23
+      },
+      {
+        "file": "scripts/memory-vnext-wave1-audit.mjs",
+        "line": 229
+      }
+    ],
+    "conversationState": [
+      {
+        "file": "server.js",
+        "line": 1445
+      },
+      {
+        "file": "server.js",
+        "line": 1495
+      },
+      {
+        "file": "server.js",
+        "line": 1496
+      },
+      {
+        "file": "server.js",
+        "line": 1548
+      },
+      {
+        "file": "server.js",
+        "line": 1565
+      },
+      {
+        "file": "server.js",
+        "line": 1573
+      },
+      {
+        "file": "server.js",
+        "line": 1574
+      },
+      {
+        "file": "server.js",
+        "line": 1583
+      },
+      {
+        "file": "server.js",
+        "line": 1584
+      },
+      {
+        "file": "server.js",
+        "line": 1585
+      },
+      {
+        "file": "server.js",
+        "line": 1586
+      },
+      {
+        "file": "server.js",
+        "line": 1588
+      },
+      {
+        "file": "server.js",
+        "line": 1590
+      },
+      {
+        "file": "server.js",
+        "line": 1598
+      },
+      {
+        "file": "server.js",
+        "line": 1599
+      },
+      {
+        "file": "server.js",
+        "line": 1624
+      },
+      {
+        "file": "server.js",
+        "line": 1625
+      },
+      {
+        "file": "server.js",
+        "line": 1746
+      },
+      {
+        "file": "server.js",
+        "line": 2793
+      },
+      {
+        "file": "server.js",
+        "line": 2820
+      },
+      {
+        "file": "server.js",
+        "line": 2822
+      },
+      {
+        "file": "server.js",
+        "line": 2823
+      },
+      {
+        "file": "server.js",
+        "line": 4131
+      },
+      {
+        "file": "server.js",
+        "line": 5482
+      },
+      {
+        "file": "server.js",
+        "line": 5483
+      },
+      {
+        "file": "server.js",
+        "line": 5484
+      },
+      {
+        "file": "server.js",
+        "line": 9116
+      },
+      {
+        "file": "server.js",
+        "line": 9537
+      },
+      {
+        "file": "server.js",
+        "line": 9992
+      },
+      {
+        "file": "server.js",
+        "line": 9993
+      },
+      {
+        "file": "tests/backend/era4-operational-widgets.test.js",
+        "line": 113
+      },
+      {
+        "file": "tests/backend/era4-operational-widgets.test.js",
+        "line": 119
+      },
+      {
+        "file": "tests/backend/memory-vnext-wave1.test.js",
+        "line": 27
+      },
+      {
+        "file": "tests/backend/neural-vault.test.js",
+        "line": 49
+      },
+      {
+        "file": "tests/backend/neural-vault.test.js",
+        "line": 51
+      },
+      {
+        "file": "tests/backend/neural-vault.test.js",
+        "line": 151
+      },
+      {
+        "file": "src/rooms/apex/ApexHome.tsx",
+        "line": 1057
+      },
+      {
+        "file": "src/globe-room/MemoryCommandCenter.tsx",
+        "line": 5
+      },
+      {
+        "file": "src/globe-room/MemoryCommandCenter.tsx",
+        "line": 38
+      },
+      {
+        "file": "src/globe-room/MemoryCommandCenter.tsx",
+        "line": 81
+      },
+      {
+        "file": "src/globe-room/MemoryCommandCenter.tsx",
+        "line": 83
+      },
+      {
+        "file": "src/globe-room/MemoryCommandCenter.tsx",
+        "line": 85
+      },
+      {
+        "file": "src/globe-room/MemoryCommandCenter.tsx",
+        "line": 86
+      },
+      {
+        "file": "src/globe-room/WidgetStrip.tsx",
+        "line": 1499
+      },
+      {
+        "file": "src/globe-room/WidgetStrip.tsx",
+        "line": 1501
+      },
+      {
+        "file": "src/globe-room/WidgetStrip.tsx",
+        "line": 1502
+      },
+      {
+        "file": "src/globe-room/WidgetStrip.tsx",
+        "line": 1507
+      },
+      {
+        "file": "server/agent-repair.js",
+        "line": 238
+      },
+      {
+        "file": "server/agent-repair.js",
+        "line": 273
+      },
+      {
+        "file": "server/agent-repair.js",
+        "line": 286
+      },
+      {
+        "file": "server/capability-engine.js",
+        "line": 222
+      },
+      {
+        "file": "server/capability-engine.js",
+        "line": 223
+      },
+      {
+        "file": "server/capability-engine.js",
+        "line": 224
+      },
+      {
+        "file": "server/memory-full-test.js",
+        "line": 230
+      },
+      {
+        "file": "server/memory-full-test.js",
+        "line": 232
+      },
+      {
+        "file": "server/memory-full-test.js",
+        "line": 272
+      },
+      {
+        "file": "server/memory-full-test.js",
+        "line": 273
+      },
+      {
+        "file": "server/memory-full-test.js",
+        "line": 276
+      },
+      {
+        "file": "server/memory-full-test.js",
+        "line": 277
+      },
+      {
+        "file": "server/memory-full-test.js",
+        "line": 282
+      },
+      {
+        "file": "server/memory-full-test.js",
+        "line": 285
+      },
+      {
+        "file": "server/memory-full-test.js",
+        "line": 290
+      },
+      {
+        "file": "server/memory-full-test.js",
+        "line": 293
+      },
+      {
+        "file": "server/memory-full-test.js",
+        "line": 294
+      },
+      {
+        "file": "server/memory-full-test.js",
+        "line": 297
+      },
+      {
+        "file": "server/memory-manager.js",
+        "line": 180
+      },
+      {
+        "file": "server/memory-manager.js",
+        "line": 442
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 359
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 373
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 375
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 388
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 1158
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 1488
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 1532
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 1533
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 1536
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 1538
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 1540
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 1544
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 1574
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 1576
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 1577
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 1596
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 1602
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 1608
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 1618
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 1620
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 1626
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 1627
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 1628
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 1631
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 1634
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 1635
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 1646
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 1648
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 1650
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 1653
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 1655
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 1656
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 1657
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 1659
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 1660
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 1663
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 1664
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 1665
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 1666
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 1672
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 1674
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 1675
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 1676
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 1678
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 1681
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 1684
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 1687
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 1688
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 1689
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 1692
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 1696
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 1698
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 1699
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 1700
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 1702
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 1703
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 1704
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 1705
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 1708
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 1710
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 1711
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 1712
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 1713
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 1715
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 1722
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 1730
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 1741
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 1751
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 1764
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 1770
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 1771
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 1779
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 1849
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 1870
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 1872
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 2114
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 2138
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 2197
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 2198
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 2199
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 2203
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 2590
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 2591
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 2595
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 2633
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 2674
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 2758
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 2771
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 2773
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 2774
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 2776
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 2779
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 2880
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 2909
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 2938
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 2965
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 2976
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 2987
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 2998
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 3009
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 3020
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 3100
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 3287
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 3294
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 3295
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 3302
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 3893
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 3912
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 3913
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 3914
+      },
+      {
+        "file": "server/tool-gateway.js",
+        "line": 89
+      },
+      {
+        "file": "server/eclipse/model/interactions-client.js",
+        "line": 3
+      },
+      {
+        "file": "scripts/jarvis-actions-memory-check.mjs",
+        "line": 245
+      },
+      {
+        "file": "scripts/jarvis-actions-memory-check.mjs",
+        "line": 250
+      },
+      {
+        "file": "scripts/jarvis-actions-memory-check.mjs",
+        "line": 251
+      },
+      {
+        "file": "scripts/jarvis-actions-memory-check.mjs",
+        "line": 322
+      },
+      {
+        "file": "scripts/jarvis-actions-memory-check.mjs",
+        "line": 327
+      },
+      {
+        "file": "scripts/jarvis-actions-memory-check.mjs",
+        "line": 338
+      },
+      {
+        "file": "scripts/jarvis-actions-memory-check.mjs",
+        "line": 347
+      },
+      {
+        "file": "scripts/jarvis-actions-memory-check.mjs",
+        "line": 348
+      },
+      {
+        "file": "scripts/jarvis-actions-memory-check.mjs",
+        "line": 349
+      },
+      {
+        "file": "scripts/jarvis-system-check.mjs",
+        "line": 243
+      },
+      {
+        "file": "scripts/jarvis-system-check.mjs",
+        "line": 250
+      },
+      {
+        "file": "scripts/jarvis-system-check.mjs",
+        "line": 265
+      },
+      {
+        "file": "scripts/jarvis-system-check.mjs",
+        "line": 270
+      },
+      {
+        "file": "scripts/jarvis-system-check.mjs",
+        "line": 273
+      },
+      {
+        "file": "scripts/jarvis-system-check.mjs",
+        "line": 407
+      },
+      {
+        "file": "scripts/jarvis-system-check.mjs",
+        "line": 410
+      },
+      {
+        "file": "scripts/memory-vnext-wave1-audit.mjs",
+        "line": 230
+      }
+    ],
+    "taskMissionState": [
+      {
+        "file": "server.js",
+        "line": 29
+      },
+      {
+        "file": "server.js",
+        "line": 11614
+      },
+      {
+        "file": "server.js",
+        "line": 11625
+      },
+      {
+        "file": "server.js",
+        "line": 11898
+      },
+      {
+        "file": "server.js",
+        "line": 11911
+      },
+      {
+        "file": "server.js",
+        "line": 11933
+      },
+      {
+        "file": "server.js",
+        "line": 11934
+      },
+      {
+        "file": "server.js",
+        "line": 11935
+      },
+      {
+        "file": "server.js",
+        "line": 11936
+      },
+      {
+        "file": "worker/index.ts",
+        "line": 401
+      },
+      {
+        "file": "worker/index.ts",
+        "line": 435
+      },
+      {
+        "file": "worker/index.ts",
+        "line": 464
+      },
+      {
+        "file": "worker/index.ts",
+        "line": 488
+      },
+      {
+        "file": "worker/index.ts",
+        "line": 503
+      },
+      {
+        "file": "tests/backend/advanced-core.test.js",
+        "line": 9
+      },
+      {
+        "file": "tests/backend/advanced-core.test.js",
+        "line": 98
+      },
+      {
+        "file": "tests/backend/advanced-core.test.js",
+        "line": 132
+      },
+      {
+        "file": "tests/backend/advanced-core.test.js",
+        "line": 133
+      },
+      {
+        "file": "tests/backend/advanced-core.test.js",
+        "line": 158
+      },
+      {
+        "file": "tests/backend/advanced-core.test.js",
+        "line": 159
+      },
+      {
+        "file": "tests/backend/advanced-core.test.js",
+        "line": 160
+      },
+      {
+        "file": "tests/backend/advanced-core.test.js",
+        "line": 161
+      },
+      {
+        "file": "src/globe-room/OperationalCommandCenters.tsx",
+        "line": 103
+      },
+      {
+        "file": "src/globe-room/OperationalCommandCenters.tsx",
+        "line": 106
+      },
+      {
+        "file": "server/helix-substrate.js",
+        "line": 204
+      },
+      {
+        "file": "server/helix-substrate.js",
+        "line": 578
+      },
+      {
+        "file": "server/mission-engine.js",
+        "line": 57
+      },
+      {
+        "file": "server/mission-engine.js",
+        "line": 74
+      },
+      {
+        "file": "server/mission-engine.js",
+        "line": 120
+      },
+      {
+        "file": "server/mission-engine.js",
+        "line": 164
+      },
+      {
+        "file": "server/mission-engine.js",
+        "line": 181
+      },
+      {
+        "file": "server/mission-engine.js",
+        "line": 186
+      },
+      {
+        "file": "server/mission-engine.js",
+        "line": 208
+      },
+      {
+        "file": "server/mission-engine.js",
+        "line": 211
+      },
+      {
+        "file": "server/mission-engine.js",
+        "line": 227
+      },
+      {
+        "file": "server/mission-engine.js",
+        "line": 244
+      },
+      {
+        "file": "server/mission-engine.js",
+        "line": 271
+      },
+      {
+        "file": "server/mission-engine.js",
+        "line": 282
+      },
+      {
+        "file": "server/mission-engine.js",
+        "line": 284
+      },
+      {
+        "file": "server/mission-engine.js",
+        "line": 294
+      },
+      {
+        "file": "server/mission-engine.js",
+        "line": 305
+      },
+      {
+        "file": "server/mission-engine.js",
+        "line": 317
+      },
+      {
+        "file": "server/mission-engine.js",
+        "line": 343
+      },
+      {
+        "file": "server/mission-engine.js",
+        "line": 357
+      },
+      {
+        "file": "server/mission-engine.js",
+        "line": 358
+      },
+      {
+        "file": "server/mission-engine.js",
+        "line": 375
+      },
+      {
+        "file": "server/mission-engine.js",
+        "line": 379
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 1813
+      },
+      {
+        "file": "server/react-loop.js",
+        "line": 51
+      },
+      {
+        "file": "server/react-loop.js",
+        "line": 52
+      },
+      {
+        "file": "server/react-loop.js",
+        "line": 53
+      },
+      {
+        "file": "server/eclipse/orchestration/nodes.js",
+        "line": 7
+      },
+      {
+        "file": "server/eclipse/orchestration/nodes.js",
+        "line": 238
+      },
+      {
+        "file": "server/eclipse/orchestration/run-graph.js",
+        "line": 2
+      },
+      {
+        "file": "server/eclipse/orchestration/run-graph.js",
+        "line": 3
+      },
+      {
+        "file": "server/eclipse/orchestration/run-graph.js",
+        "line": 7
+      },
+      {
+        "file": "server/eclipse/orchestration/run-graph.js",
+        "line": 19
+      },
+      {
+        "file": "server/eclipse/orchestration/run-graph.js",
+        "line": 44
+      },
+      {
+        "file": "server/eclipse/orchestration/run-graph.js",
+        "line": 47
+      },
+      {
+        "file": "server/eclipse/orchestration/run-graph.js",
+        "line": 51
+      },
+      {
+        "file": "server/eclipse/orchestration/run-graph.js",
+        "line": 56
+      },
+      {
+        "file": "server/eclipse/orchestration/run-graph.js",
+        "line": 57
+      },
+      {
+        "file": "server/eclipse/orchestration/run-graph.js",
+        "line": 67
+      },
+      {
+        "file": "server/eclipse/orchestration/run-graph.js",
+        "line": 80
+      },
+      {
+        "file": "server/eclipse/orchestration/run-graph.js",
+        "line": 88
+      },
+      {
+        "file": "server/eclipse/orchestration/run-graph.js",
+        "line": 110
+      },
+      {
+        "file": "server/eclipse/orchestration/run-graph.js",
+        "line": 129
+      },
+      {
+        "file": "server/eclipse/orchestration/run-graph.js",
+        "line": 130
+      },
+      {
+        "file": "server/eclipse/orchestration/run-graph.js",
+        "line": 135
+      },
+      {
+        "file": "server/eclipse/orchestration/state.js",
+        "line": 2
+      },
+      {
+        "file": "server/eclipse/orchestration/store.js",
+        "line": 2
+      },
+      {
+        "file": "server/eclipse/orchestration/store.js",
+        "line": 21
+      },
+      {
+        "file": "server/eclipse/orchestration/store.js",
+        "line": 71
+      },
+      {
+        "file": "server/eclipse/model/interactions-client.js",
+        "line": 54
+      },
+      {
+        "file": "server/eclipse/evals/export-forge-demo.js",
+        "line": 7
+      },
+      {
+        "file": "server/eclipse/evals/export-forge-demo.js",
+        "line": 12
+      },
+      {
+        "file": "server/eclipse/evals/export-forge-demo.js",
+        "line": 13
+      },
+      {
+        "file": "server/eclipse/evals/export-forge-demo.js",
+        "line": 27
+      },
+      {
+        "file": "server/eclipse/evals/live-compare.js",
+        "line": 10
+      },
+      {
+        "file": "server/eclipse/evals/live-compare.js",
+        "line": 79
+      },
+      {
+        "file": "server/eclipse/evals/test-foundry.js",
+        "line": 21
+      },
+      {
+        "file": "server/eclipse/evals/test-foundry.js",
+        "line": 76
+      },
+      {
+        "file": "server/eclipse/evals/test-foundry.js",
+        "line": 77
+      },
+      {
+        "file": "server/eclipse/evals/test-foundry.js",
+        "line": 94
+      },
+      {
+        "file": "server/eclipse/evals/test-foundry.js",
+        "line": 98
+      },
+      {
+        "file": "server/eclipse/evals/test-graph.js",
+        "line": 8
+      },
+      {
+        "file": "server/eclipse/evals/test-graph.js",
+        "line": 23
+      },
+      {
+        "file": "server/eclipse/evals/test-graph.js",
+        "line": 24
+      },
+      {
+        "file": "server/eclipse/evals/test-graph.js",
+        "line": 30
+      },
+      {
+        "file": "server/eclipse/evals/test-graph.js",
+        "line": 31
+      },
+      {
+        "file": "server/eclipse/evals/test-graph.js",
+        "line": 35
+      },
+      {
+        "file": "server/eclipse/evals/test-mission-e2e.js",
+        "line": 7
+      },
+      {
+        "file": "server/eclipse/evals/test-mission-e2e.js",
+        "line": 18
+      },
+      {
+        "file": "server/eclipse/evals/test-reactor.js",
+        "line": 10
+      },
+      {
+        "file": "server/eclipse/evals/test-reactor.js",
+        "line": 13
+      },
+      {
+        "file": "server/eclipse/evals/test-tools.js",
+        "line": 50
+      },
+      {
+        "file": "server/eclipse/evals/test-tools.js",
+        "line": 54
+      },
+      {
+        "file": "server/eclipse/evals/test-w5-e2e.js",
+        "line": 10
+      },
+      {
+        "file": "server/eclipse/evals/test-w5-e2e.js",
+        "line": 18
+      },
+      {
+        "file": "server/eclipse/evals/test-w5-e2e.js",
+        "line": 29
+      },
+      {
+        "file": "server/eclipse/evals/test-w5-e2e.js",
+        "line": 57
+      },
+      {
+        "file": "server/eclipse/evals/test-w5-e2e.js",
+        "line": 70
+      },
+      {
+        "file": "server/eclipse/evals/fixtures/samples.js",
+        "line": 31
+      },
+      {
+        "file": "server/eclipse/evals/fixtures/samples.js",
+        "line": 33
+      },
+      {
+        "file": "server/eclipse/db/migrations.js",
+        "line": 2
+      },
+      {
+        "file": "server/eclipse/db/migrations.js",
+        "line": 22
+      },
+      {
+        "file": "scripts/memory-vnext-wave1-audit.mjs",
+        "line": 24
+      },
+      {
+        "file": "scripts/memory-vnext-wave1-audit.mjs",
+        "line": 31
+      },
+      {
+        "file": "scripts/memory-vnext-wave1-audit.mjs",
+        "line": 231
+      }
+    ],
+    "roomMemory": [
+      {
+        "file": "server.js",
+        "line": 10460
+      },
+      {
+        "file": "server.js",
+        "line": 10462
+      },
+      {
+        "file": "tests/feature/coop-symbiote.spec.ts",
+        "line": 30
+      },
+      {
+        "file": "src/SimpleApp.tsx",
+        "line": 327
+      },
+      {
+        "file": "src/SimpleApp.tsx",
+        "line": 1100
+      },
+      {
+        "file": "src/SimpleApp.tsx",
+        "line": 1103
+      },
+      {
+        "file": "src/SimpleApp.tsx",
+        "line": 1104
+      },
+      {
+        "file": "src/SimpleApp.tsx",
+        "line": 2666
+      },
+      {
+        "file": "src/SimpleApp.tsx",
+        "line": 2787
+      },
+      {
+        "file": "src/SimpleApp.tsx",
+        "line": 2788
+      },
+      {
+        "file": "src/SimpleApp.tsx",
+        "line": 2789
+      },
+      {
+        "file": "src/globe-room/DeviceMeshCommandCenter.tsx",
+        "line": 122
+      },
+      {
+        "file": "server/apex-db.js",
+        "line": 64
+      },
+      {
+        "file": "server/apex-db.js",
+        "line": 420
+      },
+      {
+        "file": "server/capability-engine.js",
+        "line": 247
+      },
+      {
+        "file": "server/coop-intelligence.js",
+        "line": 15
+      },
+      {
+        "file": "server/coop-symbiote.js",
+        "line": 27
+      },
+      {
+        "file": "server/coop-symbiote.js",
+        "line": 177
+      },
+      {
+        "file": "server/coop-symbiote.js",
+        "line": 181
+      },
+      {
+        "file": "server/coop-symbiote.js",
+        "line": 308
+      },
+      {
+        "file": "server/coop-symbiote.js",
+        "line": 776
+      },
+      {
+        "file": "server/coop-symbiote.js",
+        "line": 789
+      },
+      {
+        "file": "server/coop-symbiote.js",
+        "line": 790
+      },
+      {
+        "file": "server/coop-symbiote.js",
+        "line": 792
+      },
+      {
+        "file": "server/coop-symbiote.js",
+        "line": 793
+      },
+      {
+        "file": "server/coop-symbiote.js",
+        "line": 985
+      },
+      {
+        "file": "server/coop-symbiote.js",
+        "line": 1128
+      },
+      {
+        "file": "server/helix-db.js",
+        "line": 59
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 120
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 803
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 2991
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 2995
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 2998
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 3037
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 3066
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 3087
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 3972
+      },
+      {
+        "file": "server/eclipse/orchestration/run-graph.js",
+        "line": 2
+      },
+      {
+        "file": "server/eclipse/orchestration/state.js",
+        "line": 2
+      },
+      {
+        "file": "server/eclipse/orchestration/store.js",
+        "line": 1
+      },
+      {
+        "file": "server/eclipse/orchestration/store.js",
+        "line": 10
+      },
+      {
+        "file": "server/eclipse/evidence/store.js",
+        "line": 4
+      },
+      {
+        "file": "server/eclipse/evals/test-w5-e2e.js",
+        "line": 35
+      },
+      {
+        "file": "server/eclipse/db/migrations.js",
+        "line": 1
+      },
+      {
+        "file": "server/eclipse/db/migrations.js",
+        "line": 160
+      },
+      {
+        "file": "server/apex/apex-bots.js",
+        "line": 137
+      },
+      {
+        "file": "server/apex/apex-paper.js",
+        "line": 8
+      },
+      {
+        "file": "server/apex/apex-paper.js",
+        "line": 30
+      },
+      {
+        "file": "scripts/coop-symbiote-check.mjs",
+        "line": 154
+      },
+      {
+        "file": "scripts/coop-symbiote-check.mjs",
+        "line": 157
+      },
+      {
+        "file": "scripts/memory-vnext-wave1-audit.mjs",
+        "line": 27
+      },
+      {
+        "file": "scripts/memory-vnext-wave1-audit.mjs",
+        "line": 28
+      },
+      {
+        "file": "scripts/memory-vnext-wave1-audit.mjs",
+        "line": 30
+      }
+    ],
+    "directGemini": [
+      {
+        "file": "server.js",
+        "line": 90
+      },
+      {
+        "file": "server.js",
+        "line": 745
+      },
+      {
+        "file": "server.js",
+        "line": 784
+      },
+      {
+        "file": "server.js",
+        "line": 812
+      },
+      {
+        "file": "server.js",
+        "line": 1001
+      },
+      {
+        "file": "server.js",
+        "line": 1037
+      },
+      {
+        "file": "server.js",
+        "line": 1056
+      },
+      {
+        "file": "server.js",
+        "line": 1077
+      },
+      {
+        "file": "server.js",
+        "line": 1092
+      },
+      {
+        "file": "server.js",
+        "line": 1110
+      },
+      {
+        "file": "server.js",
+        "line": 3013
+      },
+      {
+        "file": "server.js",
+        "line": 3126
+      },
+      {
+        "file": "server.js",
+        "line": 4421
+      },
+      {
+        "file": "server.js",
+        "line": 6104
+      },
+      {
+        "file": "server.js",
+        "line": 6136
+      },
+      {
+        "file": "server.js",
+        "line": 6256
+      },
+      {
+        "file": "server.js",
+        "line": 6448
+      },
+      {
+        "file": "server.js",
+        "line": 6452
+      },
+      {
+        "file": "server.js",
+        "line": 6894
+      },
+      {
+        "file": "server.js",
+        "line": 6913
+      },
+      {
+        "file": "server.js",
+        "line": 6914
+      },
+      {
+        "file": "server.js",
+        "line": 6915
+      },
+      {
+        "file": "server.js",
+        "line": 6928
+      },
+      {
+        "file": "server.js",
+        "line": 7086
+      },
+      {
+        "file": "server.js",
+        "line": 7094
+      },
+      {
+        "file": "server.js",
+        "line": 7139
+      },
+      {
+        "file": "server.js",
+        "line": 7156
+      },
+      {
+        "file": "server.js",
+        "line": 7177
+      },
+      {
+        "file": "server.js",
+        "line": 7178
+      },
+      {
+        "file": "server.js",
+        "line": 7179
+      },
+      {
+        "file": "server.js",
+        "line": 7195
+      },
+      {
+        "file": "server.js",
+        "line": 7343
+      },
+      {
+        "file": "server.js",
+        "line": 7582
+      },
+      {
+        "file": "server.js",
+        "line": 7665
+      },
+      {
+        "file": "server.js",
+        "line": 7717
+      },
+      {
+        "file": "server.js",
+        "line": 7722
+      },
+      {
+        "file": "server.js",
+        "line": 7769
+      },
+      {
+        "file": "server.js",
+        "line": 7770
+      },
+      {
+        "file": "server.js",
+        "line": 7771
+      },
+      {
+        "file": "server.js",
+        "line": 7811
+      },
+      {
+        "file": "server.js",
+        "line": 7812
+      },
+      {
+        "file": "server.js",
+        "line": 7813
+      },
+      {
+        "file": "server.js",
+        "line": 7857
+      },
+      {
+        "file": "server.js",
+        "line": 7862
+      },
+      {
+        "file": "server.js",
+        "line": 7878
+      },
+      {
+        "file": "server.js",
+        "line": 7903
+      },
+      {
+        "file": "server.js",
+        "line": 7934
+      },
+      {
+        "file": "server.js",
+        "line": 7935
+      },
+      {
+        "file": "server.js",
+        "line": 7936
+      },
+      {
+        "file": "server.js",
+        "line": 8007
+      },
+      {
+        "file": "server.js",
+        "line": 8272
+      },
+      {
+        "file": "server.js",
+        "line": 8299
+      },
+      {
+        "file": "server.js",
+        "line": 8410
+      },
+      {
+        "file": "server.js",
+        "line": 8452
+      },
+      {
+        "file": "server.js",
+        "line": 8553
+      },
+      {
+        "file": "server.js",
+        "line": 8587
+      },
+      {
+        "file": "server.js",
+        "line": 8732
+      },
+      {
+        "file": "server.js",
+        "line": 8765
+      },
+      {
+        "file": "server.js",
+        "line": 8784
+      },
+      {
+        "file": "server.js",
+        "line": 8794
+      },
+      {
+        "file": "server.js",
+        "line": 9034
+      },
+      {
+        "file": "server.js",
+        "line": 9146
+      },
+      {
+        "file": "server.js",
+        "line": 9177
+      },
+      {
+        "file": "server.js",
+        "line": 9588
+      },
+      {
+        "file": "server.js",
+        "line": 9668
+      },
+      {
+        "file": "server.js",
+        "line": 11635
+      },
+      {
+        "file": "server.js",
+        "line": 11909
+      },
+      {
+        "file": "server.js",
+        "line": 11926
+      },
+      {
+        "file": "server.js",
+        "line": 11929
+      },
+      {
+        "file": "worker/index.ts",
+        "line": 8
+      },
+      {
+        "file": "worker/index.ts",
+        "line": 294
+      },
+      {
+        "file": "worker/index.ts",
+        "line": 295
+      },
+      {
+        "file": "worker/index.ts",
+        "line": 470
+      },
+      {
+        "file": "worker/index.ts",
+        "line": 471
+      },
+      {
+        "file": "worker/index.ts",
+        "line": 544
+      },
+      {
+        "file": "worker/index.ts",
+        "line": 546
+      },
+      {
+        "file": "worker/index.ts",
+        "line": 567
+      },
+      {
+        "file": "worker/index.ts",
+        "line": 568
+      },
+      {
+        "file": "worker/index.ts",
+        "line": 586
+      },
+      {
+        "file": "tests/backend/capabilities.test.js",
+        "line": 46
+      },
+      {
+        "file": "tests/backend/era2-contract.test.js",
+        "line": 26
+      },
+      {
+        "file": "tests/backend/jarvis-intelligence.test.js",
+        "line": 245
+      },
+      {
+        "file": "tests/backend/latency-reliability.test.js",
+        "line": 141
+      },
+      {
+        "file": "tests/backend/neural-vault.test.js",
+        "line": 92
+      },
+      {
+        "file": "tests/backend/neural-vault.test.js",
+        "line": 97
+      },
+      {
+        "file": "tests/backend/neural-vault.test.js",
+        "line": 98
+      },
+      {
+        "file": "src/liveVoice.ts",
+        "line": 1
+      },
+      {
+        "file": "server/agent-runtime.js",
+        "line": 1
+      },
+      {
+        "file": "server/capability-engine.js",
+        "line": 1300
+      },
+      {
+        "file": "server/capability-engine.js",
+        "line": 2099
+      },
+      {
+        "file": "server/capability-engine.js",
+        "line": 2101
+      },
+      {
+        "file": "server/code-knowledge.js",
+        "line": 4
+      },
+      {
+        "file": "server/computer-use.js",
+        "line": 267
+      },
+      {
+        "file": "server/computer-use.js",
+        "line": 294
+      },
+      {
+        "file": "server/computer-use.js",
+        "line": 336
+      },
+      {
+        "file": "server/computer-use.js",
+        "line": 359
+      },
+      {
+        "file": "server/computer-use.js",
+        "line": 380
+      },
+      {
+        "file": "server/computer-use.js",
+        "line": 451
+      },
+      {
+        "file": "server/computer-use.js",
+        "line": 585
+      },
+      {
+        "file": "server/computer-use.js",
+        "line": 713
+      },
+      {
+        "file": "server/helix-pipeline.js",
+        "line": 18
+      },
+      {
+        "file": "server/helix-pipeline.js",
+        "line": 21
+      },
+      {
+        "file": "server/helix-pipeline.js",
+        "line": 30
+      },
+      {
+        "file": "server/helix-pipeline.js",
+        "line": 55
+      },
+      {
+        "file": "server/helix-pipeline.js",
+        "line": 86
+      },
+      {
+        "file": "server/helix-pipeline.js",
+        "line": 98
+      },
+      {
+        "file": "server/helix-tab-classifier.js",
+        "line": 88
+      },
+      {
+        "file": "server/helix-tab-classifier.js",
+        "line": 97
+      },
+      {
+        "file": "server/helix-tab-classifier.js",
+        "line": 138
+      },
+      {
+        "file": "server/helix-tab-classifier.js",
+        "line": 150
+      },
+      {
+        "file": "server/helix-tab-classifier.js",
+        "line": 257
+      },
+      {
+        "file": "server/helix-tab-classifier.js",
+        "line": 268
+      },
+      {
+        "file": "server/helix-tab-classifier.js",
+        "line": 298
+      },
+      {
+        "file": "server/helix-tab-classifier.js",
+        "line": 304
+      },
+      {
+        "file": "server/helix-tab-classifier.js",
+        "line": 307
+      },
+      {
+        "file": "server/helix-tab-classifier.js",
+        "line": 309
+      },
+      {
+        "file": "server/helix-tab-classifier.js",
+        "line": 311
+      },
+      {
+        "file": "server/memory-extractor.js",
+        "line": 76
+      },
+      {
+        "file": "server/neural-vault.js",
+        "line": 1909
+      },
+      {
+        "file": "server/research-v2.js",
+        "line": 201
+      },
+      {
+        "file": "server/eclipse/model/adapter.js",
+        "line": 7
+      },
+      {
+        "file": "server/eclipse/model/interactions-client.js",
+        "line": 10
+      },
+      {
+        "file": "server/eclipse/integration/index.js",
+        "line": 7
+      },
+      {
+        "file": "server/eclipse/integration/index.js",
+        "line": 39
+      },
+      {
+        "file": "server/eclipse/evals/live-compare.js",
+        "line": 2
+      },
+      {
+        "file": "server/eclipse/evals/live-compare.js",
+        "line": 3
+      },
+      {
+        "file": "server/eclipse/evals/live-compare.js",
+        "line": 4
+      },
+      {
+        "file": "server/eclipse/evals/live-compare.js",
+        "line": 18
+      },
+      {
+        "file": "server/eclipse/evals/live-compare.js",
+        "line": 21
+      },
+      {
+        "file": "server/eclipse/evals/live-smoke.js",
+        "line": 5
+      },
+      {
+        "file": "server/eclipse/evals/live-smoke.js",
+        "line": 10
+      },
+      {
+        "file": "server/eclipse/evals/live-smoke.js",
+        "line": 12
+      },
+      {
+        "file": "server/eclipse/evals/live-smoke.js",
+        "line": 14
+      },
+      {
+        "file": "server/cortex/research-orchestrator.js",
+        "line": 113
+      },
+      {
+        "file": "scripts/coop-cross-machine-check.mjs",
+        "line": 53
+      },
+      {
+        "file": "scripts/coop-e2e-check.mjs",
+        "line": 86
+      },
+      {
+        "file": "scripts/coop-patchcourt-check.mjs",
+        "line": 77
+      },
+      {
+        "file": "scripts/coop-signal-check.mjs",
+        "line": 44
+      },
+      {
+        "file": "scripts/coop-symbiote-check.mjs",
+        "line": 63
+      },
+      {
+        "file": "scripts/coop-w8-check.mjs",
+        "line": 50
+      },
+      {
+        "file": "scripts/jarvis-actions-memory-check.mjs",
+        "line": 147
+      },
+      {
+        "file": "scripts/jarvis-actions-memory-check.mjs",
+        "line": 149
+      },
+      {
+        "file": "scripts/jarvis-actions-memory-check.mjs",
+        "line": 150
+      },
+      {
+        "file": "scripts/jarvis-actions-memory-check.mjs",
+        "line": 354
+      },
+      {
+        "file": "scripts/jarvis-system-check.mjs",
+        "line": 95
+      },
+      {
+        "file": "scripts/jarvis-system-check.mjs",
+        "line": 279
+      },
+      {
+        "file": "scripts/jarvis-system-check.mjs",
+        "line": 280
+      },
+      {
+        "file": "scripts/memory-vnext-wave1-audit.mjs",
+        "line": 233
+      }
+    ]
+  },
+  "environmentVariableNames": [
+    {
+      "name": "ANTHROPIC_API_KEY",
+      "files": [
+        "server.js",
+        "server/arbiter/arbiter-llm.js"
+      ]
+    },
+    {
+      "name": "APEX_",
+      "files": [
+        "server/providers/apex/keyed-adapters.js"
+      ]
+    },
+    {
+      "name": "APEX_ALPHAVANTAGE_KEY",
+      "files": [
+        "server/providers/apex/keyed-adapters.js"
+      ]
+    },
+    {
+      "name": "APEX_COINGECKO_KEY",
+      "files": [
+        "server/providers/apex/keyed-adapters.js"
+      ]
+    },
+    {
+      "name": "APEX_FINNHUB_KEY",
+      "files": [
+        "server/providers/apex/keyed-adapters.js"
+      ]
+    },
+    {
+      "name": "APEX_FRED_KEY",
+      "files": [
+        "server/providers/apex/keyed-adapters.js"
+      ]
+    },
+    {
+      "name": "APEX_MARKETAUX_KEY",
+      "files": [
+        "server/providers/apex/keyed-adapters.js"
+      ]
+    },
+    {
+      "name": "APEX_TIINGO_KEY",
+      "files": [
+        "server/providers/apex/keyed-adapters.js"
+      ]
+    },
+    {
+      "name": "BRAVE_SEARCH_API_KEY",
+      "files": [
+        "server/research-v2.js"
+      ]
+    },
+    {
+      "name": "CF_PAGES",
+      "files": [
+        "server.js"
+      ]
+    },
+    {
+      "name": "CI",
+      "files": [
+        ".codex-analysis/repo-research/playwright-mcp/playwright.config.ts"
+      ]
+    },
+    {
+      "name": "COOP_TURN_SECRET",
+      "files": [
+        "server/coop-transport.js"
+      ]
+    },
+    {
+      "name": "COOP_TURN_URLS",
+      "files": [
+        "server/coop-transport.js"
+      ]
+    },
+    {
+      "name": "DEPLOYMENT_TIMESTAMP",
+      "files": [
+        "server.js"
+      ]
+    },
+    {
+      "name": "ECLIPSE_USE_INTERACTIONS",
+      "files": [
+        "server/eclipse/model/interactions-client.js"
+      ]
+    },
+    {
+      "name": "EXA_API_KEY",
+      "files": [
+        "server/research-v2.js"
+      ]
+    },
+    {
+      "name": "FIGMA_ACCESS_TOKEN",
+      "files": [
+        "server.js"
+      ]
+    },
+    {
+      "name": "GEMINI_API_KEY",
+      "files": [
+        "server.js",
+        "server/capability-engine.js",
+        "server/computer-use.js",
+        "server/cortex/research-orchestrator.js",
+        "server/eclipse/evals/live-compare.js",
+        "server/eclipse/evals/live-smoke.js",
+        "server/eclipse/integration/index.js",
+        "server/research-v2.js"
+      ]
+    },
+    {
+      "name": "GITHUB_TOKEN",
+      "files": [
+        "server.js"
+      ]
+    },
+    {
+      "name": "GOOGLE_ACCESS_TOKEN",
+      "files": [
+        "server/providers/google-provider.js"
+      ]
+    },
+    {
+      "name": "GOOGLE_CLIENT_ID",
+      "files": [
+        "server/providers/google-provider.js"
+      ]
+    },
+    {
+      "name": "GOOGLE_CLIENT_SECRET",
+      "files": [
+        "server/providers/google-provider.js"
+      ]
+    },
+    {
+      "name": "GOOGLE_REFRESH_TOKEN",
+      "files": [
+        "server/providers/google-provider.js"
+      ]
+    },
+    {
+      "name": "HIGGSFIELD_API_KEY",
+      "files": [
+        "server.js"
+      ]
+    },
+    {
+      "name": "INSTAGRAM_ACCESS_TOKEN",
+      "files": [
+        "server.js",
+        "server/capability-engine.js"
+      ]
+    },
+    {
+      "name": "INSTAGRAM_ACCOUNT_ID",
+      "files": [
+        "server.js",
+        "server/capability-engine.js"
+      ]
+    },
+    {
+      "name": "JARVIS_ACTION_TEST_PORT",
+      "files": [
+        "scripts/jarvis-actions-memory-check.mjs"
+      ]
+    },
+    {
+      "name": "JARVIS_APP_PORT",
+      "files": [
+        "electron/main.cjs"
+      ]
+    },
+    {
+      "name": "JARVIS_BROKER_TOKEN",
+      "files": [
+        "server/windows-broker-service.js"
+      ]
+    },
+    {
+      "name": "JARVIS_BROWSER_HEADLESS",
+      "files": [
+        "server/browser-service.js"
+      ]
+    },
+    {
+      "name": "JARVIS_COOP_TEST_PORT",
+      "files": [
+        "scripts/coop-symbiote-check.mjs"
+      ]
+    },
+    {
+      "name": "JARVIS_DESKTOP_CONTROL_DRY_RUN",
+      "files": [
+        "server.js"
+      ]
+    },
+    {
+      "name": "JARVIS_GEMINI_API_BASE_URL",
+      "files": [
+        "server.js",
+        "server/capability-engine.js",
+        "server/cortex/research-orchestrator.js",
+        "server/research-v2.js"
+      ]
+    },
+    {
+      "name": "JARVIS_GEMINI_BUDGET_MS",
+      "files": [
+        "server.js"
+      ]
+    },
+    {
+      "name": "JARVIS_HOST",
+      "files": [
+        "server.js"
+      ]
+    },
+    {
+      "name": "JARVIS_MOCK_SCREEN_CAPTURE",
+      "files": [
+        "server.js"
+      ]
+    },
+    {
+      "name": "JARVIS_PORT",
+      "files": [
+        "scripts/cortex-v4-regression.cjs"
+      ]
+    },
+    {
+      "name": "JARVIS_RELAY_SECRET",
+      "files": [
+        "server.js"
+      ]
+    },
+    {
+      "name": "JARVIS_RUNTIME_DIR",
+      "files": [
+        "electron/main.cjs",
+        "server.js"
+      ]
+    },
+    {
+      "name": "JARVIS_SYSTEM_TEST_GEMINI_PORT",
+      "files": [
+        "scripts/jarvis-system-check.mjs"
+      ]
+    },
+    {
+      "name": "JARVIS_SYSTEM_TEST_PORT",
+      "files": [
+        "scripts/jarvis-system-check.mjs"
+      ]
+    },
+    {
+      "name": "JARVIS_URL",
+      "files": [
+        "scripts/benchmark-latency.mjs"
+      ]
+    },
+    {
+      "name": "JARVIS_VISUAL_URL",
+      "files": [
+        "scripts/capture-jarvis-reference.mjs"
+      ]
+    },
+    {
+      "name": "KALSHI_API_KEY_ID",
+      "files": [
+        "server/providers/kalshi-provider.js"
+      ]
+    },
+    {
+      "name": "KALSHI_PRIVATE_KEY",
+      "files": [
+        "server/providers/kalshi-provider.js"
+      ]
+    },
+    {
+      "name": "LOCALAPPDATA",
+      "files": [
+        "scripts/memory-vnext-wave1-audit.mjs"
+      ]
+    },
+    {
+      "name": "MCP_IN_DOCKER",
+      "files": [
+        ".codex-analysis/repo-research/playwright-mcp/playwright.config.ts"
+      ]
+    },
+    {
+      "name": "NEWS_API_KEY",
+      "files": [
+        "server.js",
+        "server/capability-engine.js",
+        "tests/backend/capabilities.test.js"
+      ]
+    },
+    {
+      "name": "NODE_ENV",
+      "files": [
+        "server.js"
+      ]
+    },
+    {
+      "name": "O",
+      "files": [
+        "server/capability-engine.js"
+      ]
+    },
+    {
+      "name": "ONLY",
+      "files": [
+        "server/eclipse/evals/live-compare.js"
+      ]
+    },
+    {
+      "name": "OPENAI_API_KEY",
+      "files": [
+        "server.js"
+      ]
+    },
+    {
+      "name": "PLAYWRIGHT_PORT",
+      "files": [
+        "playwright.config.ts"
+      ]
+    },
+    {
+      "name": "PORT",
+      "files": [
+        "electron/main.cjs",
+        "scripts/capture-jarvis-reference.mjs",
+        "server.js"
+      ]
+    },
+    {
+      "name": "PRINT_ENV",
+      "files": [
+        ".codex-analysis/repo-research/playwright-mcp/update-readme.js"
+      ]
+    },
+    {
+      "name": "SYN_GUEST_PORT",
+      "files": [
+        "scripts/coop-cross-machine-check.mjs"
+      ]
+    },
+    {
+      "name": "SYN_HOST_PORT",
+      "files": [
+        "scripts/coop-cross-machine-check.mjs"
+      ]
+    },
+    {
+      "name": "SYN_W3_PORT",
+      "files": [
+        "scripts/coop-e2e-check.mjs"
+      ]
+    },
+    {
+      "name": "SYN_W4_PORT",
+      "files": [
+        "scripts/coop-signal-check.mjs"
+      ]
+    },
+    {
+      "name": "SYN_W7_PORT",
+      "files": [
+        "scripts/coop-patchcourt-check.mjs"
+      ]
+    },
+    {
+      "name": "SYN_W8_PORT",
+      "files": [
+        "scripts/coop-w8-check.mjs"
+      ]
+    },
+    {
+      "name": "TAVILY_API_KEY",
+      "files": [
+        "server/research-v2.js"
+      ]
+    },
+    {
+      "name": "USERPROFILE",
+      "files": [
+        "server/pc-activity-graph.js"
+      ]
+    },
+    {
+      "name": "WORKERS_CI",
+      "files": [
+        "server.js"
+      ]
+    }
+  ],
+  "protectedLocationsPresent": {
+    "dotEnv": true,
+    "secretsDirectory": true
+  }
+}

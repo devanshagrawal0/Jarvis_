@@ -210,10 +210,12 @@ function createToolGateway({ capabilityEngine, moduleRegistry, codeKnowledge }) 
     }
     if (/\b(browser|website|web page|chrome|canvas|instagram|gmail|youtube|you tube|github|reddit|google|kalshi|amazon|form|upload|download|submit|click|open .*site|open .*on (?:my )?(?:laptop|computer)|go to|log in)\b/i.test(prompt)) {
       alwaysUseful.push(
+        "computer_use",
         "desktop_control",
         "open_url",
         "browser_status",
         "browser_login_handoff",
+        "browser_login_complete",
         "browser_page_brief",
         "browser_navigate",
         "browser_snapshot",
@@ -244,10 +246,20 @@ function createToolGateway({ capabilityEngine, moduleRegistry, codeKnowledge }) 
       && filteredAlwaysUseful.length === 0;
     if (isPureConversation) return [];
 
-    return [...new Set([...filteredAlwaysUseful, ...filteredSelected])]
-      .map((name) => capabilityEngine.declarations.find((item) => item.name === name))
-      .filter(Boolean)
-      .slice(0, limit);
+    // `alwaysUseful` entries were matched against this specific prompt — "save this to a file"
+    // put `write_file` here deliberately. Truncating the merged list meant that once enough
+    // earlier blocks matched (pc-graph, artifact, codebase), the explicitly-requested tool fell
+    // off the end and the model was told it had no way to write a file. Prompt-matched tools are
+    // now kept in full and the scored suggestions fill whatever room is left; a request never
+    // loses the tool it explicitly asked for.
+    const declarationFor = (name) => capabilityEngine.declarations.find((item) => item.name === name);
+    const required = [...new Set(filteredAlwaysUseful)].map(declarationFor).filter(Boolean);
+    const requiredNames = new Set(required.map((item) => item.name));
+    const suggested = [...new Set(filteredSelected)]
+      .filter((name) => !requiredNames.has(name))
+      .map(declarationFor)
+      .filter(Boolean);
+    return [...required, ...suggested.slice(0, Math.max(0, limit - required.length))];
   }
 
   function catalog() {
@@ -263,7 +275,12 @@ function createToolGateway({ capabilityEngine, moduleRegistry, codeKnowledge }) 
     };
   }
 
-  return { mcp, selectTools, catalog };
+  function declarationsFor(names = []) {
+    const allowed = new Set(names);
+    return capabilityEngine.declarations.filter((item) => allowed.has(item.name));
+  }
+
+  return { mcp, selectTools, declarationsFor, catalog };
 }
 
 module.exports = { createToolGateway };

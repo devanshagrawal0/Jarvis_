@@ -155,10 +155,17 @@ function createUserContext({ runtimeDir, owner = "Dev" }) {
     if (existing) db.prepare("UPDATE preferences SET value=?,strength=?,source=?,updated_at=? WHERE id=?").run(value, strength, source, nowIso(), existing.id);
     else db.prepare("INSERT INTO preferences (category,subject,value,strength,source,updated_at) VALUES (?,?,?,?,?,?)").run(category, subject, value, strength, source, nowIso());
   }
+  // Seeded rows are installer guesses written at strength 1.0. Ordering by strength alone made
+  // them indistinguishable from things the owner actually said, and since nothing else read
+  // `source`, a guess was served to the model as authoritative owner truth — which is how the
+  // seeded "concise, direct, no filler" kept outranking the owner stating they wanted detailed,
+  // well-written answers. Anything the owner stated now sorts ahead of anything seeded, and
+  // within a tier the most recently updated wins so a correction takes effect immediately.
+  const PREFERENCE_ORDER = "ORDER BY CASE WHEN source='seed' THEN 1 ELSE 0 END ASC, strength DESC, updated_at DESC";
   function getPreferences({ category = null, limit = 12 } = {}) {
     return category
-      ? db.prepare("SELECT category,subject,value FROM preferences WHERE category=? ORDER BY strength DESC LIMIT ?").all(category, limit)
-      : db.prepare("SELECT category,subject,value FROM preferences ORDER BY strength DESC LIMIT ?").all(limit);
+      ? db.prepare(`SELECT category,subject,value,source FROM preferences WHERE category=? ${PREFERENCE_ORDER} LIMIT ?`).all(category, limit)
+      : db.prepare(`SELECT category,subject,value,source FROM preferences ${PREFERENCE_ORDER} LIMIT ?`).all(limit);
   }
 
   // ── Goals ──────────────────────────────────────────────────────────────
@@ -179,12 +186,110 @@ function createUserContext({ runtimeDir, owner = "Dev" }) {
     db.prepare("INSERT INTO locations (label,address,lat,lng,timezone,is_current,source,valid_from,confidence) VALUES ('mentioned',?,?,?,?,0,'user_stated',?,0.9)")
       .run(place_name, lat, lng, iana_tz, nowIso());
   }
-  // Resolution order: explicit session mention → browser tz → home → default.
+  // ── Detecting "I am in X" ───────────────────────────────────────────────
+  // Best-effort timezone for a stated place. This is deliberately a small lookup, not a
+  // geocoder: getting the CITY right in answers matters more than the clock, and guessing a
+  // timezone wrongly is worse than leaving it to fall back. Unknown places store a null tz and
+  // inherit the browser/home zone rather than silently claiming a wrong one.
+  const TZ_HINTS = [
+    [/\bindia\b|\bsurat\b|\bmumbai\b|\bdelhi\b|\bbengaluru\b|\bbangalore\b|\bhyderabad\b|\bchennai\b|\bkolkata\b|\bpune\b|\bahmedabad\b/i, "Asia/Kolkata"],
+    [/\b(uk|england|london|manchester|scotland)\b/i, "Europe/London"],
+    [/\b(uae|dubai|abu dhabi)\b/i, "Asia/Dubai"],
+    [/\b(singapore)\b/i, "Asia/Singapore"],
+    [/\b(japan|tokyo)\b/i, "Asia/Tokyo"],
+    [/\b(australia|sydney|melbourne)\b/i, "Australia/Sydney"],
+    [/\b(germany|berlin|munich|france|paris|spain|madrid|italy|rome|netherlands|amsterdam)\b/i, "Europe/Berlin"],
+    [/\b(boston|new york|nyc|miami|atlanta|philadelphia|washington|toronto)\b/i, "America/New_York"],
+    [/\b(chicago|dallas|houston|austin)\b/i, "America/Chicago"],
+    [/\b(denver|phoenix|salt lake)\b/i, "America/Denver"],
+    [/\b(san francisco|sf|los angeles|la|seattle|portland|vancouver)\b/i, "America/Los_Angeles"],
+  ];
+  function timezoneHint(placeName) {
+    for (const [rx, tz] of TZ_HINTS) if (rx.test(placeName)) return tz;
+    return null;
+  }
+
+  // "in <x>" is wildly ambiguous in English — "in a meeting", "in trouble", "in the middle of
+  // it". Rather than guess, anything matching a non-place sense is rejected outright; a missed
+  // location is recoverable, a phantom one silently poisons every future answer.
+  const NOT_A_PLACE = /^(?:a|an|the|my|your|this|that|here|there|it|bed|class|school|work|office|trouble|love|charge|control|debt|touch|need|pain|shape|order|progress|person|general|fact|time|between|front|back|case|doubt|danger|luck|hurry|meeting|call|line|queue|traffic|hospital|jail|prison|court|range|sync|theory|practice|question|common|total|full|part|half)\b/i;
+  const PLACE_SHAPE = /^[\p{L}][\p{L}\s.'’\-,]{1,48}$/u;
+
+  // "I am" appears as i'm / i’m / im / i am — the bare-"im" form is what actually gets typed.
+  const I_AM = String.raw`\b(?:i\s*['’]\s*m|im|i\s+am|i\s+ve|i\s*['’]\s*ve|i\s+have)`;
+  // Commas are allowed inside a place ("Surat, India") but a conjunction ends it, so
+  // "I'm in Boston and then we fly out" captures "Boston", not the rest of the sentence.
+  const PLACE = String.raw`([^.!?;]{2,60})`;
+  const LOCATION_PATTERNS = [
+    // Bare "i moved to X" is the common phrasing, so the auxiliary is optional here.
+    { rx: /\bi(?:\s*['’]\s*ve|\s+have|\s+ve)?\s+(?:now\s+)?(?:moved|relocated)\s+to\s+([^.!?;]{2,60})/i, durable: true },
+    { rx: /\bi\s+(?:live|reside)\s+in\s+([^.!?;]{2,60})/i, durable: true },
+    { rx: /\bmy\s+(?:home|base)\s+is\s+(?:in\s+)?([^.!?;]{2,60})/i, durable: true },
+    { rx: new RegExp(`${I_AM}\\s+(?:currently\\s+)?(?:visiting|travelling\\s+to|traveling\\s+to)\\s+${PLACE}`, "i"), durable: false },
+    { rx: new RegExp(`${I_AM}\\s+(?:currently\\s+)?(?:in|at)\\s+${PLACE}`, "i"), durable: false },
+  ];
+
+  // Returns { placeName, ianaTz, durable } or null. Pure — no writes, so it is safe to call on
+  // every turn and safe to unit test.
+  function detectLocationStatement(text) {
+    const raw = String(text || "");
+    if (!raw.trim()) return null;
+    for (const { rx, durable } of LOCATION_PATTERNS) {
+      const m = raw.match(rx);
+      if (!m) continue;
+      let place = String(m[1] || "")
+        // A conjunction ends the place: "in Boston and then we fly out" is Boston, not the
+        // whole clause. Commas survive so "Surat, India" stays intact.
+        .split(/\s+(?:and|but|so|then|because|while|for|to)\s+/i)[0]
+        .replace(/\b(right now|currently|at the moment|now|today|atm|rn)\b/gi, "")
+        .replace(/\s+/g, " ")
+        .trim()
+        .replace(/^[,;:\-\s]+|[.,;:!?\-\s]+$/g, "");
+      if (!place || place.length < 2) continue;
+      if (NOT_A_PLACE.test(place)) continue;
+      if (!PLACE_SHAPE.test(place)) continue;
+      return { placeName: place, ianaTz: timezoneHint(place), durable };
+    }
+    return null;
+  }
+
+  // Detect + persist in one step, so a correction survives the turn it was made in. Durable
+  // phrasings ("I live in X", "I moved to X") replace home; transient ones ("I'm in X right
+  // now") are recorded as a mention and expire on their own via latestMention's window.
+  function recordLocationStatement(text) {
+    const found = detectLocationStatement(text);
+    if (!found) return null;
+    try {
+      if (found.durable) setHome({ place_name: found.placeName, iana_tz: found.ianaTz, source: "user_stated" });
+      else noteMention({ place_name: found.placeName, iana_tz: found.ianaTz });
+    } catch { return null; }
+    return found;
+  }
+
+  // The most recent thing the owner actually said about where they are. Without this, a stated
+  // location only survived the single turn it was passed into — every caller invokes
+  // resolveLocation() with no arguments, so a correction was silently dropped and the next
+  // question fell straight back to the seeded home row.
+  function latestMention(maxAgeHours = 12) {
+    const cutoff = new Date(Date.now() - Math.max(0, maxAgeHours) * 3600_000).toISOString();
+    return db.prepare("SELECT * FROM locations WHERE label='mentioned' AND valid_to IS NULL AND valid_from >= ? ORDER BY id DESC LIMIT 1").get(cutoff) || null;
+  }
+
+  // Resolution order: explicit session mention → recent stated mention → browser tz → home →
+  // default. A stated location outranks the browser timezone: a VPN or a laptop that never had
+  // its clock changed should not override the owner saying, in words, where they are.
   function resolveLocation({ sessionMention = null, browserTz = null } = {}) {
     if (sessionMention?.place_name) {
       return { placeName: sessionMention.place_name, ianaTz: sessionMention.iana_tz || browserTz || homeLocation()?.timezone || "America/New_York", lat: sessionMention.lat ?? null, lon: sessionMention.lng ?? null, source: "session" };
     }
     const home = homeLocation();
+    // Recency decides between the two things the owner said. A transient "I'm in X right now"
+    // outranks an old home, but declaring a NEW home ("I moved to Y") must outrank an older
+    // mention — otherwise the move is permanently shadowed by a stale passing remark.
+    const stated = latestMention();
+    if (stated && !(home && home.source !== "seed" && Date.parse(home.valid_from || 0) > Date.parse(stated.valid_from || 0))) {
+      return { placeName: stated.address, ianaTz: stated.timezone || browserTz || home?.timezone || "America/New_York", lat: stated.lat ?? null, lon: stated.lng ?? null, source: "stated" };
+    }
     if (browserTz && (!home || home.timezone !== browserTz)) {
       return { placeName: home?.address || "(unknown)", ianaTz: browserTz, lat: home?.lat ?? null, lon: home?.lng ?? null, source: "browser" };
     }
@@ -236,7 +341,7 @@ function createUserContext({ runtimeDir, owner = "Dev" }) {
     getIdentity, updateIdentity, addFact, searchFacts,
     setPreference, getPreferences,
     addGoal, activeGoals,
-    homeLocation, setHome, noteMention, resolveLocation,
+    homeLocation, setHome, noteMention, resolveLocation, latestMention, detectLocationStatement, recordLocationStatement,
     renderProfileBlock, localTime, situationalContext,
   };
 }

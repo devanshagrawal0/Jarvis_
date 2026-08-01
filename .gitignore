@@ -26,7 +26,7 @@ build/
 # ─────────────────────────────────────────────────────────────
 #  Runtime data (databases, user memory, screen captures, logs)
 # ─────────────────────────────────────────────────────────────
-runtime/
+/runtime/
 output/
 *.sqlite
 *.sqlite-*
@@ -90,3 +90,11 @@ Thumbs.db
 eclipse-artifacts/
 undefined/
 '+process.env.SHOTS+'/
+bench/
+
+# Screenshots and probe captures from local verification runs
+shot.png
+on.png
+home.png
+oracle.png
+bridge-probe-*.png

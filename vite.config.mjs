@@ -11,6 +11,19 @@ export default defineConfig({
     dedupe: ["three", "@react-three/fiber", "@react-three/drei", "@react-three/postprocessing", "postprocessing"]
   },
   server: {
+    // `runtime/` holds live backend state, not source: the automation Chrome profile, SQLite
+    // databases and their -wal/-shm files, logs and artifacts. Watching it is useless for HMR
+    // and fatal in practice — Chrome keeps an exclusive lock on
+    // runtime/browser-profile/Default/Network/Cookies, so chokidar's watch() throws EBUSY and
+    // the unhandled FSWatcher 'error' event kills the whole dev server seconds after boot.
+    // That is why `vite preview` (no watcher) stayed up while `vite dev` died every time.
+    watch: {
+      ignored: [
+        "**/runtime/**",
+        "**/dist/**",
+        "**/.git/**",
+      ],
+    },
     proxy: {
       // ws:true forwards WebSocket upgrades in dev — needed for /mesh/coop/ws (Synapse live
       // channel), /mesh/ws (device mesh) and /api/kalshi/ws. In production the backend serves

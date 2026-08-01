@@ -147,9 +147,17 @@ export function KnowledgeGraph3D({ projectId }: { projectId?: string }) {
   const [raw, setRaw] = useState<{ nodes: { id: string; label: string; type: string }[]; links: { source: string; target: string; type: string }[] } | null>(null);
   const [live, setLive] = useState(false);
   const [layered, setLayered] = useState(true);
-  const [autoRotate, setAutoRotate] = useState(true);
+  // W9 #24: reduced-motion → no autonomous rotation (vestibular safety); user can still orbit.
+  const [autoRotate, setAutoRotate] = useState(() => !window.matchMedia?.("(prefers-reduced-motion: reduce)").matches);
   const [activeType, setActiveType] = useState<string | null>(null);
   const [, setHoveredId] = useState<string | null>(null);
+  // W9 #24: pause the WebGL render loop when the tab/pane is hidden (don't burn GPU offscreen).
+  const [visible, setVisible] = useState(() => !document.hidden);
+  useEffect(() => {
+    const onVis = () => setVisible(!document.hidden);
+    document.addEventListener("visibilitychange", onVis);
+    return () => document.removeEventListener("visibilitychange", onVis);
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -231,8 +239,8 @@ export function KnowledgeGraph3D({ projectId }: { projectId?: string }) {
     <div className="hxv-kg">
       <div className="hxv-kg-canvas">
         {nodes.length > 0 && (
-          <Canvas camera={{ position: [0, 40, 620], fov: 55, far: 5000 }} gl={{ antialias: true, alpha: false }} dpr={[1, 1.75]}>
-            <Scene nodes={nodes} links={links} autoRotate={autoRotate} activeType={activeType} onHover={setHoveredId} onSelect={select} />
+          <Canvas camera={{ position: [0, 40, 620], fov: 55, far: 5000 }} gl={{ antialias: true, alpha: false }} dpr={[1, 1.75]} frameloop={visible ? "always" : "never"}>
+            <Scene nodes={nodes} links={links} autoRotate={autoRotate && visible} activeType={activeType} onHover={setHoveredId} onSelect={select} />
           </Canvas>
         )}
       </div>

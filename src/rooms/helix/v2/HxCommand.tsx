@@ -8,10 +8,12 @@ export type Density = typeof DENSITIES[number];
 export const DENSITY_LABEL: Record<Density, string> = { comfortable: "Comfortable", compact: "Compact", ultra: "Ultra" };
 
 export const SHORTCUTS: { keys: string[]; desc: string; group: string }[] = [
-  { keys: ["⌘", "K"], desc: "Open the command palette", group: "General" },
+  { keys: ["⌘", "K"], desc: "Command palette — navigate, run actions, search evidence/decisions/artifacts", group: "General" },
   { keys: ["?"], desc: "Toggle this shortcut sheet", group: "General" },
   { keys: ["Esc"], desc: "Close palette / overlays", group: "General" },
   { keys: ["D"], desc: "Cycle density (Comfortable → Compact → Ultra)", group: "View" },
+  { keys: ["I"], desc: "Toggle the inspector rail", group: "View" },
+  { keys: ["←", "→"], desc: "Browser back / forward — walks surface history", group: "View" },
   { keys: ["G", "H"], desc: "Go to Home", group: "Navigate" },
   { keys: ["G", "P"], desc: "Go to Projects", group: "Navigate" },
   { keys: ["G", "A"], desc: "Go to Ask HELIX", group: "Navigate" },
