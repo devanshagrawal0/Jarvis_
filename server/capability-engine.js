@@ -63,6 +63,41 @@ function asNumber(value, fallback, min, max) {
   return Math.max(min, Math.min(max, parsed));
 }
 
+// The only guard on write_file / delete_file used to be a single regex covering three
+// directories on one drive. That left ProgramData, every other drive, UNC shares, and — the one
+// that matters — the per-user Startup folder writable, so a single approved write_file
+// established boot persistence. Both are `commit`-risk tools so an owner confirmation is still
+// required, but the guard should not be the thin part of that pair.
+const PROTECTED_WRITE_TARGETS = [
+  { rx: /^\\\\/, why: "UNC network paths are not a permitted target" },
+  { rx: /^\\\\\?\\/, why: "extended-length device paths are not a permitted target" },
+  { rx: /^[a-z]:\\windows\\/i, why: "the Windows directory is not writable" },
+  { rx: /^[a-z]:\\program files( \(x86\))?\\/i, why: "Program Files is not writable" },
+  { rx: /^[a-z]:\\programdata\\/i, why: "ProgramData is not writable" },
+  { rx: /^[a-z]:\\\$recycle\.bin\\/i, why: "the recycle bin is not a permitted target" },
+  { rx: /\\microsoft\\windows\\start menu\\programs\\startup\\/i, why: "the Startup folder would establish boot persistence" },
+  { rx: /\\appdata\\roaming\\microsoft\\windows\\recent\\/i, why: "the Recent items store is not a permitted target" },
+  { rx: /\\system32\\|\\syswow64\\/i, why: "system binaries are not writable" },
+  { rx: /\\\.git\\/i, why: "the git metadata directory is not writable" },
+  { rx: /\\node_modules\\/i, why: "installed dependencies are not writable" },
+];
+
+// The assistant's own state — memory databases, the encryption keyring, the browser profile —
+// must not be rewritable by a model-chosen path. Losing this would be silent and unrecoverable.
+function assertWritableTarget(filePath, runtimeDir) {
+  const target = String(filePath || "");
+  for (const rule of PROTECTED_WRITE_TARGETS) {
+    if (rule.rx.test(target)) throw errorWithStatus(`Refused: ${rule.why}.`, 403);
+  }
+  if (runtimeDir) {
+    const normalisedRuntime = path.resolve(runtimeDir).toLowerCase();
+    if (path.resolve(target).toLowerCase().startsWith(`${normalisedRuntime}${path.sep}`)) {
+      throw errorWithStatus("Refused: that path is inside Jarvis's own runtime state.", 403);
+    }
+  }
+  return target;
+}
+
 function ensureInside(root, candidate) {
   const resolvedRoot = fs.realpathSync.native(root);
   const resolved = fs.realpathSync.native(candidate);
@@ -2411,14 +2446,28 @@ function createCapabilityEngine({
     run_command: async (args) => {
       const cmd = cleanString(args.command, 4000);
       if (!cmd) throw errorWithStatus("command is required");
-      // Block PowerShell constructs that can cause infinite resource consumption
+      // A RESOURCE-EXHAUSTION HEURISTIC, not a security boundary. Everything here is trivially
+      // expressible another way — `%{}` for a loop, `&('i'+'ex')` or `[scriptblock]::Create()`
+      // for Invoke-Expression, `cmd /c start` for Start-Process — and the command runs with
+      // -ExecutionPolicy Bypass. Treating this list as containment would be a mistake; the gate
+      // that actually holds is the owner confirmation, which `run_command` now requires at EVERY
+      // autonomy level (see autonomy-policy.js). The list is widened anyway so the obvious
+      // runaway forms are caught before they burn the machine.
       const BLOCKED_PS = [
+        // loops, including the pipeline forms the original list missed entirely
         /\bwhile\s*\(/i, /\bfor\s*\(/i, /\bforeach\s*\(/i, /\bdo\s*\{/i,
-        /\bInvoke-Expression\b|\biex\b/i,
+        /\bForEach-Object\b/i, /\|\s*%\s*[{(]/, /\b\d+\s*\.\.\s*\d{4,}/,
+        /\bWhile\s*\(\s*\$true\s*\)/i,
+        // dynamic evaluation
+        /\bInvoke-Expression\b|\biex\b/i, /\[scriptblock\]::Create/i, /\bInvoke-Command\b/i,
+        // process launch
         /\bStart-Process\b|\bNew-Object\s+System\.Diagnostics\.Process\b/i,
+        /\[Diagnostics\.Process\]::Start/i, /\bcmd(\.exe)?\s+\/c\b/i,
         /\bInvoke-Item\b/i,
-        /\bSuspend-Job\b|\bRemove-Job\b/i,
-        /\bSet-MpPreference\b|\bDisable-WindowsOptionalFeature\b/i,
+        // background jobs that outlive the timeout
+        /\bStart-Job\b|\bSuspend-Job\b|\bRemove-Job\b/i, /\bRegister-ScheduledTask\b|\bschtasks\b/i,
+        // defence tampering
+        /\bSet-MpPreference\b|\bDisable-WindowsOptionalFeature\b/i, /\bAdd-MpPreference\b/i,
       ];
       const blocked = BLOCKED_PS.find((re) => re.test(cmd));
       if (blocked) throw errorWithStatus("Command contains a disallowed PowerShell construct", 403);
@@ -2440,9 +2489,7 @@ function createCapabilityEngine({
       // Bare filename → Desktop; ~ → home; absolute honored. (So "absdefgh.docx" lands on the Desktop.)
       const expanded = raw.startsWith("~") ? path.join(os.homedir(), raw.slice(1)) : raw;
       const filePath = path.isAbsolute(expanded) ? path.resolve(expanded) : path.join(realDesktopDir(), expanded);
-      if (/^C:\\(Windows|Program Files|Program Files \(x86\))\\/i.test(filePath)) {
-        throw errorWithStatus("Writing to system directories is not permitted", 403);
-      }
+      assertWritableTarget(filePath, runtimeDir); // write: system, persistence and Jarvis-state paths
       const content = String(args.content ?? "");
       const ext = path.extname(filePath).toLowerCase();
       fs.mkdirSync(path.dirname(filePath), { recursive: true });
@@ -2477,9 +2524,7 @@ function createCapabilityEngine({
     delete_file: async (args) => {
       const filePath = cleanString(args.path, 1000);
       if (!filePath) throw errorWithStatus("path is required");
-      if (/^C:\\(Windows|Program Files|Program Files \(x86\))\\/i.test(filePath)) {
-        throw errorWithStatus("Deleting system directories is not permitted", 403);
-      }
+      assertWritableTarget(filePath, runtimeDir); // delete: system, persistence and Jarvis-state paths
       const stat = fs.statSync(filePath, { throwIfNoEntry: false });
       if (!stat) throw errorWithStatus(`File not found: ${filePath}`, 404);
       if (stat.isDirectory()) {

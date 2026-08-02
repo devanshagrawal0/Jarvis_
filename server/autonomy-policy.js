@@ -76,7 +76,16 @@ function evaluateAutonomy({ definition, tool, args, profile, context, recentActi
   }
 
   const lowRiskLocalExecute = new Set(["screen_act", "desktop_control", "open_url", "youtube_open_video", "computer_use"]);
+  // Arbitrary code execution is never routine. `run_command` shells out with
+  // -ExecutionPolicy Bypass, and its own blocklist is a resource-exhaustion heuristic rather than
+  // a security boundary — every entry is trivially expressible another way (ForEach-Object for
+  // loops, &('i'+'ex') for Invoke-Expression, cmd /c start for Start-Process). The confirmation
+  // was therefore the only real gate, and `effectiveLevel !== "autopilot"` removed it at the
+  // highest autonomy level. Autopilot should mean "stop asking about routine actions", not "run
+  // any shell command unattended", so this one is confirmed at every level.
+  const alwaysConfirm = new Set(["run_command"]);
   const requiresConfirmation = Boolean(definition.risk === "commit"
+    || alwaysConfirm.has(tool)
     || (definition.risk === "execute" && effectiveLevel !== "autopilot" && !lowRiskLocalExecute.has(tool))
     || context.forceConfirmation);
   return { allowed: true, requiresConfirmation, profile: normalized, required, effectiveLevel };

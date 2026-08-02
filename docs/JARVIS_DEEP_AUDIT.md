@@ -71,6 +71,14 @@ Today's session produced four false claims that survived because nobody checked 
 | **B-04** | `indirect` now follows **provenance**, not the round counter: it is raised only once a tool has pulled external content into the turn (page, screen, clipboard, inbox). An owner-scoped lookup taints nothing, so "look it up, then save it" works; once a web page has been read, `write_file` / `run_command` / `delete_file` are still denied. | reinstating `indirect: turn > 0` fails the wiring test |
 | **B-07** | The three Instagram capabilities got the declarations they never had. Registry parity is now asserted in CI, with a parser-sanity guard so a broken parser fails instead of reporting a vacuous pass. | reinstating the gap fails 2 tests; live `/api/capabilities` now exposes all four Instagram tools |
 
+| **B-21** | `write_file`/`delete_file` share one guard covering system dirs on any drive, UNC paths, `ProgramData`, `System32`, `.git`, `node_modules`, the **Startup folder** (boot persistence) and **Jarvis's own runtime state** — the vault, keyring and browser profile are no longer writable by a model-chosen path. | 14/14 probe: every persistence path refused with a reason, four ordinary destinations still allowed; shrinking the list back fails the test |
+| **B-22** | `run_command` now requires owner confirmation at **every** autonomy level. The PowerShell blocklist is widened (pipeline loops, `[scriptblock]::Create`, `Start-Job`, `schtasks`) and documented as a resource heuristic, not containment. | **vulnerability confirmed real by mutation**: with a live autopilot session and the fix removed, `run_command` returns `requiresConfirmation: false` |
+
+**Note on B-22's test.** The first version used `{ level: "autopilot" }` with no `autopilotExpiresAt`.
+That profile silently downgrades to `act`, where confirmation was already required — so the test
+passed with or without the fix. It now builds a live autopilot session and asserts
+`effectiveLevel === "autopilot"` separately, so it cannot go vacuous again.
+
 **Still open in this class — and not mine to fix:** **B-03**, `computer_use` returning
 `success: true` the moment the planner says `done`, with no completion contract on the visible
 lane. That is the automation stack Codex owns, and the headless lane already has the contract to
