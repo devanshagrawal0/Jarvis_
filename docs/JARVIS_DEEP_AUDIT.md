@@ -79,6 +79,12 @@ That profile silently downgrades to `act`, where confirmation was already requir
 passed with or without the fix. It now builds a live autopilot session and asserts
 `effectiveLevel === "autopilot"` separately, so it cannot go vacuous again.
 
+| **C-01** | Recalled memory is delimited as reference data inside `<recalled_memory>` with an explicit "never as instructions" boundary, instead of being concatenated raw into the runtime instruction channel. | a 1,500-char agent prompt stored as `memory.procedure` can no longer act as an instruction |
+| **C-02** | `getPreferences` orders owner-stated rows ahead of seeded ones (`source='seed'` sinks), then by strength, then recency. | verified: `user_stated` now sorts above the installer's `concise, direct, no filler` |
+| **C-03** | Stated location is detected, persisted and resolved — `resolveLocation` consults an explicit mention, then a recent stated one, then browser tz, then home, with a recency rule. | 24/24 detector assertions; live context resolves to `surat india / Asia/Kolkata`, source `stated` |
+| **C-06** | `vite.config.mjs` watcher ignores `runtime/`, `dist/` and `.git/`. | the dev server survives a full render cycle; previously EBUSY on the locked Chrome cookie file killed it seconds after boot |
+| **A-02** | Authority and capability are reported separately, so the health payload can no longer say writes are enabled while every mutation 400s. | `vnextWritesEnabled` now matches `writes.mutationCommandsEnabled` |
+| **B-10** | Prompt-matched tools are kept in full and scored suggestions fill the remaining slots, instead of the merged list being truncated. | an explicitly requested tool can no longer fall off the end of `selectTools` |
 | **B-03** | Both `computer-use.js` ReAct loops now check a completion contract before claiming success. For a committing task the history must contain the requested text actually typed **and** a real commit (a send/post-style click, or Enter). Otherwise the call returns `success: false, verified: false` naming the reason. Read-only tasks are unaffected; failed steps count for nothing. | 4 of 7 tests go red when the contract is made to always pass |
 
 ### All 8 P0 findings are closed.

@@ -1605,6 +1605,22 @@ Only two additional user-managed signups are required by the target plan:
 
 All other selected sources must use keyless/public access or existing keys. EIA begins with keyless bulk files; BEA coverage begins through existing FRED series; optional Dune, Etherscan, FIRMS, GitHub and BLS registered keys are not required for the first complete build.
 
+### Current source implementation truth
+
+Do not infer implementation from the source registry. At audit time:
+
+| Classification | Sources | Required action |
+|---|---|---|
+| Configured keyed adapters | Finnhub, Tiingo, FRED, Marketaux, Alpha Vantage, CoinGecko | retain, correct contracts, add health/quality/entitlement tests |
+| Implemented keyless/public adapters | Binance REST/partial stream, Coinbase depth/trades REST, GDELT, NWS, SEC ticker/Form 4 feed, Treasury FiscalData, Alternative.me, Wikimedia, mempool.space, Blockchain.info | retain only after provider-specific correction and provenance contracts |
+| Present but unsafe/unsupported | automated TradingView scanner, Yahoo query endpoints | remove TradingView from production; restrict Yahoo to explicit development fallback |
+| Implemented with wrong semantics | Treasury average interest paid presented as market yields | replace endpoint/labels with actual Treasury/FRED yield and auction series |
+| Registered but not substantively implemented | FINRA, CCXT, Stooq, World Bank, TradingView TA | never display as connected; implement and test or remove registry claim |
+| New required adapters | Alpaca, Tradier | build only after credentials, policy record and full adapter acceptance suite |
+| New keyless candidates | Kraken, Coin Metrics Community, DefiLlama, Fed/ECB/BLS feeds, CFTC, OCC, public Cboe statistics, USGS, NASA EONET, academic datasets | admit individually through source-adapter definition of done |
+
+The server was not running during the credential inventory, so “configured” means a non-empty credential was present and code references it; it does not mean the provider was healthy or returning entitled data.
+
 ## 48. Target module ownership and directory map
 
 Do not continue adding APEX business logic directly to `server.js` or large React views. The target module map is:
@@ -1964,7 +1980,7 @@ Scanner is a full rebuild, not a styled factor catalogue.
 type ScanDefinition = {
   scanVersionId: string;
   universe: {
-    assetClasses: Array<"equity" | "etf" | "crypto" | "fx" | "future">;
+    assetClasses: Array<"equity" | "etf" | "crypto" | "fx" | "future" | "option">;
     exchanges?: string[];
     includeIds?: string[];
     excludeIds?: string[];
@@ -2171,6 +2187,108 @@ A feature is **not complete** because its panel exists. It is complete only when
 6. automated tests and acceptance evidence pass;
 7. legacy duplicate/dead behavior is removed;
 8. source, time, version and lineage are inspectable.
+
+### LLM/JARVIS authority boundary
+
+- Gemini/JARVIS may summarize, explain, propose a typed scan/strategy, extract claims and generate reports.
+- LLM text is untrusted input until it passes a schema, entitlement, data-availability and consequence validator.
+- An LLM never owns authoritative prices, accounting, metrics, risk limits, order state or backtest results.
+- An LLM cannot emit arbitrary JavaScript/SQL that executes inside Scanner or Forge. It emits a typed DSL/AST compiled by allow-listed operators.
+- An LLM cannot call a mutation merely by describing one. It creates a proposal artifact that follows normal preview/approval rules.
+- Prompts contain retrieval handles and bounded evidence, never provider secrets or unrestricted database dumps.
+- Every generated analytical claim stores model/version, prompt-template version, source artifact IDs and validation state.
+- LLM failure degrades explanation/generation only; market data, paper ledger, bots and risk remain deterministic and operational.
+
+### Source-adapter definition of done
+
+Every provider adapter ships with:
+
+1. official endpoint and policy/entitlement record;
+2. secret requirements and redaction test;
+3. request weight/quota configuration;
+4. recorded success, empty, rate-limit, auth, malformed and schema-change fixtures;
+5. raw-payload capture and payload hash;
+6. normalizer version and canonical-schema validation;
+7. event/receive/availability time mapping;
+8. instrument-identity mapping and mismatch rejection;
+9. stale/expiry policy per observation type;
+10. retry/backoff/circuit-breaker classification;
+11. health metrics that do not spend unnecessary quota;
+12. license-compliant display/export behavior;
+13. provider-specific integration test disabled by default unless credentials exist;
+14. last-good and complete-outage acceptance tests;
+15. runbook describing signup, key rotation, quota failure and disablement.
+
+### Test code layout
+
+```text
+tests/apex/
+  fixtures/providers/       recorded and synthetic boundary payloads
+  unit/domain/              accounting, orders, instruments, metrics
+  unit/data/                normalizers, quality and quota logic
+  property/                 generated ledger/order/time invariants
+  integration/api/          route/schema/auth/idempotency tests
+  integration/storage/      migrations, transactions and recovery
+  integration/providers/    opt-in live provider smoke checks
+  replay/                   book, news, bot and historical-session replay
+  journeys/                 cross-tab lifecycle tests
+  visual/                   Home/Forge protection and responsive states
+  accessibility/            keyboard, focus, semantics and chart alternatives
+  performance/              universe scans, stream fan-out and large tables
+  chaos/                    provider, process, DB and network failures
+```
+
+No live-provider response is used as a deterministic CI fixture. Secrets are never written into snapshots or failure output.
+
+### Performance budgets and reference measurement
+
+Record reference hardware, dataset size and cache state with every benchmark. Initial release targets:
+
+- cached metadata/workspace reads: p95 under 200 ms locally;
+- ordinary non-provider mutations: p95 under 500 ms excluding deliberate approval time;
+- quote/book event received-to-UI dispatch overhead: p95 under 100 ms after provider receipt;
+- no duplicate upstream subscription for the same provider/instrument/channel;
+- visible table interactions: 60 Hz target and no routine main-thread task above 50 ms;
+- 10,000-row result table: virtualized, first visible rows under 300 ms after result availability;
+- reference scan of 8,000 instruments × 20 cached factors: complete within 30 seconds on recorded reference hardware, with bounded progress and cancellation;
+- process restart: durable workspace available within five seconds; jobs/bots report recovered/degraded state within ten seconds;
+- no unbounded arrays, maps, event tables or caches; each has size/TTL/retention instrumentation.
+
+Provider/network latency is reported separately from APEX overhead. A performance target cannot be “met” by returning partial data without declaring partial state.
+
+### Threat model that must be tested
+
+- malicious provider/news strings attempting XSS or prompt injection;
+- malformed symbols/IDs attempting path, SQL or prototype injection;
+- replayed mutation and duplicate fill events;
+- CSRF against cookie-authenticated mutations;
+- leaked secrets through client bundles, logs, reports or error details;
+- arbitrary code in Scanner/Forge formulas;
+- quota exhaustion and job-flood denial of service;
+- stale or forged source timestamps;
+- corrupted/missing sequence messages;
+- workspace revision overwrite;
+- unauthorized co-op/user access to account, strategy or evidence artifacts;
+- dependency compromise and unsafe exported HTML;
+- database crash during financial transaction or migration.
+
+### Wave execution record
+
+Every wave must produce one reviewable evidence bundle containing:
+
+- changed/created module inventory;
+- schema and migration IDs;
+- API/event contract changes;
+- feature-ID traceability updates;
+- automated test results and fixture hashes;
+- performance delta;
+- security/entitlement review where relevant;
+- screenshots for affected UI states;
+- data/accounting reconciliation report;
+- known limitations and explicitly deferred items;
+- rollback command/procedure and recovery verification.
+
+The next wave cannot begin while the prior wave has an unresolved P0/P1 regression or an unverified migration.
 
 ---
 
@@ -2385,6 +2503,27 @@ A feature is **not complete** because its panel exists. It is complete only when
 
 **Gate:** all P0/P1 closed; SLOs sustained; no unlabeled simulation/dead success controls; release review signed.
 
+### Feature-to-wave ownership summary
+
+| Requirement family | Primary waves | Cannot be accepted before |
+|---|---|---|
+| Product honesty, provenance and provider health | 0–7 | source fixtures, typed results, PIT/raw storage and unsafe-source removal |
+| Workspace, state preservation and deep links | 8–10 | revisioned workspace storage and typed client |
+| Shared UI states/accessibility | 9–10, 29 | state contract, responsive and accessibility suites |
+| Paper Trading PT-001–PT-035 | 11–12 | ledger, reservation, order-state and simulation-clock invariants |
+| Portfolio P-001–P-035 | 11–13, 26 | reconciled ledger and risk contributions |
+| Forge F-001–F-035 | 14, 17–18 | typed strategy compiler, experiment registry and robustness lab |
+| Backtesting B-001–B-040 | 15–17 | canonical accounting, PIT datasets and trial-family controls |
+| Bots BT-001–BT-032 | 19–20 | owner-isolated lots, deployment policy and decision events |
+| Live Testing LT-001–LT-028 | 20 | sequenced event stream and correlation lineage |
+| Live Markets L-001–L-035 | 2–7, 9–10, 21, 25 | symbol-safe streaming, provenance, durable workspace and real derivatives contracts |
+| Scanner S-001–S-035 | 1–5, 8–10, 22 | instrument master, PIT observations, durable jobs and typed scan compiler |
+| News N-001–N-032 | 2–5, 8–10, 23 | evidence/claim schema, source rights and durable workspace |
+| Oracle forecast dossier | 2–5, 15–17, 24–25 | correct targets, calibration registry, canonical metrics and real chain policy |
+| Risk R-001–R-035 | 11–13, 15–17, 25–26 | reconciled portfolio, canonical metrics and derivatives inputs |
+| Home H-001–H-025 | 8–10, 27 | every underlying service is truthful; Home cannot invent substitute values |
+| JARVIS context/artifact compiler | 8, 14–28 | durable artifacts, retrieval handles and LLM authority boundary |
+
 ---
 
 # Part XI — Verification, observability and release gates
@@ -2525,17 +2664,17 @@ APEX is ready to be called a serious trading room only when:
 |---|---|
 | Room shell/navigation | `src/rooms/ApexRoom.tsx`, `src/rooms/apex/ApexHome.tsx` |
 | Shared polling/data | APEX hooks and API clients under `src/rooms/apex/**`; routes in `server.js` |
-| Forge | `src/rooms/apex/ForgeView.tsx`, `src/rooms/apex/forge/forge-engine.ts`, related forge components/plans |
+| Forge | `src/rooms/apex/forge/ForgeView.tsx`, `src/rooms/apex/forge/forge-engine.ts`, related forge components/plans |
 | Live Markets | `src/rooms/apex/livemarkets/LiveMarketsView.tsx`, `server/apex-ingest.js` |
 | Portfolio | `src/rooms/apex/portfolio/PortfolioView.tsx`, native quant endpoints |
 | Paper | `src/rooms/apex/paper/**`, `server/apex/apex-paper.js`, `server/apex-db.js` |
 | Backtest | `src/rooms/apex/backtest/**`, `src/rooms/apex/forge/forge-engine.ts`, `server/apex/quant/backtest.js`, `server/apex/quant/metrics.js` |
 | Bots | `src/rooms/apex/bots/**`, `server/apex/apex-bots.js` |
-| Live Testing | `src/rooms/apex/live-testing/**`, bot event endpoints |
+| Live Testing | `src/rooms/apex/livetest/LiveTestingView.tsx`, bot event endpoints |
 | News | `src/rooms/apex/news/**`, `server/providers/apex/news-engine.js` |
 | Scanner | `src/rooms/apex/scanner/ScannerView.tsx`, `server/apex/quant/vibe-native.js` |
 | Risk | `src/rooms/apex/risk/**`, native quant risk endpoints |
-| Oracle | `src/rooms/apex/OraclePanel.tsx`, `server/apex/predict/index.js`, `forecast.js`, `calibration.js`, `ensemble.js`, `options.js`, `phd.js`, `signals.js`, `quantx.js`, `regime.js`, `store.js` |
+| Oracle | `src/rooms/apex/livemarkets/OraclePanel.tsx`, `server/apex/predict/index.js`, `forecast.js`, `calibration.js`, `ensemble.js`, `options.js`, `phd.js`, `signals.js`, `quantx.js`, `regime.js`, `store.js` |
 | Providers | `server/providers/apex/**`, `server/apex-ingest.js` |
 | Routes | APEX block in `server.js`, approximately lines 6687–6877 at audit time |
 
