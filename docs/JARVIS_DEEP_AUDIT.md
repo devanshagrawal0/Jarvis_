@@ -79,15 +79,18 @@ That profile silently downgrades to `act`, where confirmation was already requir
 passed with or without the fix. It now builds a live autopilot session and asserts
 `effectiveLevel === "autopilot"` separately, so it cannot go vacuous again.
 
-**Still open in this class — and not mine to fix:** **B-03**, `computer_use` returning
-`success: true` the moment the planner says `done`, with no completion contract on the visible
-lane. That is the automation stack Codex owns, and the headless lane already has the contract to
-copy (`universal-browser-agent.js:344-377` `completionProblems`). Its *consequence* is contained:
-B-01 now refuses to accept a `computer_use` result as evidence when it reports
-"completed without verifying", so a self-certified non-completion can no longer license a claim.
+| **B-03** | Both `computer-use.js` ReAct loops now check a completion contract before claiming success. For a committing task the history must contain the requested text actually typed **and** a real commit (a send/post-style click, or Enter). Otherwise the call returns `success: false, verified: false` naming the reason. Read-only tasks are unaffected; failed steps count for nothing. | 4 of 7 tests go red when the contract is made to always pass |
 
-Verified: 162/162 across Memory vNext + the new gate suites · `capabilities.test.js` 22/22 standalone ·
-`tsc` clean · boundary guard clean · backend restarted, `degraded: false`, 0 boot errors.
+### All 8 P0 findings are closed.
+
+The layering that matters: `computer_use` no longer certifies itself (B-03), and even if it did,
+the evidence gate refuses a result that reports "completed without verifying" (B-01), and the
+fabrication detector now recognises send/write/delete claims (B-02). Three independent chances to
+catch the same lie, where previously there were zero.
+
+Verified: 187/187 across Memory vNext, the gate suites, tool availability, execution guards and
+the completion contract · `capabilities.test.js` 22/22 standalone · `tsc` clean · boundary guard
+clean · backend restarted, 0 boot errors.
 
 Note on the suite: running all backend tests concurrently produces failures from port and
 temp-directory contention on Windows (`EPERM` on `rm`), not from these changes —

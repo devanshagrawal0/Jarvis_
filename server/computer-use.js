@@ -37,6 +37,59 @@ const WEB_TASK_RE = /https?:\/\/|instagram|youtube|google\.com|twitter|reddit|gi
 const EXTERNAL_COMMIT_TASK_RE = /\b(send|reply|message|like|thumbs? up|post|publish|submit|comment|follow|subscribe|delete|remove|purchase|buy|checkout|pay|transfer|book|reserve)\b/i;
 const EXTERNAL_COMMIT_CONTROL_RE = /\b(send|reply|like|unlike|post|publish|submit|comment|follow|subscribe|delete|remove|purchase|buy|checkout|pay|transfer|confirm|place order|book|reserve)\b/i;
 
+// ── Completion contract (B-03) ────────────────────────────────────────────
+// Both ReAct loops used to return `{ success: true }` the moment the planner said `done`, with
+// nothing re-observed. `capability-engine` maps that straight to `ok: true`, the receipt records
+// it as verified, and the model then tells the owner "I have typed 'hi' and pressed enter" —
+// which is exactly what happened, and was untrue.
+//
+// The headless lane already refuses a completion claim it cannot evidence
+// (`universal-browser-agent.completionProblems`). This is the same idea sized for these loops:
+// for a task that names a message and a send, the planner must actually have typed that text and
+// actually have pressed/clicked something that commits it. A claim without those is downgraded to
+// "not verified" rather than reported as success.
+
+// Tasks whose whole point is a side effect on someone else's surface.
+const COMMITTING_TASK_RE = /\b(send|post|publish|submit|reply|dm|message|comment|like|follow|share|upload|order|book|pay)\b/i;
+const COMMIT_ACTION_RE = /\b(send|post|publish|submit|reply|share|tweet|like|follow|confirm|order|pay)\b/i;
+
+function quotedMessageIn(task) {
+  const text = String(task || "");
+  const quoted = text.match(/["'“”']([^"'“”']{1,300})["'“”']/);
+  if (quoted?.[1]?.trim()) return quoted[1].trim();
+  const saying = text.match(/\b(?:saying|that says|with the text|exactly)\s+(.{1,120}?)(?:[.!?]|$)/i);
+  return saying?.[1]?.trim() || "";
+}
+
+function normalizeText(value) {
+  return String(value || "").toLowerCase().replace(/\s+/g, " ").trim();
+}
+
+// Returns [] when the completion is credible, otherwise the reasons it is not.
+function completionProblems(task, history = []) {
+  const taskText = String(task || "");
+  if (!COMMITTING_TASK_RE.test(taskText)) return [];   // read/navigate tasks: finishing is finishing
+  const steps = Array.isArray(history) ? history.filter((item) => item && item.ok !== false) : [];
+  const problems = [];
+
+  const message = quotedMessageIn(taskText);
+  if (message) {
+    const typed = steps.some((item) => (item.action === "fill" || item.action === "type")
+      && normalizeText(item.value).includes(normalizeText(message)));
+    if (!typed) problems.push(`the requested text was never typed (no fill/type step contained "${message.slice(0, 60)}")`);
+  }
+
+  // Something has to have actually committed: a click on a send-ish control, or Enter in a composer.
+  const committed = steps.some((item) => {
+    if (item.action === "press") return /^(enter|return)$/i.test(String(item.key || ""));
+    if (item.action !== "click") return false;
+    return COMMIT_ACTION_RE.test(`${item.targetName || ""} ${item.ref || ""} ${item.reasoning || ""} ${item.result || ""}`);
+  });
+  if (!committed) problems.push("no step clicked a send/post control or pressed Enter, so nothing was committed");
+
+  return problems;
+}
+
 function pendingExternalCommit(task, decision, elements = [], history = []) {
   if (!EXTERNAL_COMMIT_TASK_RE.test(String(task || ""))) return null;
   const ref = String(decision?.ref || "");
@@ -503,7 +556,18 @@ Return ONLY valid JSON:
 
       if (decision.done || decision.action === "done") {
         await onStep?.({ step: i + 1, phase: "done", mode: "playwright", ...decision });
-        return { success: true, steps: history, result: decision.result || "Task complete", stepsCompleted: i + 1, mode: "playwright", finalUrl: url, finalTitle: title };
+        // The planner saying "done" is a claim, not evidence. For a task that commits something
+        // to another surface, check the history actually contains the typing and the commit.
+        const problems = completionProblems(task, history);
+        if (problems.length) {
+          return {
+            success: false, verified: false, steps: history, stepsCompleted: i + 1, mode: "playwright",
+            finalUrl: url, finalTitle: title,
+            error: `computer_use completed without verifying the requested outcome: ${problems.join("; ")}.`,
+            result: decision.result || "",
+          };
+        }
+        return { success: true, verified: true, steps: history, result: decision.result || "Task complete", stepsCompleted: i + 1, mode: "playwright", finalUrl: url, finalTitle: title };
       }
 
       // Execute via Playwright
@@ -736,9 +800,20 @@ Return ONLY valid JSON (no markdown):
 
       if (decision.done || decision.action === "done") {
         await onStep?.({ step: i + 1, phase: "done", mode: "screen", ...decision });
-        return decision.stalled
-          ? { success: false, steps: history, error: decision.result || "Visible-screen automation stalled.", result: decision.result, stepsCompleted: i + 1, mode: "screen", stalled: true }
-          : { success: true, steps: history, result: decision.result || "Task complete", stepsCompleted: i + 1, mode: "screen" };
+        if (decision.stalled) {
+          return { success: false, verified: false, steps: history, error: decision.result || "Visible-screen automation stalled.", result: decision.result, stepsCompleted: i + 1, mode: "screen", stalled: true };
+        }
+        // Same contract as the playwright lane. This is the surface the owner watches, so a
+        // false "sent" here is the most damaging version of the claim.
+        const problems = completionProblems(task, history);
+        if (problems.length) {
+          return {
+            success: false, verified: false, steps: history, stepsCompleted: i + 1, mode: "screen",
+            error: `computer_use completed without verifying the requested outcome: ${problems.join("; ")}.`,
+            result: decision.result || "",
+          };
+        }
+        return { success: true, verified: true, steps: history, result: decision.result || "Task complete", stepsCompleted: i + 1, mode: "screen" };
       }
 
       try {

@@ -6,6 +6,35 @@
 **Mode:** read-only product, code, quantitative, data, workflow and UI audit  
 **Change policy:** this document is the only artifact created; no APEX source code, configuration, database or runtime state was changed.
 
+## 0. What this document is
+
+This is not a mood board, loose wishlist, or claim that every sophisticated label in APEX is already real. It is an evidence-led master specification for turning the current APEX room into a trustworthy research, simulation, execution and risk workspace.
+
+It combines:
+
+- a file-by-file inspection of the APEX frontend, backend, providers, prediction, quant, paper-trading and persistence paths;
+- a defect and misleading-behavior audit with exact code locations;
+- a full workflow and information-architecture critique;
+- a quantitative-methodology and backtest-validity critique;
+- a current source and licensing review using primary documentation;
+- a target architecture that preserves the visual direction of **Home** and **Forge**;
+- more than 200 concrete product and engineering upgrades;
+- ordered implementation waves, acceptance gates, observability targets and a test matrix.
+
+### Audit boundary
+
+The review covered 114 APEX-related files and approximately 21,000 lines across:
+
+- `src/rooms/ApexRoom.tsx`
+- `src/rooms/apex/**`
+- `server/apex/**`
+- `server/providers/apex/**`
+- `server/apex-db.js`
+- `server/apex-ingest.js`
+- APEX routes in `server.js`
+
+No live broker certification, licensed market-data entitlement test or capital-at-risk execution test was performed. A workspace-wide TypeScript no-write check produced no diagnostics before its 124-second timeout, so that check is **inconclusive**, not a pass. Dedicated APEX tests are effectively absent.
+
 ---
 
 # Part I — Executive verdict
@@ -1233,40 +1262,6 @@ JARVIS should receive a compact structured context package whenever the user ent
 23. Show skeletons only for expected values; show stale last-good data when safer.
 24. Provide exact timestamps in tooltip/inspector even if relative time is shown.
 25. Ensure copy/export preserves precision and provenance.
-
----
-
-
-## 0. What this document is
-
-This is not a mood board, loose wishlist, or claim that every sophisticated label in APEX is already real. It is an evidence-led master specification for turning the current APEX room into a trustworthy research, simulation, execution and risk workspace.
-
-It combines:
-
-- a file-by-file inspection of the APEX frontend, backend, providers, prediction, quant, paper-trading and persistence paths;
-- a defect and misleading-behavior audit with exact code locations;
-- a full workflow and information-architecture critique;
-- a quantitative-methodology and backtest-validity critique;
-- a current source and licensing review using primary documentation;
-- a target architecture that preserves the visual direction of **Home** and **Forge**;
-- more than 200 concrete product and engineering upgrades;
-- ordered implementation waves, acceptance gates, observability targets and a test matrix.
-
-### Audit boundary
-
-The review covered 114 APEX-related files and approximately 21,000 lines across:
-
-- `src/rooms/ApexRoom.tsx`
-- `src/rooms/apex/**`
-- `server/apex/**`
-- `server/providers/apex/**`
-- `server/apex-db.js`
-- `server/apex-ingest.js`
-- APEX routes in `server.js`
-
-No live broker certification, licensed market-data entitlement test or capital-at-risk execution test was performed. A workspace-wide TypeScript no-write check produced no diagnostics before its 124-second timeout, so that check is **inconclusive**, not a pass. Dedicated APEX tests are effectively absent.
-
----
 
 # Part VII — Data fabric, sources and entitlements
 
