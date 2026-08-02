@@ -1566,9 +1566,617 @@ These are post-foundation features; they must not be used to distract from fixin
 
 ---
 
-# Part IX — Ordered build program
+# Part IX — Exact implementation specification
 
-## 47. Build rules
+## 47. Scope decisions that implementation must not reinterpret
+
+These decisions are fixed unless the owner explicitly changes them:
+
+1. APEX is a local-first trading research and paper-simulation room, not a live-broker execution product in this program.
+2. Home and Forge keep their present visual direction. Their truth, state, workflow and accessibility can change; their identity must not be replaced.
+3. APEX has no Kalshi, Polymarket or other prediction-market data, objects, providers or dependencies.
+4. Supported target asset classes are equities, ETFs, crypto, FX, futures and options. A capability remains disabled until its instrument, data and simulation contracts exist.
+5. Every production-visible value must be real, delayed, indicative, derived, estimated, simulated or stale. The state is data, not decoration.
+6. Unsupported capability is shown as unavailable with a reason. Synthetic fallback may be used only inside an explicitly isolated simulation/test surface.
+7. No real-money order path is added during this rebuild. Alpaca and Tradier credentials are initially data/paper inputs only.
+8. The existing APEX SQLite database is migrated in place through versioned, backed-up migrations; it is not deleted blindly.
+9. Existing useful user artifacts are preserved or converted. Demo/random rows are quarantined or deleted only after classification.
+10. One canonical accounting, metric, instrument, observation and artifact contract owns truth across all tabs.
+
+### Current credential truth
+
+The audit verified the presence—not the live health—of six configured APEX keys in `.env`; values were not exposed:
+
+| Configured source | Existing environment field | Current implemented use |
+|---|---|---|
+| Finnhub | `APEX_FINNHUB_KEY` | equity quotes, company/general news, insider transactions |
+| Tiingo | `APEX_TIINGO_KEY` | on-demand daily equity history |
+| FRED | `APEX_FRED_KEY` | selected macro series |
+| Marketaux | `APEX_MARKETAUX_KEY` | ticker-linked news/sentiment enrichment |
+| Alpha Vantage | `APEX_ALPHAVANTAGE_KEY` | on-demand company overview/fundamentals |
+| CoinGecko | `APEX_COINGECKO_KEY` | crypto market cap, dominance and movers |
+
+Only two additional user-managed signups are required by the target plan:
+
+| New source | Required secret | Unique purpose |
+|---|---|---|
+| Alpaca Basic | `APCA_API_KEY_ID`, `APCA_API_SECRET_KEY` | real-time IEX equity stream, indicative options and paper-account data |
+| Tradier | `APEX_TRADIER_TOKEN` | account-linked real options chain and contract data |
+
+All other selected sources must use keyless/public access or existing keys. EIA begins with keyless bulk files; BEA coverage begins through existing FRED series; optional Dune, Etherscan, FIRMS, GitHub and BLS registered keys are not required for the first complete build.
+
+## 48. Target module ownership and directory map
+
+Do not continue adding APEX business logic directly to `server.js` or large React views. The target module map is:
+
+```text
+server/apex/
+  domain/
+    instruments.js          canonical identity and symbol resolution
+    observations.js         observation and provenance types
+    artifacts.js            immutable artifact identity/lineage
+    orders.js               order state and validation
+    ledger.js               journal entries, lots and reconciliation
+    strategies.js           graph/package/version contracts
+    experiments.js          run manifests and metric contracts
+    deployments.js          bot deployment and mandate contracts
+    risk.js                 risk snapshot and limit contracts
+  data/
+    adapters/               one provider per module
+    normalizers/            raw provider payload -> canonical observation
+    quality/                invariants, quarantine and disagreement
+    streaming/              snapshot/delta state machines
+    quota/                  provider admission and quota receipts
+    entitlement/            purpose/rights decisions
+  services/
+    workspace-service.js
+    market-data-service.js
+    evidence-service.js
+    scanner-service.js
+    strategy-service.js
+    experiment-service.js
+    paper-service.js
+    portfolio-service.js
+    bot-service.js
+    risk-service.js
+    alert-service.js
+    artifact-service.js
+  storage/
+    migrations/
+    repositories/
+    backup-service.js
+  jobs/
+    queue.js
+    workers/
+  realtime/
+    event-bus.js
+    sse.js
+    websocket.js
+  http/
+    router.js
+    validation.js
+    error-envelope.js
+    authz.js
+```
+
+```text
+src/rooms/apex/
+  app/
+    ApexWorkspaceProvider.tsx
+    apex-router.ts
+    apex-query-client.ts
+    apex-event-client.ts
+  shared/
+    components/
+    charts/
+    tables/
+    provenance/
+    state/
+    types/
+  features/
+    home/
+    forge/
+    live-markets/
+    portfolio/
+    paper/
+    backtesting/
+    bots/
+    live-testing/
+    news/
+    scanner/
+    risk/
+```
+
+Rules:
+
+- React components never call providers directly.
+- HTTP routes validate and delegate; they do not contain quant, ledger or provider logic.
+- Services coordinate domain/repository operations but do not invent UI state.
+- Repositories are the only modules that issue SQL.
+- Provider raw payloads do not escape adapter/normalizer boundaries.
+- All cross-domain communication uses IDs and versioned events, not imported mutable objects.
+- Shared UI primitives cannot own financial calculations.
+
+## 49. Database schema and migration contract
+
+### Schema versioning
+
+- Add `apex_schema_migrations(version, checksum, applied_at, app_version, backup_id)`.
+- Each migration has an `up`, a verified data check and a rollback/restore procedure.
+- Before the first destructive migration, copy `apex.sqlite`, WAL and SHM into a timestamped backup directory and verify the copied database with `PRAGMA integrity_check`.
+- Never alter a populated financial table without a row-count, nullability, foreign-key and reconciliation check.
+- Migration failure leaves the old database active and APEX read-only with a visible incident.
+
+### Core tables
+
+```text
+apex_instruments
+apex_instrument_aliases
+apex_venues
+apex_calendars
+apex_sessions
+apex_corporate_actions
+
+apex_raw_payloads
+apex_observations
+apex_book_snapshots
+apex_book_deltas
+apex_macro_vintages
+apex_data_quality_events
+apex_source_health
+apex_quota_receipts
+apex_entitlements
+
+apex_workspaces
+apex_workspace_revisions
+apex_investigations
+apex_evidence_items
+apex_claims
+apex_claim_relations
+apex_artifacts
+apex_artifact_edges
+
+apex_strategy_versions
+apex_strategy_nodes
+apex_strategy_edges
+apex_experiment_runs
+apex_experiment_trials
+apex_run_events
+apex_run_metrics
+
+apex_portfolios
+apex_accounts
+apex_cash_balances
+apex_orders
+apex_order_events
+apex_fills
+apex_lots
+apex_ledger_entries
+apex_positions_read_model
+
+apex_bot_deployments
+apex_bot_decisions
+apex_bot_heartbeats
+apex_incidents
+apex_risk_snapshots
+apex_limit_policies
+apex_limit_breaches
+
+apex_scan_versions
+apex_scan_runs
+apex_scan_results
+apex_alerts
+apex_alert_events
+apex_jobs
+apex_job_events
+```
+
+### Required relational invariants
+
+- Every provider observation references a valid instrument, source and entitlement decision.
+- Every derived observation references one or more parent observation/artifact IDs.
+- Every order references an account, portfolio, owner and order intent.
+- Every fill references one order and one eligible market-data snapshot.
+- Every ledger entry belongs to a balanced journal group whose debits equal credits.
+- Every lot references its opening fill; reductions reference closing fills.
+- Every bot decision references deployment, strategy version and feature snapshot.
+- Every backtest result references immutable strategy, dataset and engine versions.
+- Every scan result references its scan run and canonical instrument.
+- An artifact cannot be hard-deleted while another artifact references it; archive/tombstone instead.
+
+### Retention defaults
+
+- Orders, fills, ledger, strategies, experiments and audit events: retain indefinitely unless the owner exports and explicitly purges.
+- Raw high-frequency payloads: configurable rolling retention with compressed archive summaries; never remove payloads referenced by a retained fill/run.
+- Provider health and quota receipts: 90 days hot, one year aggregated.
+- Bot telemetry: 30 days hot, retained incident/decision/fill links indefinitely.
+- UI ephemeral cache: safe to delete; it is never a source of financial truth.
+
+## 50. HTTP and realtime API contract
+
+### Response envelope
+
+Success:
+
+```json
+{
+  "ok": true,
+  "data": {},
+  "meta": {
+    "requestId": "uuid",
+    "snapshotId": "uuid-or-null",
+    "serverTime": "ISO-8601",
+    "warnings": []
+  }
+}
+```
+
+Failure:
+
+```json
+{
+  "ok": false,
+  "error": {
+    "code": "APEX_STALE_DATA",
+    "message": "Human-readable summary",
+    "retryable": true,
+    "details": {},
+    "recoveryActions": []
+  },
+  "meta": { "requestId": "uuid", "serverTime": "ISO-8601" }
+}
+```
+
+Use correct HTTP status codes. Never return HTTP 200 for validation, authorization, dependency or mutation failure.
+
+### Route families
+
+```text
+GET/POST/PATCH  /api/apex/workspaces
+GET/POST        /api/apex/instruments/search
+GET             /api/apex/market/snapshot
+GET             /api/apex/market/history
+GET             /api/apex/market/provenance
+GET/POST        /api/apex/watchlists
+GET/POST        /api/apex/alerts
+GET/POST        /api/apex/evidence
+GET/POST        /api/apex/scans
+POST            /api/apex/scans/:id/runs
+GET             /api/apex/scan-runs/:id
+GET/POST        /api/apex/strategies
+POST            /api/apex/experiments
+GET             /api/apex/experiments/:id
+POST            /api/apex/order-intents/preview
+POST            /api/apex/order-intents
+POST            /api/apex/orders/:id/cancel
+GET             /api/apex/portfolios/:id
+POST            /api/apex/portfolios/:id/what-if
+GET/POST        /api/apex/deployments
+POST            /api/apex/deployments/:id/check
+POST            /api/apex/deployments/:id/pause
+POST            /api/apex/risk/snapshots
+GET             /api/apex/sources
+GET             /api/apex/jobs/:id
+```
+
+### Mutation rules
+
+- Every POST/PATCH mutation requires schema validation, authenticated actor, consequence classification and idempotency key.
+- Preview/what-if/check endpoints are pure and execute under read-only repository capabilities.
+- State-changing responses include created/updated artifact IDs and audit-event IDs.
+- Optimistic writes require `expectedRevision`; conflict returns 409 with current revision and diff handle.
+- Delete endpoints archive by default. Financial records cannot be deleted through ordinary UI routes.
+- Long-running requests return `202 Accepted` with a job ID; clients observe progress rather than holding an HTTP request open.
+
+### Realtime event envelope
+
+```json
+{
+  "eventId": "monotonic-or-uuid",
+  "topic": "market.book|job.progress|bot.decision|order.fill|source.state",
+  "aggregateId": "uuid",
+  "aggregateVersion": 12,
+  "occurredAt": "ISO-8601",
+  "receivedAt": "ISO-8601",
+  "correlationId": "uuid",
+  "causationId": "uuid-or-null",
+  "payload": {}
+}
+```
+
+Clients store the last cursor, reject older aggregate versions, detect gaps and resnapshot before resuming.
+
+## 51. State machines and forbidden transitions
+
+### Order
+
+`DRAFT → VALIDATED → ACCEPTED → WORKING → PARTIALLY_FILLED → FILLED`
+
+Terminal alternatives: `REJECTED`, `CANCELLED`, `EXPIRED`.
+
+- DRAFT and preview have no ledger effect.
+- ACCEPTED creates reservations atomically.
+- PARTIALLY_FILLED reduces reservation proportionally.
+- FILLED/CANCELLED/EXPIRED releases remaining reservation.
+- FILLED cannot transition to CANCELLED.
+- A repeated event with the same idempotency key is ignored and returns the original receipt.
+
+### Experiment
+
+`DRAFT → QUEUED → RESOLVING_DATA → RUNNING → VALIDATING → COMPLETE`
+
+Alternatives: `CANCEL_REQUESTED → CANCELLED`, or `FAILED` with retry lineage. A completed run is immutable; rerun creates a child run.
+
+### Scan run
+
+`DRAFT → VALIDATING → RESOLVING_UNIVERSE → RESOLVING_DATA → COMPUTING → RANKING → COMPLETE`
+
+If coverage is below the declared threshold, transition to `NEEDS_DECISION`, not `COMPLETE`. Synthetic fallback is forbidden outside a test fixture.
+
+### Bot deployment
+
+`PROPOSED → VALIDATING → SHADOW → CANARY → ACTIVE → PAUSED → RETIRED`
+
+`DEGRADED` and `HALTED` are safety states. Only an explicit validated command can leave HALTED. Deleting a strategy does not delete a deployment.
+
+### Alert
+
+`DRAFT → ACTIVE → TRIGGERED → COOLDOWN → ACTIVE`; alternatives `PAUSED`, `EXPIRED`, `ARCHIVED`.
+
+Triggers record exact input observations and rule version. Notification failure does not erase a trigger.
+
+### Source
+
+`DISCONNECTED → CONNECTING → AUTHENTICATING → SYNCING → LIVE → STALE → RESYNCING → DEGRADED`.
+
+No tradable consumer may read a source in SYNCING, STALE, RESYNCING or DEGRADED unless its policy explicitly allows an aged value for non-execution research.
+
+## 52. Durable job execution contract
+
+The current in-memory runs and timers are insufficient. `apex_jobs` is the source of truth.
+
+Required job fields:
+
+- job ID, kind, owner, workspace and parent artifact;
+- state and state version;
+- input manifest hash;
+- priority and provider quota class;
+- attempt count and maximum attempts;
+- lease owner and lease expiry;
+- progress numerator/denominator and current stage;
+- cancellation request time;
+- started/completed/failed times;
+- structured error and retry-after;
+- result artifact IDs;
+- deterministic seed where applicable.
+
+Workers claim jobs with a transactional lease. An expired lease can be reclaimed. Every stage is idempotent or records a checkpoint. Cancellation is cooperative, checked between bounded units, and never leaves a partial financial mutation. Restart resumes queued/running jobs from durable checkpoints.
+
+Job types include data backfill, scan, experiment, robustness trial, report export, evidence ingestion, portfolio recomputation and historical replay.
+
+## 53. Scanner implementation contract
+
+Scanner is a full rebuild, not a styled factor catalogue.
+
+### Typed scan definition
+
+```ts
+type ScanDefinition = {
+  scanVersionId: string;
+  universe: {
+    assetClasses: Array<"equity" | "etf" | "crypto" | "fx" | "future">;
+    exchanges?: string[];
+    includeIds?: string[];
+    excludeIds?: string[];
+    membershipAsOf: string;
+  };
+  eligibility: PredicateGroup;
+  factors: FactorDefinition[];
+  score: CompositeScore;
+  neutralization: Array<"sector" | "industry" | "size" | "beta">;
+  select: { side: "top" | "bottom" | "both"; count?: number; percentile?: number };
+  missingData: { policy: "reject" | "exclude" | "impute"; minimumCoverage: number };
+  evaluation: { asOf: string; timezone: string; calendar: string };
+};
+```
+
+The persisted format is versioned JSON validated against a runtime schema. Natural language only proposes this object; the user reviews the compiled definition before a run.
+
+### Factor contract
+
+Each factor declares:
+
+- factor ID/version and economic description;
+- required observation types and lookback;
+- cross-sectional or time-series semantics;
+- units and output domain;
+- point-in-time availability rule;
+- missingness and winsorization policy;
+- neutralization compatibility;
+- implementation hash;
+- unit fixtures and benchmark/reference where applicable.
+
+Alpha101 names are used only for faithful cross-sectional definitions. Simplified single-asset formulas receive honest unique names.
+
+### Execution algorithm
+
+1. Resolve and persist universe membership at `asOf`.
+2. Apply cheap eligibility filters before expensive data retrieval.
+3. Build one dependency DAG for all factors.
+4. Coalesce identical data requests and feature computations.
+5. Reject future/unavailable observations using `available_time`.
+6. Calculate raw factor values with finite-value checks.
+7. Apply declared winsorization and transformations.
+8. Neutralize using only the eligible cross section.
+9. Calculate composite score and rank with a deterministic tie-break: score, liquidity, canonical instrument ID.
+10. Persist results, factor contributions, exclusions, missingness and source snapshot.
+11. Stream stage/progress events.
+12. Create an immutable result artifact and comparison with the prior run.
+
+### Coverage decision
+
+If coverage is below `minimumCoverage`, the run stops in `NEEDS_DECISION`. The only permitted user choices are:
+
+- exclude missing instruments and create a child definition/run;
+- remove/replace the missing factor and create a child version;
+- wait/retry the data dependency;
+- cancel.
+
+The engine never invents bars or silently imputes unless the definition explicitly permits a documented imputation method.
+
+### Result contract
+
+Each result row includes canonical instrument, rank, composite score, factor values/contributions, predicate outcomes, threshold distances, coverage/quality, source snapshot, portfolio overlap and warnings. Excluded instruments are retained with exclusion reasons.
+
+### Scanner services and UI ownership
+
+- `scanner-service.js`: validate, enqueue, compare and schedule.
+- `scan-compiler.js`: typed definition to dependency DAG.
+- `factor-registry.js`: factor metadata/version/implementation lookup.
+- `scan-worker.js`: point-in-time execution.
+- `scan-repository.js`: versions/runs/results.
+- `features/scanner/ScannerBuilder.tsx`: universe, eligibility and factor composition.
+- `ScannerResults.tsx`: virtualized ranked results.
+- `ScannerInspector.tsx`: why-matched, evidence and risks.
+- `ScannerDiagnostics.tsx`: coverage, efficacy, bias, stability and decay.
+
+### Scanner acceptance fixtures
+
+- Ten-instrument deterministic universe with known ranks.
+- Equal-score tie fixture verifying stable ordering.
+- Missing-factor coverage fixture reaching NEEDS_DECISION.
+- Delisted member fixture proving historical membership.
+- Future filing fixture proving availability-time rejection.
+- Sector-neutral fixture whose within-sector ranks are known.
+- Restart fixture proving queued/running scans recover.
+- Large-universe fixture proving bounded memory and progress.
+- Synthetic-fallback fixture proving production run rejection.
+- Forge/Backtest handoff fixture proving identical definition hash.
+
+## 54. Canonical quantitative definitions
+
+One versioned metric library owns calculations. UI code formats results but cannot recalculate them differently.
+
+Minimum definitions:
+
+- Return: time-weighted portfolio return from ledger/equity observations; money-weighted return is separately named XIRR/IRR.
+- Annualization: derived from elapsed calendar/trading time appropriate to the declared asset calendar, never a hard-coded universal factor.
+- Volatility: sample standard deviation of periodic returns with declared frequency and annualization.
+- Sharpe: excess return over an explicitly sourced/declared risk-free series; disclose sample and frequency.
+- Sortino: excess return over target divided by declared downside deviation definition; one implementation everywhere.
+- Drawdown: peak-to-trough on post-cost equity; duration is time below prior high, not local update interval.
+- Profit factor: gross profits / absolute gross losses; no-loss result is `null/infinite` with an explanatory state, never magic 99.
+- Beta/correlation: timestamp-joined overlapping returns with minimum sample and missingness report.
+- VaR/ES: method, horizon, confidence, window, currency and sample are mandatory metadata.
+- P&L: gross, fees, borrow/funding, FX and net components reconcile to ledger change.
+
+Golden tests run identical event streams through all engines. If a browser preview remains, it is labelled approximate and cannot produce promotable results; the server engine produces canonical artifacts.
+
+## 55. UI state, actions and artifact handoffs
+
+Every panel implements these states: `idle`, `loading`, `partial`, `ready`, `stale`, `degraded`, `error`, `empty`, `permission_denied`. A stale panel retains the last-good value, original timestamp and reason; it never resets age on reread.
+
+Every named action declares:
+
+- input artifact and expected revision;
+- consequence class: read, preview, reversible mutation, consequential mutation;
+- permission/approval requirement;
+- synchronous result or job ID;
+- created/updated artifact IDs;
+- undo/archive behavior;
+- error and recovery states;
+- audit event.
+
+### Handoff payload
+
+Cross-tab actions pass IDs, not copied values:
+
+```json
+{
+  "workspaceId": "uuid",
+  "sourceArtifactId": "uuid",
+  "targetSurface": "paper",
+  "instrumentIds": ["uuid"],
+  "strategyVersionId": null,
+  "dataSnapshotId": "uuid",
+  "orderDraftId": "uuid",
+  "expectedWorkspaceRevision": 17
+}
+```
+
+The target resolves authoritative data and shows any changes since the source snapshot. Opening a surface never implies execution.
+
+## 56. Migration, coexistence and cutover
+
+### Stage A — inventory and freeze
+
+- Export routes, tables, source registry, demo rows and artifact counts.
+- Mark existing UI controls as real, partial, demo or dead in a machine-readable manifest.
+- Add a read-only maintenance banner for migration failures.
+
+### Stage B — shadow foundation
+
+- Create new tables and domain services without redirecting current UI.
+- Dual-read selected endpoints and compare canonical output with legacy output.
+- Never dual-write financial state without a reconciliation design.
+
+### Stage C — artifact migration
+
+- Classify workspaces, strategies, paper orders, positions, bots and reports.
+- Convert valid records through explicit migration functions.
+- Quarantine ambiguous/demo records with reason and original payload.
+- Produce pre/post counts and reconciliation report.
+
+### Stage D — surface-by-surface cutover
+
+- Switch behind flags in dependency order: source truth → workspace → paper/portfolio → strategy/backtest → bots → discovery → Home/JARVIS.
+- Each flag has legacy fallback only while both paths are read-compatible.
+- Remove fallback after the exit gate; do not leave two authorities permanently.
+
+### Stage E — legacy removal
+
+- Remove dead events, random generators, unsupported provider calls and old routes only after reference search and journey tests.
+- Archive migration evidence and update the code map.
+
+### Rollback
+
+- UI flag rollback is allowed only when data writes remain compatible.
+- Financial-schema rollback restores the verified pre-migration backup; never reverse ledger events by ad hoc SQL.
+- A failed cutover makes APEX read-only until integrity and reconciliation pass.
+
+## 57. Requirement traceability and completion rule
+
+Every feature ID in Sections 18–28 must receive a traceability row before implementation:
+
+| Field | Required content |
+|---|---|
+| Requirement | feature ID and exact user-visible behavior |
+| Owner | frontend module, service, repository and domain contract |
+| Dependencies | prior wave, table, provider, entitlement and artifact |
+| API/event | route, request/response schema and realtime topic |
+| States | loading/partial/stale/error/empty and domain transitions |
+| Tests | unit, property, integration, journey and visual IDs |
+| Migration | legacy source and conversion/removal rule |
+| Observability | logs, metrics, trace and incident condition |
+| Acceptance | binary assertions and evidence artifact |
+| Rollback | flag or restore procedure |
+
+A feature is **not complete** because its panel exists. It is complete only when:
+
+1. its authoritative data/logic path exists;
+2. all declared states work;
+3. it survives reload/restart where required;
+4. its action creates the promised artifact;
+5. failure is visible and recoverable;
+6. automated tests and acceptance evidence pass;
+7. legacy duplicate/dead behavior is removed;
+8. source, time, version and lineage are inspectable.
+
+---
+
+# Part X — Ordered build program
+
+## 58. Build rules
 
 - Fix truth and invariants before adding visual density.
 - One domain contract precedes all consuming screens.
@@ -1579,7 +2187,7 @@ These are post-foundation features; they must not be used to distract from fixin
 - Feature flags allow read-only shadow comparison before cutover.
 - Capital-at-risk integration remains out of scope until paper invariants and policy gates are proven.
 
-## 48. Thirty implementation waves
+## 59. Thirty implementation waves
 
 ### Wave 0 — Baseline and truth inventory
 
@@ -1596,7 +2204,7 @@ These are post-foundation features; they must not be used to distract from fixin
 - Runtime schema validation at boundaries.
 - Remove six-character ticker assumptions.
 
-**Gate:** symbol collisions and derivative/prediction identities round-trip correctly.
+**Gate:** symbol collisions and equity/ETF/crypto/FX/futures/options identities round-trip correctly.
 
 ### Wave 2 — Observation/provenance envelope
 
@@ -1779,9 +2387,9 @@ These are post-foundation features; they must not be used to distract from fixin
 
 ---
 
-# Part X — Verification, observability and release gates
+# Part XI — Verification, observability and release gates
 
-## 49. Automated test matrix
+## 60. Automated test matrix
 
 | Layer | Required tests |
 |---|---|
@@ -1801,7 +2409,7 @@ These are post-foundation features; they must not be used to distract from fixin
 | Security | authn/authz, CSRF, mutation idempotency, validation, secret/PII logging, entitlement denial |
 | Recovery | process crash mid-fill, DB restart, provider outage, cache loss, replay and migration rollback |
 
-## 50. Mandatory end-to-end journeys
+## 61. Mandatory end-to-end journeys
 
 1. Live Markets → Paper carries selected canonical instrument and opens an unexecuted ticket.
 2. Oracle option candidate → Paper carries a real sourced structure or refuses theoretical-only data.
@@ -1824,7 +2432,7 @@ These are post-foundation features; they must not be used to distract from fixin
 19. No named action can “succeed” solely through a toast.
 20. Restart during active paper orders restores a consistent state.
 
-## 51. Property/invariant suite
+## 62. Property/invariant suite
 
 - Cash/position/order ledger balances after every event prefix.
 - Applying an event twice is equivalent to applying it once.
@@ -1843,7 +2451,7 @@ These are post-foundation features; they must not be used to distract from fixin
 - Undercoverage cannot cause narrower calibrated intervals.
 - Risk contributions reconcile within declared numerical tolerance.
 
-## 52. Observability and SLOs
+## 63. Observability and SLOs
 
 ### Data SLOs
 
@@ -1878,7 +2486,7 @@ These are post-foundation features; they must not be used to distract from fixin
 - 100% Home/Forge protected visual regression approval.
 - No provider is used outside its recorded entitlement.
 
-## 53. Security and operational controls
+## 64. Security and operational controls
 
 - Authentication and authorization on every APEX mutation.
 - CSRF protection where cookie-authenticated browser calls exist.
@@ -1894,7 +2502,7 @@ These are post-foundation features; they must not be used to distract from fixin
 - Entitlement denial is fail-closed.
 - Real brokerage integration remains isolated until paper release gates are proven.
 
-## 54. Definition of done
+## 65. Definition of done
 
 APEX is ready to be called a serious trading room only when:
 
