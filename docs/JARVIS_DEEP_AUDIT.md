@@ -87,6 +87,11 @@ passed with or without the fix. It now builds a live autopilot session and asser
 | **B-10** | Prompt-matched tools are kept in full and scored suggestions fill the remaining slots, instead of the merged list being truncated. | an explicitly requested tool can no longer fall off the end of `selectTools` |
 | **B-03** | Both `computer-use.js` ReAct loops now check a completion contract before claiming success. For a committing task the history must contain the requested text actually typed **and** a real commit (a send/post-style click, or Enter). Otherwise the call returns `success: false, verified: false` naming the reason. Read-only tasks are unaffected; failed steps count for nothing. | 4 of 7 tests go red when the contract is made to always pass |
 
+| **B-13** | `run_command` failures now set `error` — the field `execute()` actually reads — carrying the last meaningful stderr/stdout line plus the exit code, instead of discarding everything and emitting a content-free sentence. | plenty of tools exit 1 with the message that matters; that message now survives |
+| **B-14** | `react-loop`: the taint flag follows provenance instead of being hardcoded `true` (which denied missions every non-observe tool); confirmations lacking `id`+`ownerChallenge` are reported as `blockedForApproval` rather than surfaced as pending prompts nothing can satisfy; raw execution envelopes are replaced by a readable summary. | summariser test asserts no `{`/`}`/receipt structure reaches prose |
+| **B-15** | Both planner call sites in `computer-use.js` use the sibling module's documented repair ladder instead of a bare `JSON.parse`. | verified: input with a literal newline inside a JSON string throws for `JSON.parse` and is recovered by `parseJson` |
+| **B-16** | `securitySignals` are now **enforced**: a snapshot reporting prompt-injection halts the run with `securityHalt: true` *before* page text reaches the planner prompt. Previously the only enforcement was a sentence asking the model to stop. | test asserts the halt precedes `PAGE TEXT EXCERPT` in the source order |
+
 ### All 8 P0 findings are closed.
 
 The layering that matters: `computer_use` no longer certifies itself (B-03), and even if it did,

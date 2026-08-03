@@ -15,6 +15,10 @@
 "use strict";
 
 const fs = require("fs");
+// B-15: the sibling headless agent already carries a repair ladder for Gemini emitting a literal
+// newline/tab inside a JSON string. A bare JSON.parse here surfaced the raw V8 message
+// ("Bad control character in string literal in JSON at position N") to the owner.
+const { parseJson: parsePlannerJson } = require("./universal-browser-agent");
 const path = require("path");
 const { execFile } = require("child_process");
 const { promisify } = require("util");
@@ -375,7 +379,7 @@ async function callGeminiVision(imageBase64, prompt, apiKey, timeoutMs = 30000) 
     if (!res.ok) throw new Error(data?.error?.message || `Gemini error ${res.status}`);
     const text = data?.candidates?.[0]?.content?.parts?.[0]?.text || "";
     const clean = text.replace(/^```(?:json)?\n?/i, "").replace(/\n?```$/i, "").trim();
-    return JSON.parse(clean);
+    return parsePlannerJson(clean);
   } finally {
     clearTimeout(timer);
   }
@@ -399,7 +403,7 @@ async function callGeminiText(prompt, apiKey, timeoutMs = 20000) {
     if (!res.ok) throw new Error(data?.error?.message || `Gemini error ${res.status}`);
     const text = data?.candidates?.[0]?.content?.parts?.[0]?.text || "";
     const clean = text.replace(/^```(?:json)?\n?/i, "").replace(/\n?```$/i, "").trim();
-    return JSON.parse(clean);
+    return parsePlannerJson(clean);
   } finally {
     clearTimeout(timer);
   }
@@ -492,6 +496,21 @@ Return ONLY JSON:
       const url   = snap.url || "";
       const title = snap.title || "";
       const elems = Array.isArray(snap.elements) ? snap.elements.filter((e) => !e.disabled).slice(0, 50) : [];
+
+      // B-16: `snapshot()` runs prompt-injection detection and attaches `securitySignals`, and
+      // nothing read it — the only "enforcement" was a sentence in the system prompt asking the
+      // model to stop. Page text goes straight into the planner prompt below, so hostile content
+      // could steer the next navigate/fill/click. Detection without enforcement is theatre;
+      // halting is the enforcement.
+      const signals = Array.isArray(snap.securitySignals) ? snap.securitySignals : [];
+      if (signals.length) {
+        const detail = signals.map((s) => s?.reason || s?.pattern || s?.match || "suspicious instruction text").join("; ");
+        return {
+          success: false, verified: false, steps: history, stepsCompleted: i, mode: "playwright",
+          finalUrl: url, finalTitle: title, securityHalt: true,
+          error: `Stopped: this page contains text that tries to issue instructions (${String(detail).slice(0, 200)}). I will not act on directions coming from a web page — tell me directly what you want done.`,
+        };
+      }
 
       const elemList = elems.map((e) =>
         `  ${e.ref} [${e.role || e.tag || "?"}${e.type ? "/" + e.type : ""}] ${JSON.stringify((e.name || e.text || e.ariaLabel || e.placeholder || "").slice(0, 60))}${e.href ? " → " + e.href.slice(0, 80) : ""}`,

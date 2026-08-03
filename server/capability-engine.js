@@ -2480,7 +2480,25 @@ function createCapabilityEngine({
         );
         return { ok: true, stdout: stdout.trim().slice(0, 50000), stderr: (stderr || "").trim().slice(0, 5000), exitCode: 0 };
       } catch (err) {
-        return { ok: false, stdout: (err.stdout || "").trim(), stderr: (err.stderr || err.message || "").trim(), exitCode: err.code || 1, timedOut: Boolean(err.killed) };
+        // `execute()`'s explicitlyFailed branch reads only `error`/`result`, neither of which was
+        // set here — so every non-zero exit became the content-free
+        // "run_command completed without verifying the requested outcome" and the real stderr was
+        // discarded before anything could see it. Plenty of ordinary tools exit 1 with a useful
+        // message; that message is the whole point of running the command.
+        const stderr = (err.stderr || "").trim();
+        const stdout = (err.stdout || "").trim();
+        const timedOut = Boolean(err.killed);
+        const reason = timedOut
+          ? "the command timed out"
+          : (stderr.split("\n").filter(Boolean).pop() || stdout.split("\n").filter(Boolean).pop() || err.message || "no output");
+        return {
+          ok: false,
+          error: `Command exited ${err.code ?? 1}: ${String(reason).slice(0, 400)}`,
+          stdout: stdout.slice(0, 50000),
+          stderr: stderr.slice(0, 5000),
+          exitCode: err.code ?? 1,
+          timedOut,
+        };
       }
     },
     write_file: async (args) => {

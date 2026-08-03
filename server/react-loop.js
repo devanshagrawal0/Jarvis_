@@ -16,6 +16,10 @@ Rules:
 - Never claim a result you didn't observe from a tool
 - If stuck after 3 attempts on the same step, output Final Answer with what was found`;
 
+// Mirrors the taint rule in server.js: only tools that pull EXTERNAL content mark the run as
+// possibly-influenced. Owner-scoped reads (memory, status, skills) taint nothing.
+const UNTRUSTED_CONTENT_TOOL = /^(?:url_read|web_research|web_research_deep|research_v2|browser_|screen_|computer_use|read_clipboard|gmail_|instagram_|canvas_|news_headlines|device_files|device_latest_image)/i;
+
 function parseReActStep(text) {
   const thoughtMatch = text.match(/Thought:\s*(.+?)(?=\nAction:|Final Answer:|$)/si);
   const finalMatch = text.match(/Final Answer:\s*([\s\S]+?)$/i);
@@ -63,6 +67,7 @@ async function createReActExecutor({ capabilityEngine, getSettings, getDeclarati
     let toolResults = [];
     let stuck = 0;
     let lastTool = null;
+    let untrustedContentSeen = false;
 
     for (let i = 0; i < maxIterations; i++) {
       const tools = declarations.length ? [{ functionDeclarations: declarations }] : [];
@@ -127,7 +132,7 @@ async function createReActExecutor({ capabilityEngine, getSettings, getDeclarati
         if (call.name === lastTool) {
           stuck++;
           if (stuck >= 3) {
-            finalAnswer = `Mission stalled: ${call.name} was called 3 consecutive times with no progress. Evidence so far: ${JSON.stringify(toolResults.slice(-3))}`;
+            finalAnswer = `Mission stalled: ${call.name} was called 3 times in a row with no progress. ${summarizeToolResults(toolResults)}`;
             break;
           }
         } else {
@@ -135,9 +140,15 @@ async function createReActExecutor({ capabilityEngine, getSettings, getDeclarati
           lastTool = call.name;
         }
 
+        // `indirect: true` was hardcoded, which is the same category error as B-04: it means
+        // "these arguments may have been shaped by content the owner didn't write", not "this is
+        // a background run". Hardcoding it denied a mission every non-observe tool outright, so
+        // an agent could never write a file or run a command no matter what it was asked to do.
+        // Provenance decides it here too — external content raises the flag, owner data doesn't.
+        if (UNTRUSTED_CONTENT_TOOL.test(call.name)) untrustedContentSeen = true;
         const execution = await capabilityEngine.execute(call.name, call.args || {}, {
           source: "mission",
-          indirect: true,
+          indirect: untrustedContentSeen,
         });
         toolResults.push({ tool: call.name, ...execution });
         step.toolCalls.push(call.name);
@@ -166,23 +177,54 @@ async function createReActExecutor({ capabilityEngine, getSettings, getDeclarati
     }
 
     if (!finalAnswer) {
+      // `JSON.stringify(toolResults.slice(-2))` shipped whole execution envelopes as the
+      // user-facing answer: absolute paths, receipts, internal error strings, and (before B-06)
+      // PowerShell source. A readable summary is the answer; the envelopes stay on `toolResults`
+      // for callers that actually want them.
       finalAnswer = toolResults.length
-        ? `Completed ${toolResults.length} tool operations. ${JSON.stringify(toolResults.slice(-2))}`
+        ? summarizeToolResults(toolResults)
         : "Mission completed with no tool evidence collected.";
     }
+
+    // A confirmation with no `id` and no `ownerChallenge` cannot be approved by anything — the
+    // approve handler keys on both — so emitting one produced a prompt that could never be
+    // satisfied and a mission that simply hung. Only genuinely approvable confirmations are
+    // surfaced; tools refused for want of an owner session are reported as blocked instead.
+    const pendingConfirmations = toolResults
+      .map((item) => item.confirmation)
+      .filter((item) => item && item.id && item.ownerChallenge);
+    const blockedForApproval = toolResults
+      .filter((item) => item.status === "approval_session_required"
+        || (item.confirmation && !(item.confirmation.id && item.confirmation.ownerChallenge)))
+      .map((item) => ({ tool: item.tool, reason: "needs owner approval, which a background mission cannot request" }));
 
     return {
       response: finalAnswer,
       steps,
       toolResults,
       iterations: steps.length,
-      pendingConfirmations: toolResults
-        .filter((r) => r.status === "approval_session_required" || r.confirmation)
-        .map((r) => r.confirmation || { tool: r.tool }),
+      pendingConfirmations,
+      blockedForApproval,
     };
   }
 
   return { execute };
 }
 
+// Renders tool results as something the owner can read. The previous behaviour serialised the
+// raw execution envelopes into the answer, which leaked absolute paths, receipts and internal
+// error text into what was presented as prose.
+function summarizeToolResults(results = []) {
+  const list = Array.isArray(results) ? results : [];
+  const ok = list.filter((item) => item.ok).length;
+  const failed = list.filter((item) => !item.ok);
+  const parts = [`Completed ${list.length} tool operation${list.length === 1 ? "" : "s"} (${ok} succeeded).`];
+  const named = [...new Set(list.map((item) => item.tool).filter(Boolean))].slice(0, 6);
+  if (named.length) parts.push(`Used: ${named.join(", ")}.`);
+  for (const item of failed.slice(0, 3)) {
+    const reason = String(item.error || "no reason reported").split(/\r?\n/)[0].slice(0, 160);
+    parts.push(`${item.tool} failed: ${reason}`);
+  }
+  return parts.join(" ");
+}
 module.exports = { createReActExecutor };
