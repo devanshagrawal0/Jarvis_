@@ -17,7 +17,81 @@ const DEFAULT_TIMEOUT_MS = 8_000;
 const DEFAULT_NAVIGATION_TIMEOUT_MS = 12_000;
 const MAX_EXTRACT_LENGTH = 50_000;
 const MAX_TYPE_LENGTH = 10_000;
-const MAX_SNAPSHOT_ELEMENTS = 120;
+const MAX_SNAPSHOT_ELEMENTS = 240;
+
+// One selector, used for the main frame, child frames and the in-page ranking pass, so the three
+// can never drift apart. `[contenteditable]` rather than `[contenteditable=true]`: chat
+// composers are frequently `contenteditable="plaintext-only"`, which the equality form misses.
+const SNAPSHOT_SELECTOR = "a, button, input, textarea, select, summary, [role], [tabindex], [contenteditable]";
+
+// Ranks candidates INSIDE the page so one round trip replaces a metadata evaluate per element.
+//
+// The bug this exists to fix: the collector walked the DOM and stopped dead at the element budget,
+// so on any page whose interactive controls come last it kept the chrome and threw away the
+// controls. On an Instagram DM thread the nav rail, the notes carousel and ~15 conversation rows
+// exhausted the budget before the walk ever reached the message box — the agent concluded there
+// was nowhere to type, every single time, deterministically.
+//
+// Two changes: typable controls are ranked ABOVE decoration so they survive truncation regardless
+// of DOM position, and icons that merely restate their parent link are dropped outright — they
+// were consuming roughly half the budget (every <a> on Instagram is trailed by an <svg role="img">
+// carrying the same accessible name).
+function rankSnapshotCandidates(rootEl, options) {
+  const { selector, limit } = options;
+  const nodes = Array.from(rootEl.querySelectorAll(selector));
+  const scored = [];
+  for (let index = 0; index < nodes.length; index += 1) {
+    const el = nodes[index];
+    if (!el.getClientRects().length) continue;          // not rendered — never actionable
+    const tag = String(el.tagName || "").toLowerCase();
+    const role = String(el.getAttribute("role") || "").toLowerCase();
+    const label = String(el.getAttribute("aria-label") || el.textContent || "").replace(/\s+/g, " ").trim();
+
+    // Decorative icon duplicating its own link/button: no independent target, no new information.
+    if ((tag === "svg" || tag === "img") && (role === "img" || !role)) {
+      const owner = el.closest("a, button, [role='button'], [role='link']");
+      if (owner && owner !== el) {
+        const ownerLabel = String(owner.getAttribute("aria-label") || owner.textContent || "").replace(/\s+/g, " ").trim();
+        if (!label || ownerLabel.includes(label)) continue;
+      }
+    }
+
+    const editable = el.isContentEditable === true || el.hasAttribute("contenteditable");
+    const type = String(el.getAttribute("type") || "").toLowerCase();
+    let priority = 3;
+    if (editable
+      || role === "textbox" || role === "searchbox" || role === "combobox"
+      || tag === "textarea" || tag === "select"
+      || (tag === "input" && !["hidden", "submit", "button", "reset"].includes(type))) {
+      priority = 0;                                     // somewhere to type — never truncate these
+    } else if (tag === "button" || role === "button" || ["submit", "button", "reset"].includes(type)) {
+      priority = 1;                                     // how the typed thing gets committed
+    } else if (tag === "a" || role === "link") {
+      priority = 2;
+    }
+    scored.push({ index, priority });
+  }
+  // A page with a long list of role="button" rows (every chat app) can still starve the one
+  // button that matters, because the rows tie with it and come first in the DOM. The control that
+  // commits what you typed sits BESIDE the box you type into — send, attach, emoji — so promote
+  // buttons neighbouring a typable control above the general button population. Without this the
+  // agent can find the composer, type, and then have nowhere to click.
+  const NEIGHBOUR_WINDOW = 10;
+  for (let i = 0; i < scored.length; i += 1) {
+    if (scored[i].priority !== 0) continue;
+    for (let j = Math.max(0, i - NEIGHBOUR_WINDOW); j < Math.min(scored.length, i + NEIGHBOUR_WINDOW + 1); j += 1) {
+      if (scored[j].priority === 1) scored[j].priority = 0.5;
+    }
+  }
+  // Highest-value first to decide WHAT survives, then back to DOM order so refs read naturally.
+  scored.sort((left, right) => left.priority - right.priority || left.index - right.index);
+  const keep = scored.slice(0, limit).sort((left, right) => left.index - right.index);
+  return {
+    keep: keep.map((item) => item.index),
+    total: scored.length,
+    typable: scored.filter((item) => item.priority === 0).length,
+  };
+}
 const MAX_COMMIT_OPERATIONS = 8;
 
 function browserElementMetadata(element) {
@@ -619,9 +693,18 @@ function createBrowserAutomationService({
       const activeState = stateForPage(activePage);
       const root = activePage.locator(selector).first();
       await root.waitFor({ state: "attached", timeout: boundedNumber(args.timeoutMs, timeoutMs, 500, 15_000) });
-      const handles = await root.locator("a, button, input, textarea, select, summary, [role], [tabindex], [contenteditable=true]").elementHandles();
+      // Rank before materialising. The two calls read the same selector against the same settled
+      // root with no interleaved await, so the index alignment between them holds.
+      const ranking = await root.evaluate(rankSnapshotCandidates, { selector: SNAPSHOT_SELECTOR, limit })
+        .catch(() => null);
+      const handles = await root.locator(SNAPSHOT_SELECTOR).elementHandles();
+      const keepSet = ranking ? new Set(ranking.keep) : null;
       const elements = [];
-      for (const handle of handles) {
+      for (const [position, handle] of handles.entries()) {
+        if (keepSet && !keepSet.has(position)) {
+          await handle.dispose().catch(() => undefined);
+          continue;
+        }
         if (elements.length >= limit) {
           await handle.dispose().catch(() => undefined);
           continue;
@@ -646,7 +729,7 @@ function createBrowserAutomationService({
         if (elements.length >= limit) break;
         const frameText = await frame.locator("body").innerText().catch(() => "");
         if (frameText) frameTexts.push(frameText.slice(0, 4_000));
-        const frameHandles = await frame.locator("a, button, input, textarea, select, summary, [role], [tabindex], [contenteditable=true]").elementHandles().catch(() => []);
+        const frameHandles = await frame.locator(SNAPSHOT_SELECTOR).elementHandles().catch(() => []);
         for (const handle of frameHandles) {
           if (elements.length >= limit) {
             await handle.dispose().catch(() => undefined);
@@ -674,6 +757,10 @@ function createBrowserAutomationService({
         ...await currentPageSummary(activePage),
         selector,
         elements,
+        elementBudget: limit,
+        elementCandidates: ranking ? ranking.total : elements.length,
+        typableCandidates: ranking ? ranking.typable : null,
+        truncated: Boolean(ranking && ranking.total > limit),
         pageText: visibleText.replace(/\s+/g, " ").trim().slice(0, 8_000),
         securitySignals: security.detected ? [security] : [],
         dialogs: recentDialogs.slice(0, 5),

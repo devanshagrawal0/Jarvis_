@@ -2664,7 +2664,13 @@ function createCapabilityEngine({
       // the URL again through the desktop browser created duplicate, often
       // unauthenticated tabs and broke task ownership.
       const reveal = result.handoff || null;
-      return { ok: result.success, task, result: result.result, steps: stepLog.length ? stepLog : result.history || result.steps || [], evidence: result.evidence || [], statePath: result.statePath || null, taskId: result.taskId || automationOptions.taskId || null, stepsCompleted: result.stepsCompleted, mode: result.mode, finalUrl: result.finalUrl || null, finalTitle: result.finalTitle || null, reveal };
+      // The agent reports a refusal through `error` (blocked, stagnant page, ambiguous target,
+      // planner timeout) and a narrative through `result`. This mapped only `result`, so every
+      // failure of the first kind arrived at execute() carrying NEITHER field — and the generic
+      // fallback below turned a specific, actionable reason into "computer_use completed without
+      // verifying the requested outcome.", which is the sentence the owner actually saw. Same
+      // defect class as B-13 in run_command: the reason existed and was dropped at the boundary.
+      return { ok: result.success, task, result: result.result, error: result.error || null, blocked: result.blocked || false, candidates: result.candidates || null, steps: stepLog.length ? stepLog : result.history || result.steps || [], evidence: result.evidence || [], statePath: result.statePath || null, taskId: result.taskId || automationOptions.taskId || null, stepsCompleted: result.stepsCompleted, mode: result.mode, finalUrl: result.finalUrl || null, finalTitle: result.finalTitle || null, reveal };
     },
     screen_locate: async (args) => {
       if (!computerUse) throw errorWithStatus("screen_locate requires screen capture.", 412);
