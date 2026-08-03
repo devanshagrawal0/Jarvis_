@@ -103,3 +103,51 @@ test("B-04 — owner-scoped reads never taint", () => {
     assert.equal(UNTRUSTED.test(tool), false, `${tool} reads the owner's own data and must not taint the turn`);
   }
 });
+
+// ── B-23 ───────────────────────────────────────────────────────────────────
+// `jarvis-intelligence.test.js` asserts `selectTools` against a hand-written ~40-declaration
+// fixture from which `write_file`, `run_command`, `delete_file` and `compose_artifact` are
+// absent — so the `slice(0, limit)` truncation that dropped `write_file` in production (B-10)
+// could not occur in it, and mentally reinstating B-10 left every assertion green. This drives
+// the REAL declaration set through the REAL `selectTools`.
+const { createToolGateway } = require("../../server/tool-gateway");
+
+function realGateway() {
+  // `definitions` is an array of TUPLES: ["name", "description", risk, confirmationRequired].
+  const definitions = [...sliceBlock(engineSource, "const definitions = [", "\n  ];")
+    .matchAll(/^\s*\[\s*"([a-z0-9_]+)"\s*,\s*"((?:[^"\\]|\\.)*)"/gim)]
+    .map((m) => ({ name: m[1], description: m[2].replace(/\\"/g, '"') }));
+  const declarations = [...sliceBlock(engineSource, "const declarations = [", "\n  ];")
+    .matchAll(/name:\s*"([a-z0-9_]+)"/gi)]
+    .map((m) => ({ name: m[1], description: "", parameters: { type: "object", properties: {} } }));
+
+  // Guard the parsers themselves — a fixture that silently comes back tiny IS the B-23 defect.
+  assert.ok(definitions.length > 60,
+    `the real definition set should be large — got ${definitions.length}; a small fixture is exactly what this replaces`);
+  assert.ok(declarations.length > 60, `expected the real declaration set — got ${declarations.length}`);
+  for (const required of ["write_file", "run_command", "delete_file", "compose_artifact"]) {
+    assert.ok(definitions.some((d) => d.name === required),
+      `${required} must be present, or this test reproduces the fixture it is meant to replace`);
+  }
+  return createToolGateway({
+    capabilityEngine: { declarations, definitions, execute: async () => ({ ok: true }) },
+    moduleRegistry: { list: () => [] },
+    codeKnowledge: { inspect: () => ({}) },
+  });
+}
+
+test("B-23 — write_file survives selection for a file-writing prompt, against the real tool set", () => {
+  const gateway = realGateway();
+  const selected = gateway.selectTools("write a file called notes.md with my meeting notes", { limit: 10, intent: "action", route: { action: true } });
+  assert.ok(selected.some((tool) => tool.name === "write_file"),
+    "this is the exact production failure B-10 fixed, and no test anywhere covered it");
+});
+
+test("B-23 — the prompt-matched tool is not truncated away by lower-ranked suggestions", () => {
+  const gateway = realGateway();
+  // A small limit is where truncation bites: whatever the prompt names has to outrank filler.
+  const selected = gateway.selectTools("run a command to list the running processes", { limit: 3, intent: "action", route: { action: true } });
+  assert.ok(selected.length <= 3, "the limit must still be honoured");
+  assert.ok(selected.some((tool) => tool.name === "run_command"),
+    "a required (prompt-matched) tool must be kept before suggestions fill the remaining slots");
+});
