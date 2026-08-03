@@ -61,3 +61,53 @@ test("restricted personal facts stay local unless the direct-owner cloud policy 
   const ownerCloud = router.route({ query: "Plan my gym week.", providerClass: "cloud", trustedOwnerCloud: true }); assert.equal(ownerCloud.facts.find((fact) => fact.predicate === "health.weight_kg")?.value, 84); assert.equal(ownerCloud.providerCalls, 0);
   const local = router.route({ query: "Plan my gym week.", providerClass: "local" }); assert.equal(local.facts.find((fact) => fact.predicate === "health.weight_kg")?.value, 84);
 });
+
+// A-10 — `route()` labelled every hit `trustZone: "trusted"`, and `renderItem` keys the
+// UNTRUSTED_RETRIEVED_DATA fence off exactly that field, so imported legacy rows containing
+// arbitrary text were handed to the model as trusted, instruction-bearing context. Imported
+// records are already `context_only` for authority; they must be `untrusted` for trust too.
+test("A-10 imported records reach the pack fenced instead of trusted", async () => {
+  const store = await projectedStore();
+  const router = createPersonalContextRouter({ store });
+  const routed = router.route({ query: "what do you know about my projects and my answer style", threadId: "trust", branchId: "trust:main", providerClass: "local", product: "cortex", effort: "balanced", limit: 12 });
+
+  const items = (routed.pack?.blocks || []).flatMap((block) => block.items || []);
+  assert.ok(items.length, "precondition: the pack must actually contain the imported items");
+  // Every one of these came from the legacy import, so every one must be fenced. Before the fix
+  // all of them were `trusted` and none carried a fence.
+  for (const item of items) {
+    assert.equal(item.trustZone, "untrusted", `${item.itemId} is imported and must not be trusted`);
+    assert.equal(item.content?.fence, "UNTRUSTED_RETRIEVED_DATA", "an untrusted item must carry the fence");
+    assert.equal(item.content?.instructionAuthority, false, "fenced content must not carry instruction authority");
+  }
+});
+
+test("A-10 the rule does not simply fence everything", async () => {
+  // The fixture store has no retrievable owner-asserted fact, so the positive half cannot be
+  // established from a pack there. Assert it against the rule itself rather than pretending the
+  // harness proves it — otherwise "everything is untrusted" would pass the test above forever.
+  const zoneFor = (epistemicState) => (epistemicState === "owner_asserted" ? "trusted" : "untrusted");
+  const source = fs.readFileSync(path.join(__dirname, "..", "..", "server", "memory-vnext", "personal-context-router.js"), "utf8");
+  assert.ok(source.includes('trustZone: hit.content?.epistemicState === "owner_asserted" ? "trusted" : "untrusted"'),
+    "the shipped rule must be the one asserted here");
+  // And the producer really does stamp owner facts that way, so "trusted" stays reachable —
+  // otherwise the rule above would quietly fence everything, including the owner's own words.
+  assert.ok(source.includes('epistemicState: "owner_asserted"'),
+    "indexFact must mark the owner's own statements owner_asserted");
+  assert.equal(zoneFor("owner_asserted"), "trusted", "the owner's own statement stays trusted and unfenced");
+  assert.equal(zoneFor("imported"), "untrusted");
+  assert.equal(zoneFor(undefined), "untrusted", "unknown provenance defaults to untrusted, not trusted");
+});
+
+test("A-10 delivered facts are the ones the pack admitted, not the raw hits", async () => {
+  const store = await projectedStore();
+  const router = createPersonalContextRouter({ store });
+  const routed = router.route({ query: "what do you know about my projects", threadId: "gate", branchId: "gate:main", providerClass: "local", product: "cortex", effort: "balanced" });
+
+  const admitted = new Set((routed.pack?.blocks || []).flatMap((block) => (block.items || []).map((item) => item.itemId)));
+  assert.ok(routed.facts.length > 0, "retrieval must still deliver — a gate that delivers nothing is not a fix");
+  assert.equal(routed.packBypassed, false);
+  assert.equal(routed.packAdmitted, admitted.size);
+  assert.ok(routed.facts.length <= admitted.size,
+    "delivery is intersected with the pack, so it can never exceed what the pack admitted");
+});

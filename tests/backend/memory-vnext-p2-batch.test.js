@@ -196,3 +196,40 @@ test("A-15 — a missing domain-state row is a coded error, not a TypeError", ()
   const useAt = source.indexOf('if (state.authority === "vnext")');
   assert.ok(guardAt > 0 && guardAt < useAt, "the guard must precede the dereference");
 });
+
+// ── A-10 ───────────────────────────────────────────────────────────────────
+// `route()` hardcoded `trustZone: "trusted"` for every hit and then returned `facts` derived from
+// the raw hits rather than from the pack `context.compile` had just built — so the token budget,
+// the CONTEXT_SOURCE_REQUIRED check, the UNTRUSTED_RETRIEVED_DATA fence and the manifest
+// reproduction integrity check all applied to an object nothing downstream read.
+const routerSrc = fs.readFileSync(path.join(root, "server", "memory-vnext", "personal-context-router.js"), "utf8");
+
+test("A-10 — trustZone follows provenance instead of being asserted", () => {
+  assert.doesNotMatch(routerSrc, /trustZone: "trusted",/,
+    "every imported legacy row — including arbitrary pasted text — was labelled trusted");
+  assert.match(routerSrc, /trustZone: hit\.content\?\.epistemicState === "owner_asserted" \? "trusted" : "untrusted"/);
+  // It must agree with the `authority` decision made on the same line, which already drew this
+  // distinction: a record cannot sensibly be context_only for authority and trusted for trust.
+  assert.match(routerSrc, /authority: hit\.content\?\.epistemicState === "owner_asserted" \? "evidence" : "context_only"/);
+});
+
+test("A-10 — the fence this unblocks is keyed off exactly that field", () => {
+  // If renderItem stopped keying on trustZone, the fix above would become decorative.
+  const runtime = fs.readFileSync(path.join(root, "server", "memory-vnext", "repositories", "context-runtime-repository.js"), "utf8");
+  assert.match(runtime, /item\.trustZone === "untrusted" \? \{ fence: "UNTRUSTED_RETRIEVED_DATA", instructionAuthority: false/);
+});
+
+test("A-10 — delivered facts are gated on what the pack admitted", () => {
+  assert.match(routerSrc, /const admitted = new Set\(\(pack\?\.blocks \|\| \[\]\)/,
+    "the pack exposes blocks, not items — reading pack.items delivers nothing at all");
+  assert.match(routerSrc, /admitted\.has\(`retrieval:\$\{hit\.documentId\}`\)/,
+    "facts must be intersected with the pack rather than taken straight from hits");
+  assert.doesNotMatch(routerSrc, /const facts = hits\.filter\(\(hit\) => hit\.content\?\.predicate\)\.map/,
+    "the ungated derivation is what made the whole context runtime decorative");
+});
+
+test("A-10 — a pack that admits nothing is reported, not silently bypassed", () => {
+  // A fallback to raw hits here would restore the very bypass this fix removes.
+  assert.match(routerSrc, /const packBypassed = hits\.length > 0 && admitted\.size === 0;/);
+  assert.match(routerSrc, /packAdmitted: admitted\.size, packBypassed/);
+});
