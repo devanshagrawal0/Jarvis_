@@ -12,13 +12,59 @@ function createRetrievalOracleRepository({ db, keyring, clock, faultInjector }) 
   function decrypt(id) { if (!id) return null; const row = db.prepare("SELECT * FROM encrypted_objects WHERE id=?").get(id); if (!row) return null;
     return JSON.parse(keyring.decrypt({ keyId: row.key_id, keyVersion: row.key_version, nonce: row.nonce, ciphertext: row.ciphertext, authTag: row.auth_tag, aadJson: row.aad_json, contentMac: row.content_mac }, JSON.parse(row.aad_json)).toString("utf8")); }
   function digest(value, domain) { return keyring.sign(normalizedText(value), domain); }
+  // A-13 — the index stored a deterministic HMAC of every character TRIGRAM of every word, in a
+  // plain table sitting next to the ciphertext. That is the textbook searchable-encryption break:
+  // character trigrams live in a space of only a few thousand values with famously stable English
+  // frequencies, so an attacker with read access to the DB file — but NOT the DPAPI-wrapped master
+  // key — can map hash→trigram by frequency and co-occurrence and reassemble a large fraction of
+  // the indexed text without touching AES-GCM at all. Word-level tokens leak far less: the space
+  // is the vocabulary rather than ~17k trigrams, and a single token reveals nothing about the
+  // word's internal structure or its neighbours' overlap with it.
+  //
+  // The cost is real and worth stating: dropping trigrams removes substring and morphological
+  // matching ("running" no longer partially matches "run"), so recall on inflected forms drops.
+  // Exact word hits, the exact-key channel and the graph channel are unaffected. Retaining a
+  // whole-plaintext reconstruction oracle to improve fuzzy matching is not a trade worth making.
+  // What replaces the trigrams matters: removing them outright broke recall on inflected forms
+  // ("projects" stopped matching "project"), which is a real capability loss, not a rounding
+  // error. A single STEM token per word restores that without restoring the attack.
+  //
+  // The trigram scheme's danger was not the hashing, it was the sliding window: consecutive
+  // 3-grams of a word overlap by two characters, so recovered trigrams chain together into words
+  // and words into sentences. One stem token per word has no overlap structure to chain — it
+  // gives an attacker at most "these two words share a prefix", over a space of 26^5 rather than
+  // ~17k, and it cannot be walked. Tokens per word drop from (length - 2) to 2, which collapses
+  // the co-occurrence graph the frequency attack feeds on.
+  const STEM_LENGTH = 5;
   function tokenStream(text) {
     const tokens = [];
     for (const unit of lexicalUnits(text)) {
       tokens.push(`w${digest(unit, "retrieval-word-v1")}`);
-      if (unit.length >= 4) for (let index = 0; index <= unit.length - 3; index += 1) tokens.push(`g${digest(unit.slice(index, index + 3), "retrieval-trigram-v1")}`);
+      if (unit.length > STEM_LENGTH) tokens.push(`s${digest(unit.slice(0, STEM_LENGTH), "retrieval-stem-v1")}`);
     }
     return tokens.join(" ");
+  }
+
+  // Existing rows still carry the trigram tokens, and the leak lives in the stored index, not in
+  // the code that wrote it — so removing the emitter is only half the fix. This rewrites them in
+  // place. `retrieval_fts` is derived from `retrieval_documents`, so nothing is lost.
+  function stripLegacyTrigramTokens() {
+    const rows = db.prepare("SELECT document_id,token_stream FROM retrieval_fts").all();
+    let rewritten = 0;
+    let tokensRemoved = 0;
+    const update = db.prepare("UPDATE retrieval_fts SET token_stream=? WHERE document_id=?");
+    const run = db.transaction(() => {
+      for (const row of rows) {
+        const tokens = String(row.token_stream || "").split(" ").filter(Boolean);
+        const kept = tokens.filter((token) => !token.startsWith("g"));   // g = legacy trigram
+        if (kept.length === tokens.length) continue;
+        tokensRemoved += tokens.length - kept.length;
+        update.run(kept.join(" "), row.document_id);
+        rewritten += 1;
+      }
+    });
+    run.immediate();
+    return { scanned: rows.length, rewritten, tokensRemoved };
   }
   function activeProjection() { return db.prepare("SELECT * FROM retrieval_projections WHERE state='active'").get(); }
   function projection(id) { const row = db.prepare("SELECT * FROM retrieval_projections WHERE id=?").get(String(id)); if (!row) throw new Error("Retrieval projection is unavailable."); return row; }
@@ -123,7 +169,7 @@ function createRetrievalOracleRepository({ db, keyring, clock, faultInjector }) 
   function trace(runId) { const run = db.prepare("SELECT id,intent,need_gate,expected_value,scope_ids_json,valid_at,canonical_sequence,projection_id,policy_version,latency_ms,cost_usd,status,created_at FROM retrieval_runs WHERE id=?").get(String(runId)); if (!run) return null;
     return { ...run, scopeIds: JSON.parse(run.scope_ids_json), candidates: db.prepare("SELECT document_id,channel,raw_rank,raw_score,features_json,decision,reason_code FROM retrieval_candidates WHERE run_id=? ORDER BY raw_rank").all(run.id).map((row) => ({ ...row, features: JSON.parse(row.features_json) })) }; }
 
-  return Object.freeze({ activateProjection, createProjection, indexDocument, removeDocument, retrieve, tokenStream, trace });
+  return Object.freeze({ activateProjection, createProjection, indexDocument, removeDocument, retrieve, stripLegacyTrigramTokens, tokenStream, trace });
 }
 
 module.exports = { createRetrievalOracleRepository, lexicalUnits, normalizedText };
