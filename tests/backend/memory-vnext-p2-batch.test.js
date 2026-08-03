@@ -128,3 +128,71 @@ test("A-11 — the plan status transition is conditional on nothing remaining on
   assert.match(code, /COUNT\(\*\) AS count FROM cutover_domain_states WHERE plan_id=\? AND authority='vnext' AND state='primary'/,
     "the decision has to be read from the domain states, not assumed");
 });
+
+// ── A-16 ───────────────────────────────────────────────────────────────────
+// The guarded allowlist could not match the vocabulary its own producer emits: for
+// `personal_profile_items`, `personalFacts` builds `<legacy category>.<key>`, and only rows whose
+// category happened to start with preference/goal/profile/owner were admitted.
+const shadowSource = fs.readFileSync(path.join(root, "server", "memory-vnext", "shadow-runtime.js"), "utf8");
+function loadCanary() {
+  const grab = (name) => {
+    const start = shadowSource.indexOf(`function ${name}(`);
+    assert.ok(start > 0, `${name} should exist`);
+    let depth = 0; let i = shadowSource.indexOf("{", start);
+    for (; i < shadowSource.length; i++) {
+      if (shadowSource[i] === "{") depth++;
+      else if (shadowSource[i] === "}" && --depth === 0) break;
+    }
+    return shadowSource.slice(start, i + 1);
+  };
+  const consts = [/const CANARY_ALLOWED = [^\n]+/, /const PROFILE_SHAPED = [^\n]+/]
+    .map((rx) => { const m = shadowSource.match(rx); assert.ok(m, `${rx} should be defined`); return m[0]; });
+  const body = [...consts, grab("deniedForPrompt"), grab("safeCanaryFact")].join("\n");
+  // eslint-disable-next-line no-new-func
+  return new Function(`${body}\nreturn safeCanaryFact;`)();
+}
+const freshFact = (predicate) => ({ predicate, freshness: { requiresConfirmation: false } });
+
+test("A-16 — real personal_profile_items predicates are admitted by the guarded canary", () => {
+  const safe = loadCanary();
+  // These are the shapes `slug(`${category}.${key}`)` actually produces.
+  for (const predicate of ["answer.style.detail", "work.employer", "communication.tone", "routine.morning"]) {
+    assert.equal(safe(freshFact(predicate)), true, `${predicate} was silently dropped by the old allowlist`);
+  }
+});
+
+test("A-16 — the widening does not open the denied classes", () => {
+  const safe = loadCanary();
+  for (const predicate of ["health.condition", "location.home_address", "identity.legal_name", "memory.conversation.turn"]) {
+    assert.equal(safe(freshFact(predicate)), false, `${predicate} must stay out of the guarded prompt`);
+  }
+  assert.equal(safe(freshFact("identity.preferred_name")), true, "the one identity fact in use still passes");
+});
+
+test("A-16 — a bare unstructured token is still not a profile fact", () => {
+  const safe = loadCanary();
+  assert.equal(loadCanary()(freshFact("randomtoken")), false, "the shape must be <category>.<key>, not anything at all");
+  assert.equal(safe(freshFact("preference.coffee")), true, "the original allowlist still applies");
+});
+
+// ── A-14 ───────────────────────────────────────────────────────────────────
+test("A-14 — the benchmark records that deletion was never measured", () => {
+  const gateSource = fs.readFileSync(path.join(root, "server", "memory-vnext", "gate-preparation.js"), "utf8");
+  assert.match(gateSource, /name: "deletion verified"/, "the gap must appear as a case, not as an absence");
+  assert.match(gateSource, /deletionMeasured: false/);
+  const evalSource = fs.readFileSync(path.join(root, "server", "memory-vnext", "repositories", "shadow-evaluation-repository.js"), "utf8");
+  assert.match(evalSource, /const deletionMeasured = cases\.some\(/,
+    "`SUM(deletion_failures) === 0` was satisfied by construction; the receipt must say whether it was measured at all");
+  assert.match(evalSource, /deletionFailures, deletionMeasured, p95LatencyMs/,
+    "the marker has to reach the caller beside the zero it qualifies");
+});
+
+// ── A-15 ───────────────────────────────────────────────────────────────────
+test("A-15 — a missing domain-state row is a coded error, not a TypeError", () => {
+  const source = fs.readFileSync(path.join(root, "server", "memory-vnext", "repositories", "cutover-coordinator-repository.js"), "utf8");
+  assert.match(source, /CUTOVER_DOMAIN_STATE_MISSING/,
+    "an unguarded `.authority` on an undefined row surfaced as a raw 500 from the activate route");
+  const guardAt = source.indexOf("CUTOVER_DOMAIN_STATE_MISSING");
+  const useAt = source.indexOf('if (state.authority === "vnext")');
+  assert.ok(guardAt > 0 && guardAt < useAt, "the guard must precede the dereference");
+});

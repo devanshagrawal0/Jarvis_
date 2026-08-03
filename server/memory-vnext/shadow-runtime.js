@@ -158,10 +158,26 @@ function createMemoryVNextShadowRuntime({ runtimeDir, importRunId = DEFAULT_IMPO
   // `memory.conversation` is deliberately NOT, because raw chat transcript is the bulk of the
   // candidate set and injecting it is what the guarded phase exists to prevent.
   const CANARY_ALLOWED = /^(?:memory\.(?:preference|personal|communication|procedure|profile|goal)|preference|goal|profile|owner)\b/;
+  // A-16 — the allowlist could not match the vocabulary its own producer emits. For
+  // `personal_profile_items`, the largest protected-personal source, `personalFacts` builds
+  // `slug(`${payload.category || "profile"}.${payload.key}`)` — the prefix is the *legacy
+  // category string* (`answer.style.detail`, `work.…`, `communication.…`), which is free-form
+  // and cannot be enumerated. Only rows whose category happened to begin with
+  // preference/goal/profile/owner were admitted; the rest were dropped silently, which is why
+  // the canary looked clean while delivering almost nothing.
+  //
+  // The widening is grounded rather than guessed: every class that must stay out has its OWN
+  // producer branch with a fixed prefix (`identity.*`, `location.*`, `preference.*`,
+  // `profile.*`), so a `<category>.<key>` fact arriving from the profile branch is not one of
+  // them — and if a legacy category string literally starts with one, `deniedForPrompt` is the
+  // floor underneath this and catches it. Raw conversation is denied there too.
+  const PROFILE_SHAPED = /^[a-z0-9][a-z0-9_-]*(?:\.[a-z0-9][a-z0-9_-]*)+$/;
   function safeCanaryFact(fact) {
     const predicate = String(fact?.predicate || "");
     if (fact?.freshness?.requiresConfirmation) return false;
-    return CANARY_ALLOWED.test(predicate) || predicate === "identity.preferred_name";
+    if (predicate === "identity.preferred_name") return true;
+    if (deniedForPrompt(fact)) return false;
+    return CANARY_ALLOWED.test(predicate) || PROFILE_SHAPED.test(predicate);
   }
 
   // Classes that must never reach the model regardless of who holds authority. The guarded

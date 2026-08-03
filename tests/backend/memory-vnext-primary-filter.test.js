@@ -36,10 +36,13 @@ function loadFilters() {
     return source.slice(start, i + 1);
   };
   const body = [grab("deniedForPrompt"), grab("primaryFact"), grab("safeCanaryFact")].join("\n\n");
-  const allowlist = source.match(/const CANARY_ALLOWED = [^\n]+/);
-  assert.ok(allowlist, "CANARY_ALLOWED should still be defined");
+  const consts = [/const CANARY_ALLOWED = [^\n]+/, /const PROFILE_SHAPED = [^\n]+/].map((rx) => {
+    const match = source.match(rx);
+    assert.ok(match, `${rx} should still be defined`);
+    return match[0];
+  });
   // eslint-disable-next-line no-new-func
-  return new Function(`${allowlist[0]}\n${body}\nreturn { primaryFact, safeCanaryFact };`)();
+  return new Function(`${consts.join("\n")}\n${body}\nreturn { primaryFact, safeCanaryFact };`)();
 }
 
 const fresh = (predicate, sensitivity = "restricted") => ({
@@ -71,9 +74,14 @@ test("A-05 — restricted classes stay out of the prompt after retrieval_context
 
 test("A-05 — cutover still relaxes the allowlist, which is the whole point of the switch", () => {
   const { primaryFact, safeCanaryFact } = loadFilters();
-  // A fact outside the guarded prefix allowlist but in no denied class: guarded withholds it,
-  // primary admits it. Without this the fix would just be the guarded filter under a new name.
-  const relaxed = fresh("work.employer", "internal");
+  // A fact outside the guarded filter but in no denied class: guarded withholds it, primary
+  // admits it. Without this the fix would just be the guarded filter under a new name.
+  //
+  // A-16 later widened the guarded phase to admit `<category>.<key>` profile facts, so
+  // `work.employer` — the original example here — now passes both. The remaining gap is a
+  // non-denied fact that is not profile-shaped at all, which is what an unstructured legacy
+  // predicate looks like.
+  const relaxed = fresh("workingset", "internal");
   assert.equal(safeCanaryFact(relaxed), false, "precondition: guarded phase withholds this");
   assert.equal(primaryFact(relaxed), true, "authority should admit non-denied facts");
 });
