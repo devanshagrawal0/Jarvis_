@@ -249,10 +249,27 @@ function createAgentRuntime({ getSettings, toolGateway, codeKnowledge, memorySto
         : []);
     const execution = forgeGenerative ? { lane: "none", tools: [] } : routeExecutionLane(prompt, settings);
     if (execution.lane !== "none") {
+      // B-09 — the old fallback was
+      //   `laneDeclarations.length ? laneDeclarations : declarationsForLane(selectedTools, execution)`
+      // and `declarationsForLane` filters by the SAME allowlist that just produced nothing. So a
+      // lane naming a tool that does not exist in `declarations` (a definition-only tool, say —
+      // see B-07) silently handed the turn ZERO tools, and the model answered an automation
+      // request with prose. Replacing the tool set is the lane's intended focusing behaviour;
+      // ending up with nothing to call is not. If the lane resolves to nothing, keep what
+      // `selectTools` chose rather than stripping the turn bare.
       const laneDeclarations = typeof toolGateway.declarationsFor === "function"
         ? toolGateway.declarationsFor(execution.tools || [])
         : declarationsForLane(selectedTools, execution);
-      selectedTools = laneDeclarations.length ? laneDeclarations : declarationsForLane(selectedTools, execution);
+      const laneFallback = declarationsForLane(selectedTools, execution);
+      selectedTools = laneDeclarations.length ? laneDeclarations
+        : (laneFallback.length ? laneFallback : selectedTools);
+      // A lane that names tools nothing can resolve is a misconfiguration, not a quiet no-op.
+      const resolved = new Set(selectedTools.map((tool) => tool?.name).filter(Boolean));
+      const unresolved = (execution.tools || []).filter((name) => !resolved.has(name));
+      if (unresolved.length) {
+        execution.unresolvedTools = unresolved;
+        console.warn(`[execution-lane] lane "${execution.lane}" names ${unresolved.length} unavailable tool(s): ${unresolved.join(", ")}`);
+      }
       route.executionLane = execution;
       route.action = true;
       route.intent = "action";

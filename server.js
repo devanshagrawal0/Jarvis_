@@ -2612,14 +2612,24 @@ function evidenceRequirementFor(prompt, prepared) {
   return { required: false, kind: "general", reason: "" };
 }
 
+// B-08 — these three classified the RAW prompt, which on room surfaces is
+// "<context>\n\nUser: <message>". `brain-classify` exists precisely because classifiers that see
+// the context prefix mis-route turns, and `evidenceRequirementFor` already obeyed that rule while
+// these did not. The consequence here is worse than a mis-route: `runComposerIfNeeded` fires
+// *before the answer model runs* and writes four files, so a context prefix containing
+// "create … document" was enough to make a follow-up like "how do I activate it" produce an
+// artifact the owner never asked for — while the tool they did ask for (`write_file`) stops for
+// confirmation. Applying `rawUserMessage` inside each function fixes every call site at once,
+// which is the point: the contamination came from one classifier being missed.
 function wantsWorkArtifact(prompt, prepared) {
+  const text = rawUserMessage(prompt);
   return Boolean(prepared?.route?.workComposer)
-    || (/\b(make|create|generate|write|build|compose|draft|turn .* into)\b/i.test(String(prompt || ""))
-      && /\b(report|brief|briefing|document|doc|pdf|deck|slides?|presentation|study sheet|one[- ]pager|artifact|write[- ]up|summary sheet|trading brief|research brief)\b/i.test(String(prompt || "")));
+    || (/\b(make|create|generate|write|build|compose|draft|turn .* into)\b/i.test(text)
+      && /\b(report|brief|briefing|document|doc|pdf|deck|slides?|presentation|study sheet|one[- ]pager|artifact|write[- ]up|summary sheet|trading brief|research brief)\b/i.test(text));
 }
 
 function artifactFormatForPrompt(prompt) {
-  const lower = String(prompt || "").toLowerCase();
+  const lower = rawUserMessage(prompt).toLowerCase();
   if (/\b(deck|slides?|presentation)\b/.test(lower)) return "deck_outline";
   if (/\b(study sheet|cheat sheet|revision)\b/.test(lower)) return "study_sheet";
   if (/\b(trading brief|kalshi|market)\b/.test(lower)) return "trading_brief";
@@ -2628,7 +2638,7 @@ function artifactFormatForPrompt(prompt) {
 }
 
 function artifactTitleForPrompt(prompt) {
-  const cleaned = String(prompt || "")
+  const cleaned = rawUserMessage(prompt)
     .replace(/\b(make|create|generate|write|build|compose|draft|turn|real artifact|with citations?|source-backed|source backed)\b/gi, " ")
     .replace(/\s+/g, " ")
     .trim();

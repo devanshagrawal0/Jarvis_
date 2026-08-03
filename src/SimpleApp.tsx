@@ -23,7 +23,7 @@ import {
   Sparkles,
   X
 } from "lucide-react";
-import { api, post, saveAccessToken, streamPost } from "./api";
+import { api, post, resolveOwnerChallenge, saveAccessToken, streamPost } from "./api";
 import { LiveVoiceController } from "./liveVoice";
 import type { Project, SystemState } from "./types";
 import { HelixRoom } from "./rooms/HelixRoom";
@@ -1184,7 +1184,13 @@ export default function SimpleApp() {
   async function approveConfirmation(id: string) {
     setPhase("acting");
     try {
-      const result = await post<{ ok: boolean; error?: string; result?: unknown }>(`/api/confirmations/${id}/approve`, {});
+      // Posting `{}` meant every approval from this surface came back 403 "Owner confirmation
+      // challenge is invalid" — the engine compares a 32-byte one-time challenge.
+      const ownerChallenge = await resolveOwnerChallenge(id);
+      const result = await post<{ ok: boolean; error?: string; result?: unknown }>(
+        `/api/confirmations/${encodeURIComponent(id)}/approve`,
+        { ownerChallenge },
+      );
       addMessage("jarvis", result.ok ? "Approved action completed and recorded." : result.error || "The action could not be completed.");
       setPhase(result.ok ? "idle" : "error");
       await refreshReceipts();

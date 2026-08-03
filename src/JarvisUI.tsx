@@ -9,7 +9,7 @@ import { HelixV2 } from "./rooms/helix/v2/HelixV2";
 import { ApexRoom } from "./rooms/ApexRoom";
 import { ArbiterRoom } from "./rooms/ArbiterRoom";
 import { SynapseRoom } from "./rooms/synapse/SynapseRoom";
-import { api, post, streamPost } from "./api";
+import { api, post, resolveOwnerChallenge, streamPost } from "./api";
 import { LiveVoiceController } from "./liveVoice";
 import type { BrainResponse, JarvisActivityEvent, JarvisArtifact, JarvisUiAction } from "./types";
 import "./JarvisUI.css";
@@ -382,11 +382,15 @@ export function JarvisUI() {
   }, [handleSubmit]);
 
   const decideApproval = useCallback(async (approval: ApprovalRequest, decision: "approve" | "deny") => {
-    if (!approval.ownerChallenge) return;
+    // `if (!approval.ownerChallenge) return;` made the button do nothing, with no error shown,
+    // on the fallback path — `requestConfirmation`'s inline confirmations deliberately omit the
+    // challenge, so any turn where the pending fetch had failed produced a dead button. Resolve
+    // it now, and if this surface genuinely cannot approve, say so.
     setApprovalBusy(approval.id);
     try {
+      const ownerChallenge = await resolveOwnerChallenge(approval.id, approval.ownerChallenge);
       const result = await post<any>(`/api/confirmations/${encodeURIComponent(approval.id)}/${decision}`, {
-        ownerChallenge: approval.ownerChallenge,
+        ownerChallenge,
       });
       setApprovals((items) => items.filter((item) => item.id !== approval.id));
       const outcome = decision === "approve"

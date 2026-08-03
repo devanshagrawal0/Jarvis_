@@ -94,6 +94,34 @@ function completionProblems(task, history = []) {
   return problems;
 }
 
+// B-11 — `capability-engine` passes `resume: args._commitBoundary` on approval, and this module
+// never read it. Instead it received `approvedExternal: true`, restarted the vision loop from
+// step 1, and treated *every* commit in the rebuilt task as pre-approved — so the action the
+// owner saw and approved was not the action guaranteed to run, and any additional commit the
+// re-planned run invented executed unchallenged.
+//
+// A blanket flag cannot be made safe, so approval is scoped to the descriptor it was granted for
+// and consumed once. Anything else still pauses. If a caller sets `approvedExternal` without a
+// descriptor we cannot tell what was approved, so the run stays fully gated rather than fully open.
+function createCommitApproval(options = {}) {
+  const approved = options.resume && typeof options.resume === "object" ? options.resume : null;
+  let consumed = false;
+  return {
+    // Returns true when this pending commit is the one the owner already approved.
+    matches(pending) {
+      if (!approved || consumed || !pending) return false;
+      const same = (a, b) => String(a ?? "").trim().toLowerCase() === String(b ?? "").trim().toLowerCase();
+      if (!same(pending.action, approved.action)) return false;
+      if (approved.ref || pending.ref) { if (!same(pending.ref, approved.ref)) return false; }
+      else if (approved.elementId != null || pending.elementId != null) { if (Number(pending.elementId) !== Number(approved.elementId)) return false; }
+      else if (!same(pending.label, approved.label)) return false;
+      if (approved.key || pending.key) { if (!same(pending.key, approved.key)) return false; }
+      consumed = true;
+      return true;
+    },
+  };
+}
+
 function pendingExternalCommit(task, decision, elements = [], history = []) {
   if (!EXTERNAL_COMMIT_TASK_RE.test(String(task || ""))) return null;
   const ref = String(decision?.ref || "");
@@ -107,9 +135,20 @@ function pendingExternalCommit(task, decision, elements = [], history = []) {
     && ["enter", "return"].includes(key)
     && history.some((item) => ["fill", "type"].includes(String(item.action || "").toLowerCase()))
     && !searchStep;
-  const clickingCommit = ["click", "double_click"].includes(action) && explicitControl;
-  const unapprovedDone = (decision?.done || action === "done") && history.length > 0;
-  if (!clickingCommit && !enterAfterTyping && !unapprovedDone) return null;
+  // B-12(1) — `explicitControl` reads model-authored reasoning and DOM-authored labels. An
+  // icon-only send button with no accessible name, a non-English label, or a planner that writes
+  // "clicking the blue arrow" all produce `false`, and the click committed with no approval at
+  // all. On a task whose whole point is a side effect, a click that follows composing text is a
+  // commit candidate whether or not anything on the page said so. Search and selection steps are
+  // still excluded, so navigating to the right chat does not trip the gate.
+  const composedText = history.some((item) => ["fill", "type"].includes(String(item.action || "").toLowerCase()));
+  const clickingCommit = ["click", "double_click"].includes(action) && (explicitControl || (composedText && !searchStep));
+  // B-12(2) — `unapprovedDone` fired on *every* completion of a commit-verb task from step 2
+  // onward, so such a task could never return success on its first pass. It was also useless as
+  // a safety control: by the time the planner says "done" the side effect has either happened or
+  // it hasn't, and a confirmation prompt cannot undo it. The gate belongs before the commit
+  // (above); an unevidenced completion claim is `completionProblems`' job (B-03), not a prompt's.
+  if (!clickingCommit && !enterAfterTyping) return null;
   return {
     action: action || "commit",
     key: key || null,
@@ -483,6 +522,7 @@ Return ONLY JSON:
     const onStep = options.onStep || null;
     const apiKey = getApiKey();
     const history = [];
+    const commitApproval = createCommitApproval(options);
 
     for (let i = 0; i < maxSteps; i++) {
       // Get current page state via Playwright snapshot (DOM elements + refs)
@@ -567,7 +607,8 @@ Return ONLY valid JSON:
       history.push(decision);
       await onStep?.({ step: i + 1, phase: "planned", mode: "playwright", ...decision });
 
-      const pendingCommit = options.approvedExternal === true ? null : pendingExternalCommit(task, decision, elems, history.slice(0, -1));
+      const proposedCommit = pendingExternalCommit(task, decision, elems, history.slice(0, -1));
+      const pendingCommit = proposedCommit && commitApproval.matches(proposedCommit) ? null : proposedCommit;
       if (pendingCommit) {
         await onStep?.({ step: i + 1, phase: "waiting_approval", mode: "playwright", ...decision });
         return { success: false, requiresConfirmation: true, pendingAction: pendingCommit, steps: history, result: "Navigation and preparation are complete. The external account action is paused at the final commit boundary.", stepsCompleted: i, mode: "playwright" };
@@ -660,6 +701,7 @@ Return ONLY valid JSON:
     const onStep = options.onStep || null;
     const apiKey = getApiKey();
     const history = [];
+    const commitApproval = createCommitApproval(options);
     const scrollCounts = { up: 0, down: 0, left: 0, right: 0 };
 
     async function controlCheckpoint(step) {
@@ -811,7 +853,8 @@ Return ONLY valid JSON (no markdown):
       history.push(decision);
       await onStep?.({ step: i + 1, phase: "planned", mode: "screen", ...decision });
 
-      const pendingCommit = options.approvedExternal === true ? null : pendingExternalCommit(task, decision, elements, history.slice(0, -1));
+      const proposedCommit = pendingExternalCommit(task, decision, elements, history.slice(0, -1));
+      const pendingCommit = proposedCommit && commitApproval.matches(proposedCommit) ? null : proposedCommit;
       if (pendingCommit) {
         await onStep?.({ step: i + 1, phase: "waiting_approval", mode: "screen", ...decision });
         return { success: false, requiresConfirmation: true, pendingAction: pendingCommit, steps: history, result: "Navigation and preparation are complete on the signed-in daily browser. The final external action is paused for owner approval.", stepsCompleted: i, mode: "screen" };
@@ -954,4 +997,4 @@ Return JSON:
   };
 }
 
-module.exports = { createComputerUse, pendingExternalCommit };
+module.exports = { createComputerUse, pendingExternalCommit, createCommitApproval };

@@ -102,3 +102,21 @@ export function patch<T>(path: string, body: unknown): Promise<T> {
     body: JSON.stringify(body)
   });
 }
+
+// B-17 — `capabilityEngine.approveConfirmation` requires a timing-safe match on a 32-byte
+// `ownerChallenge`. `SimpleApp` posted `{}` (every approval 403'd) and `JarvisUI` silently
+// no-oped whenever the pending fetch had failed, because the confirmations returned inline by
+// `requestConfirmation` deliberately omit the challenge. Both surfaces now resolve the challenge
+// from the authoritative endpoint at decision time, and a surface that genuinely cannot approve
+// says so instead of doing nothing.
+export async function resolveOwnerChallenge(id: string, known?: string | null): Promise<string> {
+  if (known) return known;
+  const pending = await api<{ confirmations?: Array<{ id?: string; ownerChallenge?: string }> }>(
+    "/api/confirmations/pending",
+  ).catch(() => null);
+  const match = pending?.confirmations?.find((item) => String(item?.id) === String(id));
+  if (match?.ownerChallenge) return match.ownerChallenge;
+  throw new Error(
+    "This surface did not receive the one-time approval challenge for that action. Approve it from the owner surface.",
+  );
+}
