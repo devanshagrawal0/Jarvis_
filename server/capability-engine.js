@@ -187,7 +187,10 @@ function createCapabilityEngine({
   const composer = createWorkComposer({ runtimeDir });
   const pcGraph = createPcKnowledgeGraph({ runtimeDir, workspaceRoot });
   const skillAutopilot = createSkillAutopilot({ runtimeDir, missionEngine });
-  const computerUse = screenCapture ? createComputerUse({ screenCapture, getSettings, browserService: browser }) : null;
+  // B-20 — `runtimeDir` is passed through so the visible lane's outcome memory persists beside
+  // the rest of the runtime (and beside the headless lane's, which already received it) rather
+  // than defaulting to the process cwd.
+  const computerUse = screenCapture ? createComputerUse({ screenCapture, getSettings, browserService: browser, runtimeDir }) : null;
   const universalHeadlessBrowser = createUniversalBrowserAgent({ browserService: managedBrowser, getSettings, runtimeDir });
   const browserForContext = () => managedBrowser;
   const siteAliases = {

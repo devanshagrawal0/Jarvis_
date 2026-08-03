@@ -19,6 +19,11 @@ const fs = require("fs");
 // newline/tab inside a JSON string. A bare JSON.parse here surfaced the raw V8 message
 // ("Bad control character in string literal in JSON at position N") to the owner.
 const { parseJson: parsePlannerJson } = require("./universal-browser-agent");
+// B-20 — outcome memory existed but was instantiated only inside `universal-browser-agent`,
+// so the visible-desktop lane had no failure counter and no adaptation: an identical request
+// could fail the same way forever. The module already refuses to learn commit-verb actions and
+// private/person-shaped labels, so that safety carries over to this lane unchanged.
+const { createNavigationMemory } = require("./automation/navigation-memory");
 const path = require("path");
 const { execFile } = require("child_process");
 const { promisify } = require("util");
@@ -450,8 +455,38 @@ async function callGeminiText(prompt, apiKey, timeoutMs = 20000) {
 
 // ── Factory ───────────────────────────────────────────────────────────────────
 
-function createComputerUse({ screenCapture, getSettings, browserService = null }) {
+function createComputerUse({ screenCapture, getSettings, browserService = null, runtimeDir = null }) {
   if (!screenCapture) throw new Error("createComputerUse requires screenCapture callback");
+  const navigationMemory = createNavigationMemory({ runtimeDir: runtimeDir || path.join(process.cwd(), "runtime") });
+
+  // A screen "surface" is the foreground process; a page is its URL. Both become a route key.
+  // Element-set signature is how we tell whether an action changed anything, so "it worked"
+  // is observed rather than assumed — the same standard B-03 applies to completion claims.
+  function surfaceSignature(elements = []) {
+    return (elements || []).map((item) => `${item.id || item.ref || ""}:${item.name || item.text || ""}`).join("|").slice(0, 4000);
+  }
+  function recordOutcome(pending, { elements, ok = true, error = "" }) {
+    if (!pending) return;
+    try {
+      navigationMemory.record({
+        snapshot: pending.snapshot,
+        action: { action: pending.action, reason: pending.reasoning, expected: pending.expected },
+        targetElement: pending.targetElement,
+        ok,
+        changed: ok && surfaceSignature(elements) !== pending.signature,
+        durationMs: Date.now() - pending.startedAt,
+        error,
+      });
+    } catch { /* learning must never break task execution */ }
+  }
+  function hintText(snapshot) {
+    let hints = [];
+    try { hints = navigationMemory.hints(snapshot, { limit: 5 }); } catch { hints = []; }
+    if (!hints.length) return "";
+    return `\nWHAT HAPPENED LAST TIME on this surface (learned from real runs, not guesses):\n${hints
+      .map((hint) => `- ${hint.action} "${hint.label}" (${hint.role}): ${hint.successes}/${hint.attempts} worked, confidence ${hint.confidence} — ${hint.recommendation}${hint.lastErrorClass ? ` [last failure: ${hint.lastErrorClass}]` : ""}`)
+      .join("\n")}\nPrefer a route that has worked. Do not repeat one marked avoid_unless_page_evidence_changed unless the screen genuinely differs.`;
+  }
 
   async function captureAndRead() {
     const c = await screenCapture({ reason: "computer-use observation" });
@@ -702,6 +737,7 @@ Return ONLY valid JSON:
     const apiKey = getApiKey();
     const history = [];
     const commitApproval = createCommitApproval(options);
+    let pendingLearn = null;
     const scrollCounts = { up: 0, down: 0, left: 0, right: 0 };
 
     async function controlCheckpoint(step) {
@@ -727,7 +763,11 @@ Return ONLY valid JSON:
         try { await options.focusSurface({ step: i + 1, task }); } catch {}
       }
       const { b64, width, height, originX, originY, captureResult } = await captureAndRead();
-      const { elements, annotatedB64, isBrowser } = await buildSetOfMarks(captureResult);
+      const { elements, annotatedB64, isBrowser, procName } = await buildSetOfMarks(captureResult);
+      // The previous step's outcome can only be judged now that the result is on screen.
+      recordOutcome(pendingLearn, { elements, ok: true });
+      pendingLearn = null;
+      const memorySnapshot = { url: procName || "unknown-surface", elements };
       const imageToSend = annotatedB64 || b64;
       const hasSoM = Boolean(annotatedB64 && elements.length);
 
@@ -748,6 +788,7 @@ Return ONLY valid JSON:
 TASK: ${task}
 ${historyText}
 ${somInstructions}
+${hintText(memorySnapshot)}
 
 Decide the NEXT SINGLE action. Rules:
 - Prefer elementId over raw x/y when numbered elements are visible
@@ -878,6 +919,15 @@ Return ONLY valid JSON (no markdown):
         return { success: true, verified: true, steps: history, result: decision.result || "Task complete", stepsCompleted: i + 1, mode: "screen" };
       }
 
+      pendingLearn = {
+        snapshot: memorySnapshot,
+        action: decision.action,
+        reasoning: decision.reasoning,
+        expected: decision.result,
+        targetElement: elements.find((item) => Number(item.id) === Number(decision.elementId)) || null,
+        signature: surfaceSignature(elements),
+        startedAt: Date.now(),
+      };
       try {
         const stoppedBeforeAction = await controlCheckpoint(i + 1);
         if (stoppedBeforeAction) return stoppedBeforeAction;
@@ -929,6 +979,11 @@ Return ONLY valid JSON (no markdown):
         }
       } catch (execErr) {
         history[history.length - 1].error = execErr.message;
+        // B-20 — a failure is the most useful thing to learn: it is what stops the lane proposing
+        // the same dead route on the next identical request. Record it here rather than waiting
+        // for the next observation, which never comes if the run ends on this step.
+        recordOutcome(pendingLearn, { elements, ok: false, error: execErr.message });
+        pendingLearn = null;
         await new Promise((r) => setTimeout(r, 300));
       }
       await onStep?.({ step: i + 1, phase: history[history.length - 1].error ? "failed" : "executed", mode: "screen", ...decision, error: history[history.length - 1].error || null });

@@ -28,7 +28,14 @@ function routeSignature(value) {
       .join("/");
     return `${url.origin}/${pathname}`.replace(/\/$/, "");
   } catch {
-    return "";
+    // B-20 — the visible-desktop lane has no URL, only a foreground window title, so every
+    // non-URL surface returned "" and `safeActionRecord` bailed out before learning anything.
+    // That is why outcome memory existed but only the headless browser lane could ever use it.
+    // A window title works as a route key once it is normalized and stripped of the volatile
+    // document-name prefix most apps put in front ("notes.txt - Notepad" and "todo.txt -
+    // Notepad" are the same surface). URLs are untouched — they still take the branch above.
+    const surface = normalized(value).split(/\s+[-—|]\s+/).pop();
+    return surface ? `surface://${surface}` : "";
   }
 }
 
