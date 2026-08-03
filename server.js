@@ -6531,23 +6531,24 @@ async function handleApi(req, res, pathname, url) {
         return;
       }
       if (req.method === "POST" && pathname === "/api/memory-vnext/cutover/approve") {
-        sendJson(res, 200, memoryVNextCutover.approvePlan({ ...owner, ...body }));
+        // Owner identity is spread LAST so a request body cannot override actorId/authorityZone.
+        sendJson(res, 200, memoryVNextCutover.approvePlan({ ...body, ...owner }));
         return;
       }
       if (req.method === "POST" && pathname === "/api/memory-vnext/cutover/activate") {
-        const result = memoryVNextCutover.activateDomain({ ...owner, ...body });
+        const result = memoryVNextCutover.activateDomain({ ...body, ...owner });
         memoryVNextShadow?.invalidateAuthority?.();   // next turn observes it, not 5s later
         sendJson(res, 200, result);
         return;
       }
       if (req.method === "POST" && pathname === "/api/memory-vnext/cutover/rollback") {
-        const result = memoryVNextCutover.rollbackDomain({ ...owner, ...body });
+        const result = memoryVNextCutover.rollbackDomain({ ...body, ...owner });
         memoryVNextShadow?.invalidateAuthority?.();   // reversal must be immediate
         sendJson(res, 200, result);
         return;
       }
       if (req.method === "POST" && pathname === "/api/memory-vnext/cutover/acceptance") {
-        sendJson(res, 200, memoryVNextCutover.recordOwnerAcceptance({ ...owner, ...body }));
+        sendJson(res, 200, memoryVNextCutover.recordOwnerAcceptance({ ...body, ...owner }));
         return;
       }
     } catch (error) {

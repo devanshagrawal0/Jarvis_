@@ -53,7 +53,7 @@ Today's session produced four false claims that survived because nobody checked 
 
 <!-- merged from lane files; newest lane appended at the end -->
 
-## Fixed so far (2026-07-29)
+## Fixed so far (2026-08-03)
 
 | ID | What changed | Proof it matters |
 |---|---|---|
@@ -91,6 +91,8 @@ passed with or without the fix. It now builds a live autopilot session and asser
 | **B-14** | `react-loop`: the taint flag follows provenance instead of being hardcoded `true` (which denied missions every non-observe tool); confirmations lacking `id`+`ownerChallenge` are reported as `blockedForApproval` rather than surfaced as pending prompts nothing can satisfy; raw execution envelopes are replaced by a readable summary. | summariser test asserts no `{`/`}`/receipt structure reaches prose |
 | **B-15** | Both planner call sites in `computer-use.js` use the sibling module's documented repair ladder instead of a bare `JSON.parse`. | verified: input with a literal newline inside a JSON string throws for `JSON.parse` and is recovered by `parseJson` |
 | **B-16** | `securitySignals` are now **enforced**: a snapshot reporting prompt-injection halts the run with `securityHalt: true` *before* page text reaches the planner prompt. Previously the only enforcement was a sentence asking the model to stop. | test asserts the halt precedes `PAGE TEXT EXCERPT` in the source order |
+| **A-05** | The prompt denylist no longer depends on who holds retrieval authority. `primaryFact` applies `deniedForPrompt` — health, location, non-preferred-name identity, and raw imported chat transcript — independently of the router, because `prepareCanaryContext` routes as `providerClass: "local"`, whose eligibility set is every sensitivity there is. Only the *allowlist* relaxes on cutover. | `memory-vnext-primary-filter.test.js`, 5 tests. Mutation: restore `primaryFact` to `!fact?.freshness?.requiresConfirmation` and the behavioural test goes red on all seven denied predicates (each is `requiresConfirmation: false`, so the old filter admitted them). The three non-regression tests stay green, proving the fix didn't just re-alias the guarded filter. |
+| **A-06** | Every per-domain cutover gate now answers its question with a `SELECT`. `verifyGateWindow` re-reads `shadow_gate_windows` (passed + zero critical/leak/deletion faults + proven restore & rollback); `verifyCachePurged` requires zero `cache_entries` in `status='active'`; `verifyProjection` requires a `state='active'` row and version match; `verifyRoomManifests` requires a `state='current'` manifest. Owner acceptance counts a case as passed only when its `evidenceRef` resolves in `encrypted_objects` or `ledger_events`, and reports `rejected` when it doesn't. Route spreads changed to `{ ...body, ...owner }` so a request body can no longer override `actorId`/`authorityZone`. | The existing Wave 32 tests activated `retrieval_context` against a store with **no projection at all** and passed — that is the vacuity. They now build real preconditions and assert the gates bite first. Mutation (two separate runs, because the gates are independent): reverting the store reads kills the domain-gate test; reverting the acceptance normalisation kills the handoff test, where 14 fabricated `evidence:*` refs previously produced a passing acceptance run and an unlocked handoff. 19/19 after. |
 
 ### All 8 P0 findings are closed.
 

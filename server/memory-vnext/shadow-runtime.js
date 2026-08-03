@@ -164,12 +164,34 @@ function createMemoryVNextShadowRuntime({ runtimeDir, importRunId = DEFAULT_IMPO
     return CANARY_ALLOWED.test(predicate) || predicate === "identity.preferred_name";
   }
 
-  // PRIMARY phase: once `retrieval_context` has cut over, the prefix allowlist stops being the
-  // right filter — it was a proxy for "we don't trust this yet". Authority means we do. The
-  // real guard is the one that was always correct: route() has already filtered by sensitivity
-  // against provider eligibility, so only freshness needs enforcing here. Stale facts are
-  // still withheld regardless of authority; being authoritative does not make a fact current.
-  function primaryFact(fact) { return !fact?.freshness?.requiresConfirmation; }
+  // Classes that must never reach the model regardless of who holds authority. The guarded
+  // allowlist happened to exclude these as a side effect of being narrow; that is not a guard,
+  // it is a coincidence, and it evaporates the moment the allowlist is relaxed.
+  function deniedForPrompt(fact) {
+    const predicate = String(fact?.predicate || "");
+    if (/^(?:health\.|location\.)/i.test(predicate)) return true;
+    if (/^identity\./i.test(predicate) && predicate !== "identity.preferred_name") return true;
+    // Raw imported chat transcript — the bulk of the candidate set, and the thing the guarded
+    // phase exists to keep out of the prompt.
+    if (/^memory\.conversation\b/i.test(predicate)) return true;
+    return false;
+  }
+
+  // PRIMARY phase: once `retrieval_context` has cut over, the prefix ALLOWLIST stops being the
+  // right filter — it was a proxy for "we don't trust this yet", and authority means we do.
+  //
+  // The original version relaxed to freshness alone, justified by "route() has already filtered
+  // by sensitivity against provider eligibility". That justification was wrong:
+  // `prepareCanaryContext` always routes with `providerClass: "local"`, and for `local` the
+  // eligibility set is {public, internal, private, restricted} — every sensitivity there is.
+  // So the sensitivity filter is a no-op on this path, and relaxing to freshness alone would
+  // have admitted restricted health, location and identity facts plus raw transcript on the
+  // first turn after cutover. The DENYLIST is therefore enforced here, independently of
+  // authority; only the allowlist relaxes.
+  function primaryFact(fact) {
+    if (fact?.freshness?.requiresConfirmation) return false;
+    return !deniedForPrompt(fact);
+  }
 
   function retrievalAuthority() {
     try { return authority?.isVNextPrimary?.("retrieval_context") ? "vnext" : "legacy"; }

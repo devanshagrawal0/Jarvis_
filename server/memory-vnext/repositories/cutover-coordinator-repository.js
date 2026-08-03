@@ -14,6 +14,60 @@ function createCutoverCoordinatorRepository({ db, keyring, clock, faultInjector 
   const sign = (value, purpose) => keyring.sign(JSON.stringify(canonical(value)), purpose);
   const requireOwner = (actorId, zone) => { const actor = db.prepare("SELECT actor_type,status FROM actors WHERE id=?").get(String(actorId)); if (!actor || actor.actor_type !== "owner" || actor.status !== "active" || zone !== "owner") throw Object.assign(new Error("Direct owner authority is required."), { code: "OWNER_AUTHORITY_REQUIRED" }); };
 
+  // ── Store-backed cutover gates (A-06) ────────────────────────────────────────
+  // Every one of these answers its question with a SELECT. None of them can be satisfied by
+  // anything in the request body.
+
+  // The plan's own shadow gate must still be passing, and its failure counters must still be
+  // zero. `createPlan` checks `passed` once at planning time; a domain can be activated days
+  // later, and the row it is activated against is the one that must be clean.
+  function verifyGateWindow(plan) {
+    const gate = db.prepare("SELECT passed,unresolved_critical,scope_leaks,deletion_failures,restore_passed,rollback_passed FROM shadow_gate_windows WHERE session_id=?").get(plan.shadow_session_id);
+    if (!gate) throw Object.assign(new Error("No shadow gate window exists for this plan's session."), { code: "CUTOVER_DOMAIN_GATE_REQUIRED" });
+    const faults = [];
+    if (gate.passed !== 1) faults.push("gate not passed");
+    if (gate.unresolved_critical > 0) faults.push(`${gate.unresolved_critical} unresolved critical`);
+    if (gate.scope_leaks > 0) faults.push(`${gate.scope_leaks} scope leaks`);
+    if (gate.deletion_failures > 0) faults.push(`${gate.deletion_failures} deletion failures`);
+    if (gate.restore_passed !== 1) faults.push("restore not proven");
+    if (gate.rollback_passed !== 1) faults.push("rollback not proven");
+    if (faults.length) throw Object.assign(new Error(`Shadow gate does not support activation: ${faults.join(", ")}.`), { code: "CUTOVER_DOMAIN_GATE_REQUIRED" });
+  }
+
+  // "Cache purged" means no live cache entry can still serve a pre-cutover answer. A surviving
+  // active entry is exactly the stale read the gate exists to prevent.
+  function verifyCachePurged() {
+    const live = Number(db.prepare("SELECT COUNT(*) AS count FROM cache_entries WHERE status='active'").get().count);
+    if (live > 0) throw Object.assign(new Error(`Retrieval cutover requires a purged cache; ${live} active cache entries remain.`), { code: "CUTOVER_RETRIEVAL_INVALIDATION_REQUIRED" });
+  }
+
+  // "Projection verified" means there is an active projection to retrieve from, and — when the
+  // caller names a version — that the active one is the version being activated. Without this,
+  // retrieval could cut over to a projection that is still building or has failed.
+  function verifyProjection(requestedVersion) {
+    const active = db.prepare("SELECT projection_version FROM retrieval_projections WHERE state='active'").get();
+    if (!active) throw Object.assign(new Error("Retrieval cutover requires an active projection; none is active."), { code: "CUTOVER_RETRIEVAL_INVALIDATION_REQUIRED" });
+    if (requestedVersion && String(requestedVersion) !== active.projection_version) throw Object.assign(new Error(`Requested projection ${requestedVersion} is not the active projection (${active.projection_version}).`), { code: "CUTOVER_RETRIEVAL_INVALIDATION_REQUIRED" });
+  }
+
+  // "Manifests verified" means the rooms actually have current manifests to read. Activating this
+  // domain against an empty manifest table points every room at nothing.
+  function verifyRoomManifests() {
+    const current = Number(db.prepare("SELECT COUNT(*) AS count FROM room_manifests WHERE state='current'").get().count);
+    if (current < 1) throw Object.assign(new Error("Room integration cutover requires at least one current room manifest; none exist."), { code: "CUTOVER_ROOM_MANIFESTS_REQUIRED" });
+  }
+
+  // An acceptance case is only "passed" if its evidence resolves to something stored. Without
+  // this, `passed` was the caller's own word and `evidenceRef` was a string nobody ever read.
+  function evidenceResolves(ref) {
+    if (!ref) return false;
+    const id = String(ref);
+    return Boolean(
+      db.prepare("SELECT 1 FROM encrypted_objects WHERE id=? LIMIT 1").get(id)
+      || db.prepare("SELECT 1 FROM ledger_events WHERE event_id=? LIMIT 1").get(id),
+    );
+  }
+
   function createPlan(input = {}) {
     const session = db.prepare("SELECT status FROM shadow_sessions WHERE id=?").get(String(input.shadowSessionId)); const gate = db.prepare("SELECT passed FROM shadow_gate_windows WHERE session_id=?").get(String(input.shadowSessionId)); if (session?.status !== "passed" || gate?.passed !== 1) throw Object.assign(new Error("A passed shadow gate is required before cutover planning."), { code: "CUTOVER_GATE_REQUIRED" });
     const createdAt = clock(); const rollbackEnd = new Date(input.rollbackWindowEndsAt || createdAt.getTime() + 30 * 86400000); const retentionUntil = new Date(input.retentionUntil || createdAt.getTime() + 90 * 86400000); if (rollbackEnd <= createdAt) throw new Error("Rollback window must be in the future."); if (retentionUntil.getTime() - createdAt.getTime() < 90 * 86400000) throw Object.assign(new Error("Legacy snapshot retention must be at least 90 days."), { code: "LEGACY_RETENTION_TOO_SHORT" }); const id = String(input.id || crypto.randomUUID()); const run = db.transaction(() => { db.prepare("INSERT INTO cutover_plans(id,shadow_session_id,plan_version,domain_order_json,rollback_window_ends_at,retention_until,status,created_at) VALUES(?,?,?,?,?,?,'draft',?)").run(id, String(input.shadowSessionId), String(input.planVersion || "wave32-v1"), JSON.stringify(CUTOVER_DOMAINS), rollbackEnd.toISOString(), retentionUntil.toISOString(), createdAt.toISOString()); for (const domain of CUTOVER_DOMAINS) db.prepare("INSERT INTO cutover_domain_states(plan_id,domain,authority,state,fallback_enabled,updated_at) VALUES(?,?,'legacy','pending',1,?)").run(id, domain, createdAt.toISOString()); return { id, status: "draft", domainOrder: [...CUTOVER_DOMAINS], rollbackWindowEndsAt: rollbackEnd.toISOString(), retentionUntil: retentionUntil.toISOString() }; }); return run.immediate();
@@ -24,9 +78,23 @@ function createCutoverCoordinatorRepository({ db, keyring, clock, faultInjector 
   function activateDomain(input = {}) {
     requireOwner(input.actorId, input.authorityZone); const plan = db.prepare("SELECT * FROM cutover_plans WHERE id=?").get(String(input.planId)); if (!plan || !["approved", "active"].includes(plan.status)) throw new Error("Approved active cutover plan is required."); const domain = String(input.domain); const index = CUTOVER_DOMAINS.indexOf(domain); if (index < 0) throw new Error("Cutover domain is unsupported."); const state = db.prepare("SELECT * FROM cutover_domain_states WHERE plan_id=? AND domain=?").get(plan.id, domain); if (state.authority === "vnext") return { planId: plan.id, domain, authority: "vnext", replayed: true };
     for (const earlier of CUTOVER_DOMAINS.slice(0, index)) { const predecessor = db.prepare("SELECT authority,state FROM cutover_domain_states WHERE plan_id=? AND domain=?").get(plan.id, earlier); if (predecessor?.authority !== "vnext" || predecessor?.state !== "primary") throw Object.assign(new Error(`Cutover predecessor ${earlier} is not primary.`), { code: "CUTOVER_ORDER_VIOLATION" }); }
+    // Each of these gates used to be a boolean the HTTP caller supplied about itself, on a route
+    // spread as `activateDomain({ ...owner, ...body })` — so a POST body of
+    // `{"gatePassed":true,"cachePurged":true,"projectionVerified":true,"roomManifestsVerified":true}`
+    // satisfied all of them and handed vNext authority over a domain that had verified nothing.
+    // The caller's assertion is still required — an operator must intend the activation — but it
+    // is now the weaker of two conditions: the store has to agree.
     if (input.gatePassed !== true) throw Object.assign(new Error("A fresh domain gate snapshot is required."), { code: "CUTOVER_DOMAIN_GATE_REQUIRED" });
-    if (domain === "retrieval_context" && (input.cachePurged !== true || input.projectionVerified !== true)) throw Object.assign(new Error("Retrieval cutover requires cache purge and projection verification."), { code: "CUTOVER_RETRIEVAL_INVALIDATION_REQUIRED" });
-    if (domain === "room_integrations" && input.roomManifestsVerified !== true) throw Object.assign(new Error("Room integration cutover requires verified manifests."), { code: "CUTOVER_ROOM_MANIFESTS_REQUIRED" });
+    verifyGateWindow(plan);
+    if (domain === "retrieval_context") {
+      if (input.cachePurged !== true || input.projectionVerified !== true) throw Object.assign(new Error("Retrieval cutover requires cache purge and projection verification."), { code: "CUTOVER_RETRIEVAL_INVALIDATION_REQUIRED" });
+      verifyCachePurged();
+      verifyProjection(input.projectionVersion);
+    }
+    if (domain === "room_integrations") {
+      if (input.roomManifestsVerified !== true) throw Object.assign(new Error("Room integration cutover requires verified manifests."), { code: "CUTOVER_ROOM_MANIFESTS_REQUIRED" });
+      verifyRoomManifests();
+    }
     const transitionId = String(input.id || crypto.randomUUID()); const sequence = Number(db.prepare("SELECT COALESCE(MAX(activation_sequence),0)+1 AS value FROM cutover_domain_states WHERE plan_id=?").get(plan.id).value); const receipt = { transitionId, planId: plan.id, domain, fromAuthority: "legacy", toAuthority: "vnext", sequence, fallbackEnabled: true, gateHash: crypto.createHash("sha256").update(JSON.stringify(canonical(input.gateSnapshot || {}))).digest("hex") };
     const run = db.transaction(() => { const gateId = encrypt("owner:local", "cutover-domain-gate-snapshot", { ...input.gateSnapshot, cachePurged: input.cachePurged === true, projectionVerified: input.projectionVerified === true, roomManifestsVerified: input.roomManifestsVerified === true }); const receiptMac = sign(receipt, "cutover-transition:v1"); db.prepare("INSERT INTO cutover_transitions(id,plan_id,domain,from_authority,to_authority,gate_snapshot_encrypted_id,actor_id,receipt_mac,created_at) VALUES(?,?,?,'legacy','vnext',?,?,?,?)").run(transitionId, plan.id, domain, gateId, String(input.actorId), receiptMac, now()); db.prepare("UPDATE cutover_domain_states SET authority='vnext',state='primary',fallback_enabled=1,activation_sequence=?,projection_version=?,updated_at=? WHERE plan_id=? AND domain=?").run(sequence, input.projectionVersion ? String(input.projectionVersion) : null, now(), plan.id, domain); db.prepare("UPDATE cutover_plans SET status='active' WHERE id=?").run(plan.id); faultInjector("cutover.activate.before_commit"); return { ...receipt, receiptMac, authority: "vnext", state: "primary", replayed: false }; }); return run.immediate();
   }
@@ -41,7 +109,11 @@ function createCutoverCoordinatorRepository({ db, keyring, clock, faultInjector 
   }
 
   function recordOwnerAcceptance(input = {}) {
-    requireOwner(input.actorId, input.authorityZone); const results = Array.isArray(input.results) ? input.results : []; const byCase = new Map(results.map((result) => [String(result.case), result])); const normalized = ACCEPTANCE_CASES.map((name) => ({ case: name, passed: byCase.get(name)?.passed === true, evidenceRef: byCase.get(name)?.evidenceRef || null })); const passedCount = normalized.filter((result) => result.passed).length; const passed = passedCount === ACCEPTANCE_CASES.length; const id = String(input.id || crypto.randomUUID()); const receipt = { id, planId: String(input.planId), suiteVersion: String(input.suiteVersion || "wave32-v1"), requiredCount: ACCEPTANCE_CASES.length, passedCount, failedCount: ACCEPTANCE_CASES.length - passedCount, passed, actorId: String(input.actorId) }; const run = db.transaction(() => { const resultsId = encrypt("owner:local", "owner-acceptance-results", normalized); const receiptMac = sign(receipt, "owner-acceptance:v1"); db.prepare("INSERT INTO owner_acceptance_runs(id,plan_id,suite_version,results_encrypted_id,required_count,passed_count,failed_count,passed,accepted_by,receipt_mac,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)").run(id, receipt.planId, receipt.suiteVersion, resultsId, receipt.requiredCount, passedCount, receipt.failedCount, passed ? 1 : 0, receipt.actorId, receiptMac, now()); return { ...receipt, receiptMac, results: normalized }; }); return run.immediate();
+    requireOwner(input.actorId, input.authorityZone); const results = Array.isArray(input.results) ? input.results : []; const byCase = new Map(results.map((result) => [String(result.case), result])); // `passed` was the caller's own word and `evidenceRef` was a string nobody ever read, so a
+    // POST of fourteen `{passed:true}` objects produced the passing acceptance run that
+    // `completeAndHandoff` gates on. A case now counts as passed only if its evidence resolves
+    // to a stored object; unresolvable evidence is reported rather than silently dropped.
+    const normalized = ACCEPTANCE_CASES.map((name) => { const entry = byCase.get(name); const claimed = entry?.passed === true; const evidenceRef = entry?.evidenceRef || null; const proven = claimed && evidenceResolves(evidenceRef); return { case: name, passed: proven, evidenceRef, ...(claimed && !proven ? { rejected: evidenceRef ? "evidence_ref_not_found" : "evidence_ref_missing" } : {}) }; }); const passedCount = normalized.filter((result) => result.passed).length; const passed = passedCount === ACCEPTANCE_CASES.length; const id = String(input.id || crypto.randomUUID()); const receipt = { id, planId: String(input.planId), suiteVersion: String(input.suiteVersion || "wave32-v1"), requiredCount: ACCEPTANCE_CASES.length, passedCount, failedCount: ACCEPTANCE_CASES.length - passedCount, passed, actorId: String(input.actorId) }; const run = db.transaction(() => { const resultsId = encrypt("owner:local", "owner-acceptance-results", normalized); const receiptMac = sign(receipt, "owner-acceptance:v1"); db.prepare("INSERT INTO owner_acceptance_runs(id,plan_id,suite_version,results_encrypted_id,required_count,passed_count,failed_count,passed,accepted_by,receipt_mac,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)").run(id, receipt.planId, receipt.suiteVersion, resultsId, receipt.requiredCount, passedCount, receipt.failedCount, passed ? 1 : 0, receipt.actorId, receiptMac, now()); return { ...receipt, receiptMac, results: normalized }; }); return run.immediate();
   }
 
   function completeAndHandoff(input = {}) {
