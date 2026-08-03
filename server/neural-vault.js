@@ -2092,7 +2092,12 @@ function createNeuralVault({ runtimeDir, getProviders = () => ({}), getToolDefin
     const lower = String(query || "").toLowerCase();
     return listActionMacros().filter((macro) => macro.triggerPhrases.some((phrase) => {
       const normalized = String(phrase).toLowerCase().replace(/\{[^}]+\}/g, "").replace(/\s+/g, " ").trim();
-      return normalized && lower.includes(normalized.replace(/\b(for|something)\b/g, "").trim());
+      // B-24 — the guard tested `normalized` while the match used a further-stripped string, so a
+      // trigger phrase that is entirely placeholder + stopword ("for {query}") passed the guard as
+      // "for" and then matched on "", which `includes` reports true for every query. Guard the
+      // string that is actually matched.
+      const needle = normalized.replace(/\b(for|something)\b/g, "").replace(/\s+/g, " ").trim();
+      return Boolean(needle) && lower.includes(needle);
     })).slice(0, 5);
   }
 
@@ -2567,7 +2572,11 @@ function createNeuralVault({ runtimeDir, getProviders = () => ({}), getToolDefin
     const macros = listActionMacros();
     const selectedMacro = macroSlug
       ? macros.find((macro) => macro.slug === macroSlug || macro.id === macroSlug)
-      : macros.find((macro) => macro.slug === "youtube-search") || macros[0];
+      // B-25 — this defaulted to the seeded youtube-search macro, so a trace with no slug
+      // reported it as "the" macro regardless of what the owner was actually doing. Misleading in
+      // any trace a human reads or that is fed back to the model. With no slug there is no
+      // selected macro; the caller gets the most recent run instead (below).
+      : null;
     const lastRun = selectedMacro ? listActionMacroRuns({ macroId: selectedMacro.id, limit: 1 })[0] : listActionMacroRuns({ limit: 1 })[0];
     const providerFilter = String(provider || "").toLowerCase();
     return {

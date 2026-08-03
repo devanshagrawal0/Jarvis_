@@ -268,9 +268,33 @@ function loadReceipts() {
   return readJson(RECEIPTS_PATH, []);
 }
 
+// C-05 — both files sat at exactly 120 entries, i.e. permanently at the cap and discarding on
+// every single write, with nothing recording what went. Neural Vault archives episodes
+// independently so raw turns were not lost outright, but the working window was silently losing
+// history and the caps were three unexplained magic numbers. The window is now a named constant,
+// and anything trimmed is appended to a rolling JSONL archive beside the file rather than dropped.
+const HISTORY_WINDOW = 500;
+
+function archiveTrimmed(filePath, dropped) {
+  if (!dropped.length) return;
+  try {
+    fs.appendFileSync(`${filePath}.archive.jsonl`, `${dropped.map((item) => JSON.stringify(item)).join("\n")}\n`, "utf8");
+  } catch (error) {
+    console.warn(`[history] could not archive ${dropped.length} trimmed entries: ${error.message}`);
+  }
+}
+
+// Keeps the newest `HISTORY_WINDOW`, archiving the older remainder.
+function trimHistory(filePath, items) {
+  const list = Array.isArray(items) ? items : [];
+  if (list.length <= HISTORY_WINDOW) return list;
+  archiveTrimmed(filePath, list.slice(0, list.length - HISTORY_WINDOW));
+  return list.slice(-HISTORY_WINDOW);
+}
+
 function loadConversation() {
   const stored = readJson(CONVERSATION_PATH, []);
-  if (Array.isArray(stored) && stored.length) return stored.slice(-120);
+  if (Array.isArray(stored) && stored.length) return stored.slice(-HISTORY_WINDOW);
   const recovered = loadReceipts()
     .filter((receipt) => receipt.action === "conversation.answer" && receipt.input && receipt.result)
     .sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime())
@@ -278,8 +302,9 @@ function loadConversation() {
       { id: `${receipt.id}-user`, role: "user", text: String(receipt.input), createdAt: receipt.createdAt },
       { id: `${receipt.id}-model`, role: "model", text: String(receipt.result), createdAt: receipt.createdAt },
     ]);
-  if (recovered.length) writeJson(CONVERSATION_PATH, recovered.slice(-120));
-  return recovered.slice(-120);
+  const recoveredWindow = trimHistory(CONVERSATION_PATH, recovered);
+  if (recoveredWindow.length) writeJson(CONVERSATION_PATH, recoveredWindow);
+  return recoveredWindow;
 }
 
 function appendConversation(messages) {
@@ -292,13 +317,15 @@ function appendConversation(messages) {
       createdAt: item.createdAt || isoNow(),
       sources: Array.isArray(item.sources) ? item.sources.slice(0, 8) : [],
     }));
-  const next = [...loadConversation(), ...clean].slice(-120);
+  const next = trimHistory(CONVERSATION_PATH, [...loadConversation(), ...clean]);
   writeJson(CONVERSATION_PATH, next);
   return next;
 }
 
 function saveReceipts(receipts) {
-  writeJson(RECEIPTS_PATH, receipts.slice(0, 120));
+  // Receipts are newest-first, so the OLD end is the tail.
+  if (receipts.length > HISTORY_WINDOW) archiveTrimmed(RECEIPTS_PATH, receipts.slice(HISTORY_WINDOW));
+  writeJson(RECEIPTS_PATH, receipts.slice(0, HISTORY_WINDOW));
   return receipts;
 }
 

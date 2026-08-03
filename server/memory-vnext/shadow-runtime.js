@@ -94,7 +94,13 @@ function createMemoryVNextShadowRuntime({ runtimeDir, importRunId = DEFAULT_IMPO
     const eligible = routed.facts.filter(retrievalAuthority() === "vnext" ? primaryFact : safeCanaryFact);
     const safety = assessDeliverySafety(eligible, routed.facts);
     shadow.compare({ sessionId, query: { turnId, source, topics: routed.topics }, legacyResult: { refs: legacyRefs, quality: legacyRefs.length ? 0.5 : 0 }, vnextResult: { refs: vnextRefs, quality: vnextRefs.length ? 0.6 : 0, scopeIds: safety.scopeIds, skippedByPlanner: routed.plan?.decision === "none", temporalCorrect: safety.temporalCorrect, deletionCorrect: safety.deletionCorrect, privacySafe: safety.privacySafe }, allowedScopeIds: ["owner:local"], legacyLatencyMs: Number(input.legacyLatencyMs || 0), vnextLatencyMs: Number(routed.diagnostics?.totalMs || 0), note: input.answerInfluence ? "Guarded canary context was delivered; legacy context remained available as fallback." : "Shadow-only comparison; candidate context did not influence the answer." });
-    runtime.processed += 1; runtime.lastObservedAt = new Date().toISOString(); runtime.providerCalls = 0; runtime.incrementalCostUsd = 0;
+    runtime.processed += 1; runtime.lastObservedAt = new Date().toISOString();
+    // A-17 — these were assignments, not measurements: they reset to zero on every observed turn,
+    // so the reported "0 provider calls / $0.00" was true by construction rather than observed.
+    // The vNext path is genuinely local-only (no provider is called from this runtime), so zero is
+    // the correct value — but it is now stated as a property of the design rather than recomputed
+    // as if it had been counted.
+    runtime.providerCalls = 0; runtime.incrementalCostUsd = 0; runtime.costBasis = "local_only_no_provider_calls";
     return { observed: true, sessionId, turnId, mutations: owner.mutations.length, facts: routed.facts.length, providerCalls: 0, incrementalCostUsd: 0 };
   }
 
@@ -296,7 +302,7 @@ function createMemoryVNextShadowRuntime({ runtimeDir, importRunId = DEFAULT_IMPO
   async function flush() { await queue; return status(); }
   function status() {
     let persisted = null; try { persisted = registry?.status(sessionId) || null; } catch (error) { runtime.lastError = bounded(error.message, 500); }
-    return { mode: canaryEnabled ? "guarded_context_canary" : "shadow_only", enabled: Boolean(enabled), state: runtime.state, root, importRunId, sessionId, legacyAnswersAuthoritative: retrievalAuthority() !== "vnext", answerInfluence: Boolean(canaryEnabled), authority: (() => { try { return authority?.status?.() || null; } catch { return null; } })(), canaryPolicy: canaryEnabled ? { allow: ["memory.preference", "memory.personal", "memory.communication", "memory.procedure", "memory.profile", "memory.goal", "preference.*", "goal.*", "profile.*", "owner.*", "identity.preferred_name"], deny: ["memory.conversation (raw transcript)", "health.*", "location.*", "identity.* except preferred_name", "stale facts"], maxFacts: 6, maxCharacters: 1800, roomIsolation: ["helix", "apex", "apex-forge"] } : null, duplicateProviderCalls: 0, providerCalls: 0, incrementalCostUsd: 0, runtime: { ...runtime, canary: { ...runtime.canary } }, persisted };
+    return { mode: canaryEnabled ? "guarded_context_canary" : "shadow_only", enabled: Boolean(enabled), state: runtime.state, root, importRunId, sessionId, legacyAnswersAuthoritative: retrievalAuthority() !== "vnext", answerInfluence: Boolean(canaryEnabled), authority: (() => { try { return authority?.status?.() || null; } catch { return null; } })(), canaryPolicy: canaryEnabled ? (() => { const primary = retrievalAuthority() === "vnext"; return { phase: primary ? "primary" : "guarded", allow: primary ? ["<category>.<key> profile shapes", "preference.*", "goal.*", "profile.*", "owner.*", "identity.preferred_name"] : ["memory.preference", "memory.personal", "memory.communication", "memory.procedure", "memory.profile", "memory.goal", "preference.*", "goal.*", "profile.*", "owner.*", "<category>.<key> profile shapes", "identity.preferred_name"], deny: ["memory.conversation (raw transcript)", "health.*", "location.*", "identity.* except preferred_name", "stale facts"], maxFacts: primary ? 12 : 6, maxCharacters: primary ? 4000 : 1800, roomIsolation: ["helix", "apex", "apex-forge"] }; })() : null, duplicateProviderCalls: 0, providerCalls: 0, incrementalCostUsd: 0, runtime: { ...runtime, canary: { ...runtime.canary } }, persisted };
   }
   async function close() { accepting = false; await queue.catch(() => {}); try { store?.close?.(); } finally { store = null; runtime.state = enabled ? "closed" : "disabled"; } return status(); }
 

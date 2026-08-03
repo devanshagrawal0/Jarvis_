@@ -5,7 +5,10 @@ const { createPolicyRepository } = require("./repositories/policy-repository");
 const SENSITIVITY = Object.freeze({ public: 0, internal: 1, private: 2, restricted: 3 });
 
 function globMatch(pattern, value) {
-  const escaped = String(pattern || "").replace(/[.+^${}()|[\]\\]/g, "\\$&").replaceAll("*", ".*");
+  // A-19 — `?` was not escaped, so a literal question mark in an owner-issued resource or
+  // purpose pattern silently became a single-character regex wildcard and matched more than the
+  // owner wrote. Escape it with the rest; `*` remains the one intentional wildcard.
+  const escaped = String(pattern || "").replace(/[.+^${}()|[\]\\?]/g, "\\$&").replaceAll("*", ".*");
   return new RegExp(`^${escaped}$`, "i").test(String(value || ""));
 }
 

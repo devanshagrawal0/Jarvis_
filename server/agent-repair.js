@@ -120,7 +120,20 @@ function hasStrongScheduleCue(lower) {
 }
 
 function isCorrection(lower) {
-  return /\b(not kalshi|we were talking about|that'?s not what i asked|thats not what i asked|today is|don'?t miss|dont miss|be thorough|wrong|no,?|actually|i meant)\b/.test(lower);
+  // B-26 — `no,?` matched the standalone word "no" anywhere in a message, and `wrong` and
+  // `actually` are just as common in ordinary prose ("actually I think", "the wrong train"), so
+  // any turn containing one was classified intent: "memory_write" with reason "User
+  // correction/preference update.". A correction needs corrective FRAMING, not a keyword:
+  // sentence-initial "no,"/"nope", or a phrase that explicitly contradicts what was said.
+  //
+  // The negation must be PUNCTUATED as a standalone rejection. Allowing whitespace after it would
+  // catch "no problem, carry on" / "no worries" / "no idea", which are not corrections at all.
+  const framed = /^\s*(?:no|nope|nah)\s*[,.!?—-]/.test(lower)
+    || /\b(?:that'?s|thats|this is|you'?re|youre|it'?s|its)\s+(?:not|wrong|incorrect)\b/.test(lower)
+    || /\bi\s+(?:meant|said|didn'?t say|never said)\b/.test(lower)
+    || /\bactually,\s/.test(lower);
+  return framed
+    || /\b(not kalshi|we were talking about|that'?s not what i asked|thats not what i asked|today is|don'?t miss|dont miss|be thorough)\b/.test(lower);
 }
 
 function inferSportsTopic(lower, previous = defaultTopicState()) {
