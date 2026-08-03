@@ -23,10 +23,32 @@ function isLoopbackAddress(address) {
   return LOOPBACK_HOSTS.has(address);
 }
 
+// C-04 — headers a proxy adds on the way in. `cloudflared --url http://localhost:8799` runs with
+// no `--http-host-header`, so EVERY public request reaches this server from 127.0.0.1: the
+// loopback term is satisfied for internet traffic, and the whole separation between the public
+// internet and full `local-owner` authority was the client-supplied `Host` string. These are a
+// second, independent signal — a genuine loopback request from the owner's own browser carries
+// none of them; a request that arrives through the tunnel carries at least one.
+//
+// This is defence in depth, not a new primary boundary: a header the client controls cannot be
+// trusted to be ABSENT any more than to be present. What it buys is that spoofing
+// `Host: localhost` is no longer sufficient on its own — the attacker must also suppress headers
+// the tunnel adds after their request has left them, which they do not control.
+const FORWARDED_HEADERS = [
+  "cf-connecting-ip", "cf-ray", "cf-ipcountry", "cf-visitor", "cf-warp-tag-id",
+  "x-forwarded-for", "x-forwarded-host", "x-forwarded-proto", "x-real-ip",
+  "forwarded", "via",
+];
+
+function arrivedViaProxy(req) {
+  return FORWARDED_HEADERS.some((name) => String(req?.headers?.[name] || "").trim());
+}
+
 function isDirectOwnerRequest(req) {
   return isLoopbackAddress(normalizedRemoteAddress(req))
     && LOOPBACK_HOSTS.has(hostnameFromRequest(req))
-    && !req.headers["x-jarvis-relay-signature"];
+    && !req.headers["x-jarvis-relay-signature"]
+    && !arrivedViaProxy(req);
 }
 
 function safeEqual(left, right) {
