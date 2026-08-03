@@ -39,8 +39,39 @@ function reconstructScope({ row = {}, table = "", sourceKey = "" } = {}) {
   return { scope: "unscoped-review", confidence: 0.35, reason: "ambiguous_global_scope", review: true };
 }
 
+const SECRET_NAME_RE = /(?:api[_-]?key|secret|password|passwd|token|credential|private[_-]?key|access[_-]?key|auth)/i;
+// Shapes that are a credential no matter what they are called. Kept deliberately narrow so
+// ordinary prose is not rejected: each needs a recognisable prefix or an armoured header.
+const SECRET_VALUE_RE = new RegExp([
+  "-----BEGIN [A-Z][A-Z ]*PRIVATE KEY-----",
+  "\\bsk-[A-Za-z0-9_-]{16,}",              // OpenAI-style
+  "\\bAIza[0-9A-Za-z_-]{30,}",             // Google API key
+  "\\bgh[pousr]_[A-Za-z0-9]{20,}",         // GitHub token
+  "\\bxox[baprs]-[A-Za-z0-9-]{10,}",       // Slack
+  "\\bey[A-Za-z0-9_-]{10,}\\.[A-Za-z0-9_-]{10,}\\.[A-Za-z0-9_-]{10,}",  // JWT
+  "\\bAKIA[0-9A-Z]{16}\\b",                // AWS access key id
+].join("|"));
+
+// A-12 — this tested column NAMES only. A legacy `preferences` row shaped
+// `{ key: "openai_api_key", value: "sk-…" }` has no matching column name, so it was admitted,
+// encrypted, projected into an assertion, and indexed with `searchableText` containing the
+// value — then became eligible for delivery under a `preference.*` predicate, which is on the
+// canary allowlist. Three tests now: the column name, a name-like VALUE in a generic key/name
+// column, and a credential-shaped value anywhere.
 function containsSecretMaterial(row) {
-  return Object.keys(row || {}).some((key) => /(?:api[_-]?key|secret|password|token|credential|private[_-]?key)/i.test(key) && row[key] != null && String(row[key]).trim());
+  const record = row && typeof row === "object" ? row : {};
+  const entries = Object.entries(record);
+  const nonEmpty = ([, value]) => value != null && String(value).trim();
+
+  if (entries.some(([key, value]) => SECRET_NAME_RE.test(key) && nonEmpty([key, value]))) return true;
+  if (entries.some(nonEmpty2 => SECRET_VALUE_RE.test(String(nonEmpty2[1] ?? "")))) return true;
+
+  // Generic name/value pairs: the secret's identity lives in the value of a `key`/`name` column.
+  const NAME_COLUMN = /^(?:key|name|label|setting|field|property|title)$/i;
+  const namesASecret = entries.some(([key, value]) => NAME_COLUMN.test(key) && SECRET_NAME_RE.test(String(value ?? "")));
+  if (namesASecret && entries.some(([key, value]) => /^(?:value|val|data|content|text|secret)$/i.test(key) && nonEmpty([key, value]))) return true;
+
+  return false;
 }
 
 function adaptLegacyRecord({ sourceKey, sourceKind = "sqlite", table, row, legacyId } = {}) {

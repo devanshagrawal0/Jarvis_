@@ -30,7 +30,17 @@ function createImportStagingRepository({ db, keyring, clock, faultInjector }) {
           VALUES(?,?,?,?,?,?,?,?, 'pending',?,?)`).run(sourceId, id, String(source.sourceKey), String(source.sourceKind || "sqlite"), String(source.snapshotSha256), pathId, String(source.table), Math.max(0, Number(source.expectedRows) || 0), String(source.policyVersion || "wave30-v1"), now());
       }
       faultInjector("import.run.before_commit");
-      return { id, expectedRows, sources: db.prepare("SELECT id,source_key,table_name,expected_rows FROM import_sources WHERE run_id=? ORDER BY source_key,table_name").all(id) };
+      // A-09 — this returned the sources sorted by source_key,table_name while inserting them in
+      // input order, so any caller that indexes positionally (`run.sources[0]`) got a different
+      // source than it passed. Production looks sources up by key+table and was safe; the
+      // shipped tests did not, and staged their fixture rows into the wrong source. The return
+      // value now preserves input order, which is the only order a caller can predict.
+      const inserted = db.prepare("SELECT id,source_key,table_name,expected_rows FROM import_sources WHERE run_id=?").all(id);
+      const bySourceKey = new Map(inserted.map((row) => [[row.source_key, row.table_name].join("\u0000"), row]));
+      const ordered = sources
+        .map((source) => bySourceKey.get([String(source.sourceKey), String(source.table)].join("\u0000")))
+        .filter(Boolean);
+      return { id, expectedRows, sources: ordered.length === inserted.length ? ordered : inserted };
     });
     return run.immediate();
   }

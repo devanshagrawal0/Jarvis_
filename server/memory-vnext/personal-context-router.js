@@ -22,8 +22,31 @@ const FACT_ALIASES = Object.freeze({
 function round(value, places = 2) { const scale = 10 ** places; return Math.round(Number(value) * scale) / scale; }
 function unique(items) { return [...new Set(items.filter(Boolean))]; }
 
+// A-08 — the injection screen was one regex carrying the `i` flag, which made its
+// `BEGIN [A-Z_]+` alternative (meant for PEM/armoured blocks: "BEGIN RSA PRIVATE KEY") collapse
+// into "the word *begin* followed by any word". "I prefer to begin my day early" and "my goal is
+// to begin the marathon" therefore aborted extraction and silently wrote nothing. The armoured
+// -block pattern has to be case-SENSITIVE, so it cannot share a regex with the prose patterns.
+const INJECTION_PROSE_RE = /(?:system prompt|developer message|ignore previous|stack trace)/i;
+const ARMOURED_BLOCK_RE = /\bBEGIN [A-Z][A-Z_ ]*(?:KEY|CERTIFICATE|MESSAGE|BLOCK)\b/;   // no `i`
+
+function injectionScreenReason(text) {
+  if (!text) return "empty";
+  if (text.length > 2_000) return "too_long";
+  if (INJECTION_PROSE_RE.test(text)) return "injection_phrase";
+  if (ARMOURED_BLOCK_RE.test(text)) return "armoured_block";
+  return null;
+}
+
 function extractMutations(input) {
-  const text = normalizeText(input); const lower = text.toLocaleLowerCase(); if (!text || text.length > 2_000 || /(?:system prompt|developer message|ignore previous|BEGIN [A-Z_]+|stack trace)/i.test(text)) return [];
+  const text = normalizeText(input); const lower = text.toLocaleLowerCase();
+  const screened = injectionScreenReason(text);
+  if (screened) {
+    // Silently returning [] made a discarded memory write indistinguishable from "nothing to
+    // remember". Anything other than an empty turn is worth surfacing.
+    if (screened !== "empty") console.warn(`[memory-vnext] owner-fact extraction skipped: ${screened}`);
+    return [];
+  }
   const mutations = [];
   const forget = lower.match(/\bforget(?: that)?(?: my)?\s+(?:fitness\s+)?(weight|height|age|name|city|location|timezone|goal)\b/i);
   if (forget) {
