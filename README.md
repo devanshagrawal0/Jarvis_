@@ -348,6 +348,11 @@ flowchart LR
     D --> R["Artifact<br/>BUILD"]
 ```
 
+<div align="center">
+<img src="./docs/screenshots/05-helix-command.png" alt="HELIX Command Center" width="860" />
+<sub>The Command Center renders that pipeline as a double helix, with live counts at each stage and contradictions surfaced as actionable insights.</sub>
+</div>
+
 What distinguishes it from document-chat is that **contradiction is first-class state**. Evidence is recorded as supported or contradicted; open contradictions are counted and surfaced on the dashboard; and corpus confidence is deliberately ordinal rather than a fabricated percentage. Surfaces render honest empty states — a zero and a call to action — instead of sample rows.
 
 | Surface | Purpose |
@@ -364,7 +369,12 @@ What distinguishes it from document-chat is that **contradiction is first-class 
 | Observability | Run history and pipeline telemetry |
 | Team | Collaborator records |
 
-The **knowledge graph** is a WebGL force-directed 3D layout built on `@react-three/fiber` with `d3-force-3d` physics and bloom postprocessing, arranging sources, claims, analyses, decisions and artifacts into colour-coded depth layers.
+The **knowledge graph** is a WebGL force-directed 3D layout built on `@react-three/fiber` with `d3-force-3d` physics and bloom postprocessing, arranging sources, claims, analyses, decisions and artifacts into colour-coded depth layers. Nodes are selectable for inspection, and the layout can be switched between free-floating force simulation and a layered tree.
+
+<div align="center">
+<img src="./docs/screenshots/09-helix-knowledge-graph.png" alt="HELIX 3D knowledge graph" width="860" />
+<sub>The graph binds to extracted project entities. Where a project has none yet it renders a representative schema instead, badged <code>SCHEMA</code> in the header rather than presented as real data.</sub>
+</div>
 
 ### Arbiter — prediction-market divergence
 
