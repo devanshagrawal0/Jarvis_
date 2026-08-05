@@ -2481,6 +2481,21 @@ function observeOnlyTools() {
   return new Set(definitions.filter((item) => item.risk === "observe").map((item) => item.name));
 }
 
+// Every approval the engine has prepared for this turn, in the shape the UI renders.
+//
+// The engine does its part: a tool that stops at a commit boundary comes back as
+// `{ status: "confirmation_required", confirmation: {...} }`, and the confirmation is persisted with
+// its own one-time owner challenge. The chat response then threw that away — `pendingConfirmations`
+// was the literal `[]` on the main path — so the reply said the action was ready and awaiting
+// confirmation while telling the UI there was nothing to confirm. Nothing rendered, and there was
+// no way to approve it. The Instagram-specific path computed this correctly; the general path,
+// which is the one a plain "send X a message" now takes, did not.
+function pendingConfirmationsFrom(toolResults = []) {
+  return (Array.isArray(toolResults) ? toolResults : [])
+    .filter((item) => item.status === "confirmation_required" && item.confirmation)
+    .map((item) => item.confirmation);
+}
+
 function summarizeVerifiedToolResults(toolResults) {
   const { confirmations, completed, failed, effective } = classifyToolResults(toolResults, observeOnlyTools());
   const lines = [];
@@ -3547,7 +3562,7 @@ async function callGemini({ prompt, imageData, attachments = [], mode, sessionId
       source: "deterministic-visible-automation",
       model: "local",
       toolResults: [{ tool: directTool, args: directArgs, ...toolResult }],
-      pendingConfirmations: [],
+      pendingConfirmations: pendingConfirmationsFrom([{ tool: directTool, args: directArgs, ...toolResult }]),
       sources: [],
       responseMode: "conversation",
       route: localPrepared.route,
@@ -4203,7 +4218,7 @@ async function callGemini({ prompt, imageData, attachments = [], mode, sessionId
         : "research-v2-direct",
       model: toolResults.at(-1)?.tool || "research_v2",
       toolResults,
-      pendingConfirmations: [],
+      pendingConfirmations: pendingConfirmationsFrom(toolResults),
       sources,
       artifacts,
       uiActions: uiOutput.uiActions,

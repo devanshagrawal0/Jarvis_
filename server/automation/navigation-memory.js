@@ -39,10 +39,57 @@ function routeSignature(value) {
   }
 }
 
+// A conversation row is a person plus whatever they last said plus how long ago. That trailing
+// noise defeated both privacy filters and made the memory useless at the same time.
+//
+// PERSON_LIKE_LABEL only matches a bare name — "Priya Nair" — and PRIVATE_LABEL only matches a
+// handle or number standing alone. Real rows read "Priya Nair You: hi · 12m", which matches
+// neither, so the contact's name, their handle, and the owner's own note text were all written to
+// runtime/browser-navigation-memory.json in plain text. The filters failed on exactly the labels
+// they exist to catch.
+//
+// And the same trailing noise is IN THE KEY, so the entry can never match again: the row reads
+// "· 12m" now and "· 20m" later. Three separate records accumulated for one row across today's
+// runs. It relearned from scratch every time and the memory never paid off once.
+//
+// Both problems have one cause and one fix: strip the volatile conversational tail, then judge what
+// remains. What remains is usually the person's name, which is then correctly refused.
+// `\b` after an alternative ending in ":" can never match — ":" and " " are both non-word, so there
+// is no boundary between them. `(?![a-z])` is the correct assertion here.
+// "new message" is only a conversational marker when it is counted — "2 new messages". Standing
+// alone it is the compose button, and treating it as noise cost the memory a control worth learning.
+const CONVERSATION_TAIL = /\s*(?:·|-|—|\||,)?\s*(?:you\s*:|you sent|sent|reacted|replied|liked|active|seen|unread|\d+\s*(?:new\s*)?messages?)(?![a-z]).*$/i;
+const RELATIVE_TIME_TAIL = /\s*(?:·|-|—|\|)?\s*\d+\s*(?:s|m|h|d|w|y|sec|min|hr|hour|day|week|month|year)s?(?:\s*ago)?\s*\.?$/i;
+// A username: no spaces, and carrying the punctuation or digits that distinguish a handle from an
+// ordinary UI word. "priya_n_iv" is a person; "next", "requests" and "settings" are not.
+const HANDLE_LIKE = /^(?=.*[._\d])[a-z0-9._-]{3,32}$/i;
+
+function stripConversationNoise(value) {
+  let label = clean(value, 200);
+  let previous;
+  do {
+    previous = label;
+    label = label.replace(RELATIVE_TIME_TAIL, "").replace(CONVERSATION_TAIL, "").trim();
+  } while (label !== previous);
+  return label;
+}
+
 function semanticElement(element = {}) {
   const rawLabel = clean(element.name || element.text || element.placeholder || element.title || element.ariaLabel, 160);
-  if (!rawLabel || PRIVATE_LABEL.test(rawLabel) || PERSON_LIKE_LABEL.test(rawLabel)) return null;
-  const label = normalized(rawLabel);
+  if (!rawLabel) return null;
+  // Judge the label with the volatile tail removed, so "Priya Nair You: hi · 12m" is tested as
+  // "Priya Nair" and refused like any other person.
+  const stable = stripConversationNoise(rawLabel);
+  if (!stable) return null;
+  if (PRIVATE_LABEL.test(rawLabel) || PRIVATE_LABEL.test(stable)) return null;
+  if (PERSON_LIKE_LABEL.test(stable)) return null;
+  if (HANDLE_LIKE.test(stable)) return null;
+  // If stripping changed the label, this element WAS a conversation row, and the head of a
+  // conversation row is whoever it is with. PERSON_LIKE_LABEL only recognises multi-word names, so
+  // a single-word display name ("Tg") survived it; this catches those without having to guess at
+  // name shapes.
+  if (stable !== rawLabel) return null;
+  const label = normalized(stable);
   if (!label) return null;
   return { role: normalized(element.role || element.tag || "control"), label };
 }

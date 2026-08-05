@@ -2,9 +2,9 @@
 
 // The planner cancelled the owner's send by describing it cautiously.
 //
-// Asked "send raghav hi on instagram", JARVIS called computer_use with the task text:
+// Asked "send priya hi on instagram", JARVIS called computer_use with the task text:
 //
-//   "In the background on Instagram Direct, search for Raghav, open his chat, type 'hi' into the
+//   "In the background on Instagram Direct, search for Priya, open his chat, type 'hi' into the
 //    message input, and leave it unsent at the exact Send button."
 //
 // The owner never said "leave it unsent". The planner added it. The outcome compiler reads the task
@@ -27,9 +27,9 @@ const { classifyToolResults, summaryPrefix } = require("../../server/tool-result
 const ENGINE = fs.readFileSync(path.join(__dirname, "..", "..", "server", "capability-engine.js"), "utf8");
 
 // The exact string from the real run.
-const DEMOTED_TASK = "In the background on Instagram Direct, search for Raghav, open his chat, type 'hi' into the message input, and leave it unsent at the exact Send button.";
+const DEMOTED_TASK = "In the background on Instagram Direct, search for Priya, open his chat, type 'hi' into the message input, and leave it unsent at the exact Send button.";
 // The second attempt, after the planner was instructed not to do this. It simply reworded.
-const DEMOTED_TASK_2 = "In the background on Instagram Direct, search for Raghav, select Raghav's chat, type 'hi' into the message input field, and prepare the message without clicking Send.";
+const DEMOTED_TASK_2 = "In the background on Instagram Direct, search for Priya, select Priya's chat, type 'hi' into the message input field, and prepare the message without clicking Send.";
 
 test("the phrase really does cancel the commit", () => {
   // Precondition for the whole bug: this is why it mattered that the planner wrote it.
@@ -37,7 +37,7 @@ test("the phrase really does cancel the commit", () => {
   assert.equal(demoted.commit.required, false, "the send is cancelled outright, not deferred to approval");
   assert.equal(demoted.commit.prepareOnly, true);
 
-  const honest = compileOutcome("In the background on Instagram Direct, search for Raghav, open his chat, and send him a message saying 'hi'.", { id: "t" });
+  const honest = compileOutcome("In the background on Instagram Direct, search for Priya, open his chat, and send him a message saying 'hi'.", { id: "t" });
   assert.equal(honest.commit.required, true, "without the added phrase the same task is a real send");
   assert.deepEqual(honest.entities.messageValues, ["hi"]);
 });
@@ -50,7 +50,7 @@ test("the guard uses the compiler's own rule, not a second copy of it", () => {
   for (const phrase of ["and do not click Send", "stop before sending", "without submitting the form", "don't send it", "leave it unsent"]) {
     assert.ok(PREPARE_ONLY_PHRASE.test(`open the chat, type hi, ${phrase}`), `should catch: ${phrase}`);
   }
-  for (const ordinary of ["open the chat and send him hi", "reply to Raghav saying hi", "send the report to Yash"]) {
+  for (const ordinary of ["open the chat and send him hi", "reply to Priya saying hi", "send the report to Yash"]) {
     assert.equal(PREPARE_ONLY_PHRASE.test(ordinary), false, `must not fire on: ${ordinary}`);
   }
   assert.match(ENGINE, /PREPARE_ONLY_PHRASE,[^}]*\} = require\("\.\/automation\/outcome-compiler"\)/,
@@ -98,15 +98,47 @@ function resolveTask(ownerRequest, task, prepareOnlyText = "") {
   return { executable: resolved.executableTask, outcome: compileOutcome(resolved.executableTask, { id: "f" }), ...resolved };
 }
 
+test("every route the planner used to drop the send is closed", () => {
+  // Blocking the restraint phrase moved the behaviour to rewording it; blocking that moved it to
+  // omitting the send entirely; blocking that moved it to setting prepareOnlyText on its own
+  // initiative. All four were observed on the identical owner request, and each one produced a run
+  // that finished as a silent draft while the reply told the owner to approve a confirmation that
+  // did not exist. Intent comes from the owner's sentence; the planner's paraphrase is advisory.
+  const owner = "send hi to priya on insta";
+  const routes = [
+    ["restraint phrase", "Open the chat, type 'hi' into the message input, and leave it unsent at the exact Send button.", ""],
+    ["reworded restraint", "Open the chat, type 'hi' into the message input field, and prepare the message without clicking Send.", ""],
+    ["no send verb at all", "Open Instagram Direct, find Priya Nair, and type 'hi' into the chat input.", ""],
+    ["prepareOnlyText set by the planner", "Open Instagram Direct, find Priya Nair, and type 'hi' into the chat input.", "hi"],
+  ];
+  for (const [name, task, prepareOnlyText] of routes) {
+    const { outcome, honourPrepareOnlyText } = resolveTask(owner, task, prepareOnlyText);
+    assert.equal(outcome.commit.required, true, `${name}: the owner asked to send`);
+    assert.deepEqual(outcome.entities.messageValues, ["hi"], `${name}: payload`);
+    assert.equal(honourPrepareOnlyText, false, `${name}: a planner-set draft flag must not hold back the owner's send`);
+  }
+});
+
+test("a draft flag the OWNER asked for is still honoured", () => {
+  const { outcome, honourPrepareOnlyText, restored } = resolveTask(
+    "draft a message to priya saying hi but do not send it",
+    "Open the chat and type 'hi'",
+    "hi",
+  );
+  assert.equal(honourPrepareOnlyText, true, "the owner's own words asked for a draft");
+  assert.equal(restored, false);
+  assert.equal(outcome.commit.required, false);
+});
+
 test("both real failures become genuine sends again", () => {
   const cases = [
-    ["send raghav hi on instagram", "In the background on Instagram Direct, search for Raghav, open his chat, type 'hi' into the message input, and leave it unsent at the exact Send button."],
-    ["send hi to raghav on insta", DEMOTED_TASK_2],
+    ["send priya hi on instagram", "In the background on Instagram Direct, search for Priya, open his chat, type 'hi' into the message input, and leave it unsent at the exact Send button."],
+    ["send hi to priya on insta", DEMOTED_TASK_2],
   ];
   for (const [ownerRequest, task] of cases) {
     const { outcome } = resolveTask(ownerRequest, task);
     assert.equal(outcome.commit.required, true, `the owner asked to send: ${ownerRequest}`);
-    assert.ok(outcome.entities.people.includes("Raghav"));
+    assert.ok(outcome.entities.people.includes("Priya"));
     assert.deepEqual(outcome.entities.messageValues, ["hi"], "and the payload is the word they dictated");
   }
 });
@@ -114,10 +146,13 @@ test("both real failures become genuine sends again", () => {
 test("a draft the owner asked for is never promoted into a send", () => {
   // The dangerous direction. A run that stops short is a nuisance; sending something the owner
   // wanted held back cannot be undone.
+  // The middle case here used to assert that a planner-set prepareOnlyText held back a send the
+  // owner had asked for. That was the bug, not the contract: it is why "send hi to priya" finished
+  // as a silent draft with no confirmation to approve. It now lives in the routes-closed test above
+  // as behaviour that must NOT happen. What remains are the two genuine draft situations.
   for (const [ownerRequest, task, prepareOnlyText] of [
-    ["draft a message to raghav saying hi but do not send it", "Open Raghav's chat, type 'hi', and do not send.", ""],
-    ["send hi to raghav", "Open Raghav's chat and type 'hi' without sending", "hi"],
-    ["", "Open Raghav's chat, type 'hi', do not send.", ""],
+    ["draft a message to priya saying hi but do not send it", "Open Priya's chat, type 'hi', and do not send.", ""],
+    ["", "Open Priya's chat, type 'hi', do not send.", ""],
   ]) {
     const { executable, outcome } = resolveTask(ownerRequest, task, prepareOnlyText);
     assert.equal(executable, task, `the task must be left exactly as written: ${ownerRequest || "(no owner request)"}`);
@@ -126,8 +161,8 @@ test("a draft the owner asked for is never promoted into a send", () => {
 });
 
 test("an ordinary send is passed through untouched", () => {
-  const task = "Open Instagram DMs and send Raghav a message saying 'hi'.";
-  const { executable, outcome } = resolveTask("send hi to raghav on insta", task);
+  const task = "Open Instagram DMs and send Priya a message saying 'hi'.";
+  const { executable, outcome } = resolveTask("send hi to priya on insta", task);
   assert.equal(executable, task, "nothing to restore, so nothing is rewritten");
   assert.equal(outcome.commit.required, true);
 });
@@ -135,7 +170,7 @@ test("an ordinary send is passed through untouched", () => {
 test("the handler wires the guard, and the model is told not to add the phrase", () => {
   // Both halves are needed. The instruction stops most occurrences; the handler catches the rest.
   // Without the wiring assertion the regex above is just a regex in a test file.
-  assert.match(ENGINE, /const \{ executableTask, plannerDemotedTheSend, restraintSurvivedStripping, restored \} = resolveExecutableTask\(/,
+  assert.match(ENGINE, /= resolveExecutableTask\(\{/,
     "the computer_use handler must resolve the task through the shared function");
   assert.match(ENGINE, /completed: restraintSurvivedStripping \? false : undefined/,
     "and must mark a run whose restraint survived stripping as not completed");
@@ -147,6 +182,11 @@ test("the handler wires the guard, and the model is told not to add the phrase",
   const SERVER = fs.readFileSync(path.join(__dirname, "..", "..", "server.js"), "utf8");
   assert.match(SERVER, /ownerRequest: rawUserMessage\(prompt\)/,
     "server.js must pass the owner's own words down to the tools");
+  assert.match(ENGINE, /prepareOnlyText: honourPrepareOnlyText \? requestedPrepareOnlyText : ""/,
+    "a planner-set draft flag must not reach the agent when the owner asked for a send");
+  // The confirmation the owner is told to approve has to actually reach the UI.
+  assert.match(SERVER, /pendingConfirmations: pendingConfirmationsFrom\(toolResults\)/,
+    "the chat response must surface pending confirmations instead of a hardcoded empty list");
   assert.match(ENGINE, /NEVER append your own safety wording/,
     "the task parameter description must tell the planner not to write the restriction");
   assert.match(ENGINE, /the runtime already pauses every send/,

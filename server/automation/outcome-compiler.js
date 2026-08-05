@@ -297,26 +297,51 @@ function withoutPlannerRestraint(text) {
 // earlier version of the tests re-implemented this logic beside the assertions, and a mutation that
 // disabled the real branch left all of them green — the same defect this whole repair is about.
 function resolveExecutableTask({ ownerRequest = "", task = "", prepareOnlyText = "" } = {}) {
-  const ownerRequestedDraft = Boolean(String(prepareOnlyText || "").trim());
-  const plannerDemotedTheSend = !ownerRequestedDraft && PREPARE_ONLY_PHRASE.test(task);
-  const ownerAskedToSend = !ownerRequestedDraft
-    && Boolean(String(ownerRequest || "").trim())
-    && !PREPARE_ONLY_PHRASE.test(ownerRequest)
-    && compileOutcome(ownerRequest, { id: "owner-intent" }).commit.intendedTypes.includes("send");
+  const ownerText = String(ownerRequest || "").trim();
+  // The owner's sentence is the only authority on whether something gets sent. Everything else on
+  // this path — the task prose, the prepareOnlyText parameter — is written by the planner, and the
+  // planner has now been observed dropping the send in three different ways on the same request:
+  //
+  //   1. "...and leave it unsent at the exact Send button"     (restraint phrase)
+  //   2. "...and prepare the message without clicking Send"    (reworded after being told not to)
+  //   3. prepareOnlyText set, task reduced to "type 'hi' into the chat input"  (no send at all)
+  //
+  // Each time, commit.required came out false, the run finished as a silent draft, and the reply
+  // said "approve the pending confirmation" while no confirmation existed — because a completed
+  // draft has nothing to approve. Blocking the first two only moved the behaviour to the third.
+  //
+  // So intent is derived from the owner's words alone, and a task that fails to express it is
+  // corrected. This never sends anything on its own: it lets the run reach the approval boundary,
+  // which is the thing the owner was being told to look for.
+  const ownerAskedForDraft = Boolean(ownerText) && PREPARE_ONLY_PHRASE.test(ownerText);
+  const ownerAskedToSend = Boolean(ownerText)
+    && !ownerAskedForDraft
+    && compileOutcome(ownerText, { id: "owner-intent" }).commit.intendedTypes.includes("send");
+
+  // With no owner sentence — background missions, replayed tasks — there is nothing to compare
+  // against, so the planner's task and its prepareOnlyText stand exactly as written.
+  const plannerRequestedDraft = Boolean(String(prepareOnlyText || "").trim());
+  const taskExpressesSend = compileOutcome(task, { id: "task-intent" }).commit.intendedTypes.includes("send")
+    && !PREPARE_ONLY_PHRASE.test(task);
+  const plannerDemotedTheSend = ownerAskedToSend && (!taskExpressesSend || plannerRequestedDraft);
 
   let executableTask = task;
-  if (ownerAskedToSend && plannerDemotedTheSend) {
+  if (plannerDemotedTheSend) {
     executableTask = withoutPlannerRestraint(task);
-    // Removing the restraint can remove the only occurrence of the verb with it: "type 'hi' ... and
-    // prepare the message without clicking Send" leaves a task that never asks for a send at all.
-    if (!compileOutcome(executableTask, { id: "task-intent" }).commit.intendedTypes.includes("send")) {
+    // Stripping a restraint can remove the only occurrence of the verb along with it, and some
+    // paraphrases never contained one. Either way the owner asked; say so.
+    if (!compileOutcome(executableTask, { id: "restored-intent" }).commit.intendedTypes.includes("send")) {
       executableTask = `${executableTask.replace(/[.\s]+$/, "")}, then send it.`;
     }
   }
   return {
     executableTask,
     ownerAskedToSend,
+    ownerAskedForDraft,
+    plannerRequestedDraft,
     plannerDemotedTheSend,
+    // A planner-set prepareOnlyText must not hold back a send the owner asked for.
+    honourPrepareOnlyText: plannerRequestedDraft && !ownerAskedToSend,
     restraintSurvivedStripping: plannerDemotedTheSend && PREPARE_ONLY_PHRASE.test(executableTask),
     restored: executableTask !== task,
   };

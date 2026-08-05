@@ -14,6 +14,7 @@ const { createSkillAutopilot } = require("./skill-autopilot");
 const { createComputerUse } = require("./computer-use");
 const { createUniversalBrowserAgent } = require("./universal-browser-agent");
 const { PREPARE_ONLY_PHRASE, resolveExecutableTask } = require("./automation/outcome-compiler");
+const { trace } = require("./automation/trace");
 
 const execFileAsync = promisify(execFile);
 const CONFIRMATIONS_FILE = "confirmations.json";
@@ -2600,7 +2601,7 @@ function createCapabilityEngine({
         throw errorWithStatus("computer_use blocked a sensitive or financial action. Use an explicit approved workflow instead.", 403);
       }
       // The planner writes the task string, and it kept writing its own caution INTO it:
-      // asked "send raghav hi on instagram", it produced
+      // asked "send priya hi on instagram", it produced
       //   "...type 'hi' into the message input, and leave it unsent at the exact Send button."
       // The outcome compiler reads that phrase and clears the commit, so the run never reaches the
       // approval boundary at all. The owner asked to send, the planner quietly demoted it to a
@@ -2610,10 +2611,20 @@ function createCapabilityEngine({
       // Draft-only has a designated channel — the `prepareOnlyText` parameter — which the owner's
       // own wording routes into. Prose in `task` with that parameter unset is the planner
       // editorialising, and it is recorded so the result can say so instead of reporting "done".
-      const { executableTask, plannerDemotedTheSend, restraintSurvivedStripping, restored } = resolveExecutableTask({
+      const requestedPrepareOnlyText = cleanString(args.prepareOnlyText || args.prepare_only_text, 2000);
+      const { executableTask, ownerAskedToSend, plannerDemotedTheSend, honourPrepareOnlyText, restraintSurvivedStripping, restored } = resolveExecutableTask({
         ownerRequest: cleanString(context.ownerRequest, 2000),
         task,
-        prepareOnlyText: cleanString(args.prepareOnlyText || args.prepare_only_text, 2000),
+        prepareOnlyText: requestedPrepareOnlyText,
+      });
+      // Whether the owner's intent survived the planner's paraphrase is the single most consequential
+      // decision on this path, and it was invisible. Lengths only — never the sentences themselves.
+      trace("intent", restored ? "restored" : "as-written", {
+        ownerRequestChars: cleanString(context.ownerRequest, 2000).length,
+        ownerAskedToSend,
+        plannerDemotedTheSend,
+        restored,
+        restraintSurvivedStripping,
       });
       // Telling the planner not to write the restraint was not enough — it kept doing it, in fresh
       // wording each time. `resolveExecutableTask` removes it, and where stripping would leave a
@@ -2629,7 +2640,10 @@ function createCapabilityEngine({
         maxSteps,
         surface: dailySurface ? "daily-browser" : (context.surface || "managed-browser"),
         approvedExternal: context.confirmed === true,
-        prepareOnlyText: cleanString(args.prepareOnlyText || args.prepare_only_text, 2000),
+        // Honoured only when the owner did not ask for a send. The planner sets this on its own
+        // initiative — observed setting it on a plain "send hi to priya" — and left unchecked it
+        // holds back the very action the owner requested, with no confirmation to approve.
+        prepareOnlyText: honourPrepareOnlyText ? requestedPrepareOnlyText : "",
         taskId: context.actionTaskId || cleanString(args.taskId, 200) || undefined,
         resume: args._commitBoundary || null,
         delivery: context.placement === "visible" ? "visible" : "runtime",
@@ -2675,7 +2689,10 @@ function createCapabilityEngine({
         else desktopTakeover?.fail?.(result.error || result.result || "Desktop task did not reach a verified outcome");
       }
       if (result.requiresConfirmation && context.confirmed !== true) {
-        return { confirmationRequired: true, task, prepared: result.result, pendingAction: result.pendingAction || null, steps: stepLog, stepsCompleted: result.stepsCompleted };
+        // `executedTask` is what actually ran, which after intent restoration differs from what the
+        // planner wrote. The approval card is built from these fields, so it has to carry the real
+        // one or it will describe an action nobody is about to take.
+        return { confirmationRequired: true, task, executedTask: executableTask, prepareOnlyTextIgnored: Boolean(requestedPrepareOnlyText) && !honourPrepareOnlyText, prepared: result.result, pendingAction: result.pendingAction || null, steps: stepLog, stepsCompleted: result.stepsCompleted };
       }
       if (result.requiresLogin) {
         return { ok: true, completed: false, requiresLogin: true, task, result: result.result, loginUrl: result.loginUrl || result.finalUrl || startUrl || null, taskId: result.taskId || automationOptions.taskId || null, statePath: result.statePath || null, steps: stepLog.length ? stepLog : result.history || [], mode: result.mode };
@@ -2889,7 +2906,18 @@ function createCapabilityEngine({
     try {
       const result = await handler(args, context);
       if (result?.confirmationRequired && !context.confirmed) {
-        const confirmationArgs = { ...args, _commitBoundary: result.pendingAction || null };
+        // The card must describe what approving it will DO. `args` is what the planner asked for,
+        // which after intent restoration is no longer what runs — the observed card read "prepare
+        // the message text hi in the composer without sending it" above a pending Send click. An
+        // approval prompt that misdescribes its own action is worse than none, because it teaches
+        // the owner that the description is not worth reading.
+        const confirmationArgs = {
+          ...args,
+          ...(result.executedTask ? { task: result.executedTask } : {}),
+          ...(result.executedTask && result.executedTask !== args.task ? { plannerTask: args.task } : {}),
+          ...(result.prepareOnlyTextIgnored ? { prepareOnlyText: undefined } : {}),
+          _commitBoundary: result.pendingAction || null,
+        };
         return {
           ok: false,
           status: "confirmation_required",
