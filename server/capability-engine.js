@@ -13,7 +13,7 @@ const { createPcKnowledgeGraph } = require("./pc-knowledge-graph");
 const { createSkillAutopilot } = require("./skill-autopilot");
 const { createComputerUse } = require("./computer-use");
 const { createUniversalBrowserAgent } = require("./universal-browser-agent");
-const { PREPARE_ONLY_PHRASE } = require("./automation/outcome-compiler");
+const { PREPARE_ONLY_PHRASE, resolveExecutableTask } = require("./automation/outcome-compiler");
 
 const execFileAsync = promisify(execFile);
 const CONFIRMATIONS_FILE = "confirmations.json";
@@ -2610,8 +2610,15 @@ function createCapabilityEngine({
       // Draft-only has a designated channel — the `prepareOnlyText` parameter — which the owner's
       // own wording routes into. Prose in `task` with that parameter unset is the planner
       // editorialising, and it is recorded so the result can say so instead of reporting "done".
-      const ownerRequestedDraft = Boolean(cleanString(args.prepareOnlyText || args.prepare_only_text, 2000));
-      const plannerDemotedTheSend = !ownerRequestedDraft && PREPARE_ONLY_PHRASE.test(task);
+      const { executableTask, plannerDemotedTheSend, restraintSurvivedStripping, restored } = resolveExecutableTask({
+        ownerRequest: cleanString(context.ownerRequest, 2000),
+        task,
+        prepareOnlyText: cleanString(args.prepareOnlyText || args.prepare_only_text, 2000),
+      });
+      // Telling the planner not to write the restraint was not enough — it kept doing it, in fresh
+      // wording each time. `resolveExecutableTask` removes it, and where stripping would leave a
+      // task that no longer asks for anything, restores the owner's stated intent explicitly. It
+      // never sends: it lets the run reach the approval boundary, where the owner is asked.
       const complexitySignals = (task.match(/\b(?:then|after|across|multiple|compare|analyse|analyze|evidence|source|different|tabs?|report|download|upload|repository|workflow)\b/gi) || []).length;
       const defaultMaxSteps = complexitySignals >= 6 ? 40 : complexitySignals >= 3 ? 32 : 24;
       const maxSteps = Math.min(asNumber(args.maxSteps || args.max_steps, defaultMaxSteps, 1, 40), 40);
@@ -2655,8 +2662,8 @@ function createCapabilityEngine({
       let result;
       try {
         result = dailySurface
-          ? await computerUse.execute(task, automationOptions)
-          : await universalHeadlessBrowser.execute(task, automationOptions);
+          ? await computerUse.execute(executableTask, automationOptions)
+          : await universalHeadlessBrowser.execute(executableTask, automationOptions);
       } catch (error) {
         if (takeoverStarted) desktopTakeover?.fail?.(error.message);
         throw error;
@@ -2688,10 +2695,13 @@ function createCapabilityEngine({
       // finished. `completed: false` routes it away from the "Done, sir." sentence and the reason
       // travels with it, so the owner learns their send became a draft instead of being told it
       // succeeded.
-      const demotionNotice = plannerDemotedTheSend
-        ? "The task text told the browser to stop before sending, so nothing was sent. That restriction was added by the planner, not requested. Ask again to send it for real."
+      // Only when the restraint survived stripping is the run still a silent draft; then it must
+      // not be summarised as done. A successfully stripped run reaches the approval boundary on its
+      // own merits and is judged like any other.
+      const demotionNotice = restraintSurvivedStripping
+        ? "The task text told the browser to stop before sending, so nothing was sent. That restriction was added by the planner, not requested."
         : null;
-      return { ok: result.success, task, result: result.result, error: result.error || demotionNotice, blocked: result.blocked || false, candidates: result.candidates || null, completed: plannerDemotedTheSend ? false : undefined, plannerDemotedTheSend, steps: stepLog.length ? stepLog : result.history || result.steps || [], evidence: result.evidence || [], statePath: result.statePath || null, taskId: result.taskId || automationOptions.taskId || null, stepsCompleted: result.stepsCompleted, mode: result.mode, finalUrl: result.finalUrl || null, finalTitle: result.finalTitle || null, reveal };
+      return { ok: result.success, task, executedTask: executableTask, result: result.result, error: result.error || demotionNotice, blocked: result.blocked || false, candidates: result.candidates || null, completed: restraintSurvivedStripping ? false : undefined, plannerDemotedTheSend, restraintStripped: plannerDemotedTheSend && !restraintSurvivedStripping, steps: stepLog.length ? stepLog : result.history || result.steps || [], evidence: result.evidence || [], statePath: result.statePath || null, taskId: result.taskId || automationOptions.taskId || null, stepsCompleted: result.stepsCompleted, mode: result.mode, finalUrl: result.finalUrl || null, finalTitle: result.finalTitle || null, reveal };
     },
     screen_locate: async (args) => {
       if (!computerUse) throw errorWithStatus("screen_locate requires screen capture.", 412);

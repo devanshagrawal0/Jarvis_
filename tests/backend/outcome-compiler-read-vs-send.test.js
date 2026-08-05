@@ -108,6 +108,30 @@ test("verbs that share a word with a noun still register", () => {
   assert.ok(compile("Email dev@example.com the summary").commit.types.includes("send"));
 });
 
+test("a possessive apostrophe is not an opening quote", () => {
+  // The second real failure. JARVIS built the task
+  //   "...search for Raghav, select Raghav's chat, type 'hi' into the message input field..."
+  // and the apostrophe in "Raghav's" opened a quote that closed at the one before "hi", so the
+  // extracted message was "s chat, type". The agent went to type THAT into a real person's chat,
+  // while the word actually dictated sat in quotes three words away, never reached.
+  const outcome = compile("In the background on Instagram Direct, search for Raghav, select Raghav's chat, type 'hi' into the message input field, and send it");
+  assert.deepEqual(outcome.entities.messageValues, ["hi"],
+    "the dictated word is the payload; a possessive is not a quote");
+  assert.ok(outcome.entities.people.includes("Raghav"));
+});
+
+test("contractions and possessives survive everywhere", () => {
+  for (const [objective, expected] of [
+    ["Open Yash's chat and send 'running late'", ["running late"]],
+    ["Reply to Raghav saying \"I don't know yet\"", ["I don't know yet"]],
+    ["Send Tg 'it's fine'", ["it's fine"]],
+  ]) {
+    assert.deepEqual(compile(objective).entities.messageValues, expected, `payload for: ${objective}`);
+  }
+  // And a possessive alone must not invent a payload out of the rest of the sentence.
+  assert.deepEqual(compile("Open Raghav's profile and tell me his bio").entities.messageValues, []);
+});
+
 test("a noun phrase does not introduce a recipient", () => {
   // The routing patterns treat the word after "message"/"dm"/"to" as a name. Behind a determiner
   // that word belongs to the noun phrase.

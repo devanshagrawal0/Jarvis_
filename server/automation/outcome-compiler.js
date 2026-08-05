@@ -59,7 +59,11 @@ function maskCommitNouns(text) {
 // `computer_use` handler, which needs to know whether the PLANNER added it to a task the owner
 // asked to have sent. A second private copy of this pattern in the handler would drift, and the
 // drift would be invisible — the handler would stop flagging demotions that still happen here.
-const PREPARE_ONLY_PHRASE = /\b(?:draft only|prepare only|do not send|don'?t send|do not click send|without (?:clicking )?(?:send|sending)|without submitting|leave (?:it|this|the message) unsent|stop before (?:send|sending)|do not transmit|without transmitting)\b/i;
+const PREPARE_ONLY_SOURCE = "\\b(?:draft only|prepare only|do not send|don'?t send|do not click send|without (?:clicking )?(?:send|sending)|without submitting|leave (?:it|this|the message) unsent|stop before (?:send|sending)|do not transmit|without transmitting)\\b";
+const PREPARE_ONLY_PHRASE = new RegExp(PREPARE_ONLY_SOURCE, "i");
+// A separate global instance, because a /g regex carries lastIndex between calls and a shared one
+// would silently skip matches on alternate invocations.
+const prepareOnlyPhraseGlobal = () => new RegExp(PREPARE_ONLY_SOURCE, "gi");
 
 function clauses(text) {
   return String(text || "")
@@ -81,8 +85,34 @@ function siteFor(text, foundUrls) {
   return alias ? { name: alias === "insta" ? "instagram" : alias, url: SITE_ALIASES[alias] } : { name: "unknown", url: "" };
 }
 
+// A straight apostrophe is a quote character AND a possessive/contraction marker, and the old
+// single pattern treated every one of them as a quote delimiter. On the real request
+//
+//   "...select Raghav's chat, type 'hi' into the message input field..."
+//
+// the apostrophe in "Raghav's" opened a quote that closed at the one before "hi", so the extracted
+// message was "s chat, type" — and the agent went to type THAT into a real person's chat. The word
+// the owner actually dictated was sitting right there in quotes and was never reached.
+//
+// Doubled and smart quotes have no such ambiguity. A straight apostrophe only opens a quote when it
+// does not follow a word character, and only closes one when it is not followed by one, which is
+// exactly what separates 'hi' from Raghav's and don't.
+const DOUBLE_QUOTED = /["“”]([^"“”]{1,300})["“”]/g;
+const SINGLE_QUOTED = /(?<![\w’])'([^']{1,300})'(?!\w)/g;
+
 function quotedValues(text) {
-  return [...String(text || "").matchAll(/["“”']([^"“”']{1,300})["“”']/g)].map((match) => compact(match[1], 300));
+  const source = String(text || "");
+  const values = [
+    ...[...source.matchAll(DOUBLE_QUOTED)].map((match) => match[1]),
+    ...[...source.matchAll(SINGLE_QUOTED)].map((match) => match[1]),
+  ];
+  return values.map((value) => compact(value, 300)).filter(Boolean);
+}
+
+// Blanking quoted spans is how routing metadata is separated from payload. It has to use the same
+// apostrophe rule, or "Raghav's chat" gets blanked away and the recipient disappears with it.
+function withoutQuotedSpans(text) {
+  return String(text || "").replace(DOUBLE_QUOTED, " ").replace(SINGLE_QUOTED, " ");
 }
 
 function requestedMessages(text) {
@@ -139,7 +169,7 @@ function probablePeople(text) {
   // `send "say hi to dad" to AJ` incorrectly treats dad as a second recipient.
   // Masked for the same reason as the commit classifier: "the most recent message shown in it"
   // matched the `message\s+(\w+)` routing pattern and produced "shown" as a recipient.
-  const routingText = maskCommitNouns(String(text || "").replace(/["“”']([^"“”']{1,300})["“”']/g, " "));
+  const routingText = maskCommitNouns(withoutQuotedSpans(text));
   const patterns = [
     /\b(?:to|email|send(?:\s+an?\s+email)?\s+to)\s+([A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,})\b/gi,
     /\b(?:[Tt]o|[Aa]sk|[Tt]ell|[Cc]ontact|[Dd][Mm]|[Mm]essage|[Ss]end)\s+([A-Z][\w.-]+(?:\s+[A-Z][\w.-]+){0,3})\b/g,
@@ -246,4 +276,50 @@ function compileOutcome(objective, options = {}) {
   };
 }
 
-module.exports = { COMMIT_TYPES, PREPARE_ONLY_PHRASE, SITE_ALIASES, clauses, compileOutcome, deliveryFor, probablePeople, requestedMessages };
+// Removes planner-authored restraint from a task the owner asked to have SENT. Only the
+// `computer_use` handler uses this, and only when `prepareOnlyText` is unset — meaning the owner
+// never asked for a draft. Stripping does not send anything on its own: it lets the run reach the
+// approval boundary, where the owner is asked. The alternative, which is what shipped, was a run
+// that quietly stopped short and told nobody.
+function withoutPlannerRestraint(text) {
+  return String(text || "")
+    .replace(prepareOnlyPhraseGlobal(), " ")
+    .replace(/\s*,\s*and\s+(?=[.,;]|$)/gi, " ")
+    .replace(/\s{2,}/g, " ")
+    .replace(/[\s,;]+(?=\.?$)/, "")
+    .trim();
+}
+
+// Decides what the browser is actually asked to do, given the owner's own sentence and the
+// planner's paraphrase of it.
+//
+// This lives here rather than inline in the capability handler so it can be tested directly. An
+// earlier version of the tests re-implemented this logic beside the assertions, and a mutation that
+// disabled the real branch left all of them green — the same defect this whole repair is about.
+function resolveExecutableTask({ ownerRequest = "", task = "", prepareOnlyText = "" } = {}) {
+  const ownerRequestedDraft = Boolean(String(prepareOnlyText || "").trim());
+  const plannerDemotedTheSend = !ownerRequestedDraft && PREPARE_ONLY_PHRASE.test(task);
+  const ownerAskedToSend = !ownerRequestedDraft
+    && Boolean(String(ownerRequest || "").trim())
+    && !PREPARE_ONLY_PHRASE.test(ownerRequest)
+    && compileOutcome(ownerRequest, { id: "owner-intent" }).commit.intendedTypes.includes("send");
+
+  let executableTask = task;
+  if (ownerAskedToSend && plannerDemotedTheSend) {
+    executableTask = withoutPlannerRestraint(task);
+    // Removing the restraint can remove the only occurrence of the verb with it: "type 'hi' ... and
+    // prepare the message without clicking Send" leaves a task that never asks for a send at all.
+    if (!compileOutcome(executableTask, { id: "task-intent" }).commit.intendedTypes.includes("send")) {
+      executableTask = `${executableTask.replace(/[.\s]+$/, "")}, then send it.`;
+    }
+  }
+  return {
+    executableTask,
+    ownerAskedToSend,
+    plannerDemotedTheSend,
+    restraintSurvivedStripping: plannerDemotedTheSend && PREPARE_ONLY_PHRASE.test(executableTask),
+    restored: executableTask !== task,
+  };
+}
+
+module.exports = { COMMIT_TYPES, PREPARE_ONLY_PHRASE, SITE_ALIASES, clauses, compileOutcome, deliveryFor, probablePeople, quotedValues, requestedMessages, resolveExecutableTask, withoutPlannerRestraint };

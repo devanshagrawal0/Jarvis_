@@ -3783,7 +3783,13 @@ async function callGemini({ prompt, imageData, attachments = [], mode, sessionId
   const browserWorkflow = functionDeclarations.some((tool) => String(tool.name || "").startsWith("browser_"));
   const screenWorkflow = functionDeclarations.some((tool) => ["screen_capture", "screen_inspect", "screen_act", "desktop_control"].includes(String(tool.name || "")));
   const executeCapability = async (tool, args = {}, context = {}) => {
-    if (!actionFabric) return capabilityEngine.execute(tool, args, context);
+    // The owner's own sentence travels with every capability call. Tools were previously given
+    // only the planner's paraphrase of the request, and the planner kept paraphrasing "send hi to
+    // raghav" into "type hi and prepare the message without clicking Send" — a task that contains
+    // no send at all. With nothing to compare against, the runtime had no way to know the owner's
+    // intent had been dropped. The owner's words are the authority; a paraphrase is not.
+    const withOwnerRequest = { ownerRequest: rawUserMessage(prompt), ...context };
+    if (!actionFabric) return capabilityEngine.execute(tool, args, withOwnerRequest);
     if (!jarvisActionSession) {
       jarvisActionSession = createJarvisActionSession({
         fabric: actionFabric,
@@ -3799,7 +3805,7 @@ async function callGemini({ prompt, imageData, attachments = [], mode, sessionId
         onEvent,
       });
     }
-    return jarvisActionSession.execute(tool, args, context);
+    return jarvisActionSession.execute(tool, args, withOwnerRequest);
   };
   const attachActionTask = (completed) => {
     if (!completed || !jarvisActionSession) return completed;
