@@ -13,8 +13,9 @@ const { createPcKnowledgeGraph } = require("./pc-knowledge-graph");
 const { createSkillAutopilot } = require("./skill-autopilot");
 const { createComputerUse } = require("./computer-use");
 const { createUniversalBrowserAgent } = require("./universal-browser-agent");
-const { PREPARE_ONLY_PHRASE, resolveExecutableTask } = require("./automation/outcome-compiler");
+const { PREPARE_ONLY_PHRASE, compileOutcome, resolveExecutableTask } = require("./automation/outcome-compiler");
 const { trace } = require("./automation/trace");
+const { createContactStore } = require("./contacts");
 
 const execFileAsync = promisify(execFile);
 const CONFIRMATIONS_FILE = "confirmations.json";
@@ -178,6 +179,9 @@ function createCapabilityEngine({
   const getApex = () => (typeof apexIngest === "function" ? apexIngest() : apexIngest);
   const confirmationsPath = path.join(runtimeDir, CONFIRMATIONS_FILE);
   const memoryPath = path.join(runtimeDir, MEMORY_FILE);
+  // Who the owner means when they say a name. Consulted before any identity search, so a known
+  // person is a direct navigation rather than a search, a ranking, and a chance to be wrong.
+  const contacts = createContactStore({ runtimeDir });
   const actionHistory = [];
   const browser = browserService || createBrowserAutomationService({ runtimeDir });
   // Runtime/background automation has a hard zero-visible-surface contract.
@@ -2633,7 +2637,40 @@ function createCapabilityEngine({
       const complexitySignals = (task.match(/\b(?:then|after|across|multiple|compare|analyse|analyze|evidence|source|different|tabs?|report|download|upload|repository|workflow)\b/gi) || []).length;
       const defaultMaxSteps = complexitySignals >= 6 ? 40 : complexitySignals >= 3 ? 32 : 24;
       const maxSteps = Math.min(asNumber(args.maxSteps || args.max_steps, defaultMaxSteps, 1, 40), 40);
-      const startUrl = cleanString(args.startUrl || args.start_url || context.startUrl, 2000);
+      let startUrl = cleanString(args.startUrl || args.start_url || context.startUrl, 2000);
+      // If the owner has already told us who this is, go straight to their conversation.
+      //
+      // This is the difference between "send hi to tg" working and the failure it has been. The
+      // inbox carries two rows both named Tg; they tie, the tie is refused, the run falls back to
+      // search, and search returns a group thread which a single-recipient send must never use. All
+      // of that machinery exists to answer a question the owner can answer once. A stored thread URL
+      // skips the inbox, the search, the ranking, and every ambiguity that comes with them.
+      const outcomeIntent = compileOutcome(executableTask, { id: "contact-lookup" });
+      const namedPerson = outcomeIntent.entities?.people?.[0] || "";
+      const surfaceChannel = /instagram|insta/i.test(`${executableTask} ${startUrl}`) ? "instagram"
+        : /whats\s*app/i.test(executableTask) ? "whatsapp"
+          : /\b(gmail|email|mail)\b/i.test(executableTask) ? "email" : "";
+      const knownContact = namedPerson && surfaceChannel ? contacts.routeFor(namedPerson, surfaceChannel) : null;
+      let taskToRun = executableTask;
+      if (knownContact?.url) {
+        startUrl = knownContact.url;
+        contacts.touch(knownContact.contactId);
+        // Navigating to the thread is only half of it. The planner's task still said "search for tg,
+        // select tg's chat", so the run landed in the right conversation and then obediently typed
+        // into the search box and clicked through to his profile — walking out of the place it had
+        // just been taken to. A task must not instruct a search for someone already on screen.
+        //
+        // The rewritten task carries no person name on purpose: a name re-triggers identity
+        // resolution, which is the search machinery this route exists to skip. Identity here is
+        // established by the stored thread, which the owner chose themselves.
+        const payload = outcomeIntent.entities?.messageValues?.[0] || "";
+        if (payload) {
+          taskToRun = outcomeIntent.commit?.required
+            ? `The correct conversation is already open on screen. Type ${JSON.stringify(payload)} into the message input, then send it.`
+            : `The correct conversation is already open on screen. Type ${JSON.stringify(payload)} into the message input and leave it unsent.`;
+        }
+        trace("contacts", "route-hit", { channel: knownContact.channel, rewroteTask: taskToRun !== executableTask });
+      }
       const dailySurface = (context.surface || (context.placement === "visible" ? "daily-browser" : "managed-browser")) === "daily-browser";
       const stepLog = [];
       const automationOptions = {
@@ -2676,8 +2713,8 @@ function createCapabilityEngine({
       let result;
       try {
         result = dailySurface
-          ? await computerUse.execute(executableTask, automationOptions)
-          : await universalHeadlessBrowser.execute(executableTask, automationOptions);
+          ? await computerUse.execute(taskToRun, automationOptions)
+          : await universalHeadlessBrowser.execute(taskToRun, automationOptions);
       } catch (error) {
         if (takeoverStarted) desktopTakeover?.fail?.(error.message);
         throw error;
@@ -2692,7 +2729,7 @@ function createCapabilityEngine({
         // `executedTask` is what actually ran, which after intent restoration differs from what the
         // planner wrote. The approval card is built from these fields, so it has to carry the real
         // one or it will describe an action nobody is about to take.
-        return { confirmationRequired: true, task, executedTask: executableTask, prepareOnlyTextIgnored: Boolean(requestedPrepareOnlyText) && !honourPrepareOnlyText, prepared: result.result, pendingAction: result.pendingAction || null, steps: stepLog, stepsCompleted: result.stepsCompleted };
+        return { confirmationRequired: true, task, executedTask: taskToRun, prepareOnlyTextIgnored: Boolean(requestedPrepareOnlyText) && !honourPrepareOnlyText, prepared: result.result, pendingAction: result.pendingAction || null, steps: stepLog, stepsCompleted: result.stepsCompleted };
       }
       if (result.requiresLogin) {
         return { ok: true, completed: false, requiresLogin: true, task, result: result.result, loginUrl: result.loginUrl || result.finalUrl || startUrl || null, taskId: result.taskId || automationOptions.taskId || null, statePath: result.statePath || null, steps: stepLog.length ? stepLog : result.history || [], mode: result.mode };
@@ -2718,7 +2755,34 @@ function createCapabilityEngine({
       const demotionNotice = restraintSurvivedStripping
         ? "The task text told the browser to stop before sending, so nothing was sent. That restriction was added by the planner, not requested."
         : null;
-      return { ok: result.success, task, executedTask: executableTask, result: result.result, error: result.error || demotionNotice, blocked: result.blocked || false, candidates: result.candidates || null, completed: restraintSurvivedStripping ? false : undefined, plannerDemotedTheSend, restraintStripped: plannerDemotedTheSend && !restraintSurvivedStripping, steps: stepLog.length ? stepLog : result.history || result.steps || [], evidence: result.evidence || [], statePath: result.statePath || null, taskId: result.taskId || automationOptions.taskId || null, stepsCompleted: result.stepsCompleted, mode: result.mode, finalUrl: result.finalUrl || null, finalTitle: result.finalTitle || null, reveal };
+      // An ambiguous identity is a question, not a dead end.
+      //
+      // Two rows both named "Tg" is not a malfunction — the owner knows which is which instantly and
+      // the machine cannot. Refusing made that the owner's problem ("specify the exact handle") for
+      // someone they message daily. Handing back the candidates turns one refusal into one question,
+      // asked once, and the answer is kept.
+      const identityChoices = (result.candidates || [])
+        .filter((item) => item && (item.name || item.text))
+        .slice(0, 6)
+        .map((item) => ({
+          ref: item.ref || "",
+          label: cleanString(item.name || item.text, 140),
+          detail: cleanString([item.text, item.href].filter(Boolean).join(" · "), 160),
+          handle: cleanString(String(item.href || "").split("/").filter(Boolean).pop() || "", 100),
+          profileUrl: cleanString(item.href || "", 500),
+        }));
+      const identityCard = result.blocked && identityChoices.length > 1 && namedPerson
+        ? {
+            kind: "contact-choice",
+            title: `Which "${namedPerson}"?`,
+            body: "Pick the right one and I will remember it, so this is never asked again.",
+            query: namedPerson,
+            channel: surfaceChannel || "instagram",
+            task,
+            candidates: identityChoices,
+          }
+        : null;
+      return { ok: result.success, task, executedTask: executableTask, result: result.result, error: result.error || demotionNotice, blocked: result.blocked || false, candidates: result.candidates || null, card: identityCard, completed: restraintSurvivedStripping ? false : undefined, plannerDemotedTheSend, restraintStripped: plannerDemotedTheSend && !restraintSurvivedStripping, steps: stepLog.length ? stepLog : result.history || result.steps || [], evidence: result.evidence || [], statePath: result.statePath || null, taskId: result.taskId || automationOptions.taskId || null, stepsCompleted: result.stepsCompleted, mode: result.mode, finalUrl: result.finalUrl || null, finalTitle: result.finalTitle || null, reveal };
     },
     screen_locate: async (args) => {
       if (!computerUse) throw errorWithStatus("screen_locate requires screen capture.", 412);

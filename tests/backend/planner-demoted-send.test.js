@@ -176,9 +176,14 @@ test("the handler wires the guard, and the model is told not to add the phrase",
     "and must mark a run whose restraint survived stripping as not completed");
   assert.match(ENGINE, /resolveExecutableTask\(\{\s*ownerRequest: cleanString\(context\.ownerRequest, 2000\)/,
     "the handler must resolve the task through the tested function, using the owner's own sentence");
-  assert.match(ENGINE, /await computerUse\.execute\(executableTask, automationOptions\)/,
-    "and the restored task must be the one actually executed, not merely computed");
-  assert.match(ENGINE, /await universalHeadlessBrowser\.execute\(executableTask, automationOptions\)/);
+  // `taskToRun` is the restored task, or — when a saved contact supplies the thread directly — the
+  // contact-anchored rewrite of it. Either way it is what must actually execute; asserting on the
+  // pre-rewrite variable would pass while the run used something else.
+  assert.match(ENGINE, /await computerUse\.execute\(taskToRun, automationOptions\)/,
+    "the executed task must be the resolved one, not the planner's original");
+  assert.match(ENGINE, /await universalHeadlessBrowser\.execute\(taskToRun, automationOptions\)/);
+  assert.match(ENGINE, /let taskToRun = executableTask;/,
+    "and it must start from the intent-restored task rather than the raw args");
   const SERVER = fs.readFileSync(path.join(__dirname, "..", "..", "server.js"), "utf8");
   assert.match(SERVER, /ownerRequest: rawUserMessage\(prompt\)/,
     "server.js must pass the owner's own words down to the tools");

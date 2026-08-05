@@ -119,6 +119,7 @@ function browserElementMetadata(element) {
     placeholder,
     title,
     href: element instanceof HTMLAnchorElement ? element.href : "",
+      imageUrl: element instanceof HTMLImageElement ? element.currentSrc || element.src || "" : (element.querySelector?.("img")?.currentSrc || element.querySelector?.("img")?.src || ""),
     disabled: Boolean(element.disabled || element.getAttribute("aria-disabled") === "true"),
     checked: "checked" in element ? Boolean(element.checked) : undefined,
     value: element instanceof HTMLInputElement && element.type === "password"
@@ -459,6 +460,7 @@ function createBrowserAutomationService({
       text: (element.innerText || element.textContent || "").trim().slice(0, 500),
       title: element.getAttribute("title") || "",
       href: element instanceof HTMLAnchorElement ? element.href : "",
+      imageUrl: element instanceof HTMLImageElement ? element.currentSrc || element.src || "" : (element.querySelector?.("img")?.currentSrc || element.querySelector?.("img")?.src || ""),
     }));
   }
 
@@ -512,6 +514,7 @@ function createBrowserAutomationService({
       title: element.getAttribute("title") || "",
       text: (element.innerText || element.textContent || "").trim().slice(0, 500),
       href: element instanceof HTMLAnchorElement ? element.href : "",
+      imageUrl: element instanceof HTMLImageElement ? element.currentSrc || element.src || "" : (element.querySelector?.("img")?.currentSrc || element.querySelector?.("img")?.src || ""),
       className: typeof element.className === "string" ? element.className : "",
       outerHtml: element.outerHTML.slice(0, 1_000),
     }));
@@ -677,6 +680,7 @@ function createBrowserAutomationService({
           name: element.getAttribute("name") || "",
           type: element.getAttribute("type") || "",
           href: element instanceof HTMLAnchorElement ? element.href : "",
+      imageUrl: element instanceof HTMLImageElement ? element.currentSrc || element.src || "" : (element.querySelector?.("img")?.currentSrc || element.querySelector?.("img")?.src || ""),
           disabled: Boolean(element.disabled || element.getAttribute("aria-disabled") === "true"),
         })),
         limit,

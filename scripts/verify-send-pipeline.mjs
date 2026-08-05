@@ -48,19 +48,36 @@ const PLANNER_TASK = `Open Instagram Direct, search for ${RECIPIENT}, select ${R
 const geminiKey = createSecretStore(RUNTIME_DIR).load().geminiKey;
 if (!geminiKey) { console.error("No geminiKey in the vault."); process.exit(1); }
 
+// The same contact lookup the capability engine does. Without it this harness started from the
+// inbox every time and never exercised the thing that makes a known person fast and unambiguous.
+const { createContactStore } = await import("../server/contacts.js");
+const knownContact = createContactStore({ runtimeDir: RUNTIME_DIR }).routeFor(RECIPIENT, "instagram");
+const START_URL = knownContact?.url || "https://www.instagram.com/direct/inbox/";
+
 const pass = [];
 const fail = [];
 const check = (name, ok, detail = "") => (ok ? pass : fail).push(`${name}${detail ? ` — ${detail}` : ""}`);
 
 // ── 1. intent ────────────────────────────────────────────────────────────────
 const resolved = resolveExecutableTask({ ownerRequest: OWNER_REQUEST, task: PLANNER_TASK, prepareOnlyText: "" });
+if (knownContact?.url) resolved.executableTask = `The correct conversation is already open on screen. Type ${JSON.stringify(MESSAGE)} into the message input, then send it.`;
 const outcome = compileOutcome(resolved.executableTask, { id: "verify" });
 console.log("1. INTENT");
 console.log(`   recipient : ${JSON.stringify(outcome.entities.people)}`);
 console.log(`   payload   : ${JSON.stringify(outcome.entities.messageValues)}`);
 console.log(`   commit    : ${outcome.commit.required}`);
+console.log(`   contact   : ${knownContact ? knownContact.name + " @" + knownContact.handle + " -> " + knownContact.url : "(not saved — will search)"}`);
+// With a saved contact the recipient is established by the stored thread the owner picked, and the
+// task deliberately carries no name — a name re-triggers the identity search this route exists to
+// skip. Without a contact, the name in the request is the only thing identifying anyone.
 const firstName = RECIPIENT.split(/\s+/)[0].replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-check("recipient resolved", outcome.entities.people.some((p) => new RegExp(firstName, "i").test(p)), JSON.stringify(outcome.entities.people));
+check(
+  knownContact ? "recipient established by the saved contact" : "recipient resolved from the request",
+  knownContact
+    ? Boolean(knownContact.url) && new RegExp(firstName, "i").test(`${knownContact.name} ${knownContact.handle}`)
+    : outcome.entities.people.some((p) => new RegExp(firstName, "i").test(p)),
+  knownContact ? `${knownContact.name} @${knownContact.handle}` : JSON.stringify(outcome.entities.people),
+);
 check("payload is the dictated word", JSON.stringify(outcome.entities.messageValues) === JSON.stringify([MESSAGE]), JSON.stringify(outcome.entities.messageValues));
 check("send intent survived the planner", outcome.commit.required === true);
 
@@ -96,7 +113,7 @@ let result;
 try {
   // keepBrowserOpen so the task page — and therefore the pending action's element reference —
   // survives long enough for approval to act on it.
-  result = await agent.execute(resolved.executableTask, { taskId: `verify-${Date.now()}`, startUrl: "https://www.instagram.com/direct/inbox/", maxSteps: 18, onStep, keepBrowserOpen: true });
+  result = await agent.execute(resolved.executableTask, { taskId: `verify-${Date.now()}`, startUrl: START_URL, maxSteps: 18, onStep, keepBrowserOpen: true });
 } catch (error) {
   result = { success: false, error: `threw: ${error.message}` };
 }

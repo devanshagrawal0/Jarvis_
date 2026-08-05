@@ -9,6 +9,7 @@ const QRCode = require("qrcode");
 const { createCapabilityEngine } = require("./server/capability-engine");
 const { createSecretStore } = require("./server/secret-store");
 const { classifyToolResults, summaryPrefix } = require("./server/tool-result-honesty");
+const { createContactStore } = require("./server/contacts");
 const { createRequestTrust } = require("./server/request-trust");
 // Cortex v4 — single Gemini model registry (verified available on this key).
 const { MODELS: GEMINI_MODELS, strengthProfile: geminiStrengthProfile, resolveCortexExecution } = require("./server/gemini-models");
@@ -103,6 +104,7 @@ const WORKSPACE_ROOT = path.resolve(ROOT, "..");
 const CONFIG_DIR = path.join(ROOT, "config");
 const RUNTIME_DIR = path.resolve(process.env.JARVIS_RUNTIME_DIR || path.join(ROOT, "runtime"));
 const SETTINGS_PATH = path.join(RUNTIME_DIR, "settings.json");
+const contactStore = createContactStore({ runtimeDir: RUNTIME_DIR });
 const AGENTS_PATH = path.join(RUNTIME_DIR, "agents.json");
 const DEVICES_PATH = path.join(RUNTIME_DIR, "devices.json");
 const PAIRINGS_PATH = path.join(RUNTIME_DIR, "pairings.json");
@@ -7572,6 +7574,42 @@ async function handleApi(req, res, pathname, url) {
       source,
     });
     sendJson(res, result.statusCode || 200, result);
+    return;
+  }
+
+  // ── contacts ────────────────────────────────────────────────────────────────
+  // The owner's own address book. Owner surface only: it is a list of real people, and nothing
+  // reached by a relay or a paired phone has any business reading or writing it.
+  if (pathname === "/api/contacts" || pathname.startsWith("/api/contacts/")) {
+    if (!requestTrust.isDirectOwnerRequest(req)) {
+      sendJson(res, 403, { error: "Contacts are available only on the direct owner surface." });
+      return;
+    }
+    if (req.method === "GET" && pathname === "/api/contacts") {
+      sendJson(res, 200, { contacts: contactStore.list() });
+      return;
+    }
+    if (req.method === "POST" && pathname === "/api/contacts") {
+      const data = await parseRequestData(req);
+      try {
+        const saved = contactStore.save({
+          id: data.id,
+          name: data.name,
+          aliases: Array.isArray(data.aliases) ? data.aliases : (data.alias ? [data.alias] : []),
+          channels: data.channels && typeof data.channels === "object" ? data.channels : {},
+        });
+        sendJson(res, 200, { contact: saved });
+      } catch (error) {
+        sendJson(res, 400, { error: error.message });
+      }
+      return;
+    }
+    const contactDeleteMatch = pathname.match(/^\/api\/contacts\/([^/]+)$/);
+    if (req.method === "DELETE" && contactDeleteMatch) {
+      sendJson(res, 200, { removed: contactStore.remove(contactDeleteMatch[1]) });
+      return;
+    }
+    sendJson(res, 405, { error: "Unsupported contacts request." });
     return;
   }
 
