@@ -1,0 +1,147 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Chat Harness</title>
+<!--
+  A local stand-in for a real messaging web app, built to reproduce the exact conditions that
+  defeated the automation against Instagram. It is deliberately hostile in the same ways:
+
+   1. The composer is the LAST interactive element in the DOM, behind a long conversation list,
+      so a snapshot that truncates in document order never reaches it.
+   2. The composer is a contenteditable div with contenteditable="plaintext-only" and
+      role="textbox" — not an <input> — which the old `[contenteditable=true]` selector missed.
+   3. Every conversation row is trailed by an avatar <img role="img"> repeating its own name, so
+      roughly half of any element budget is spent on decoration.
+   4. Searching surfaces GROUP threads that contain the queried person, before (or instead of)
+      the 1:1 thread — the trap that would have sent a private message to three people.
+   5. Sending actually appends to the thread, so a test can assert the message landed rather
+      than trusting a "done" claim.
+
+  Nothing here is a mock of our own code. It is a target, and the real automation stack drives it.
+-->
+<style>
+  * { box-sizing: border-box; }
+  body { margin:0; font:14px/1.4 system-ui, sans-serif; display:flex; height:100vh; background:#fff; color:#111; }
+  #rail { width:64px; background:#111; display:flex; flex-direction:column; align-items:center; padding-top:12px; gap:4px; }
+  #rail a { display:block; padding:12px; color:#ddd; text-decoration:none; font-size:11px; }
+  #side { width:340px; border-right:1px solid #dbdbdb; display:flex; flex-direction:column; }
+  #searchwrap { padding:10px; border-bottom:1px solid #efefef; }
+  #search { width:100%; padding:8px 12px; border:1px solid #dbdbdb; border-radius:18px; }
+  #list { flex:1; overflow:auto; }
+  .row { display:flex; gap:10px; padding:10px 12px; align-items:center; cursor:pointer; }
+  .row:hover { background:#fafafa; }
+  .row.active { background:#efefef; }
+  .row .nm { font-weight:600; }
+  .row .sub { color:#8e8e8e; font-size:12px; }
+  #pane { flex:1; display:flex; flex-direction:column; }
+  #hdr { padding:14px 16px; border-bottom:1px solid #efefef; font-weight:600; }
+  #msgs { flex:1; overflow:auto; padding:16px; display:flex; flex-direction:column; gap:8px; }
+  .msg { align-self:flex-end; background:#3797f0; color:#fff; padding:8px 14px; border-radius:18px; max-width:60%; }
+  .msg.them { align-self:flex-start; background:#efefef; color:#111; }
+  #bar { display:flex; gap:8px; padding:12px 16px; border-top:1px solid #efefef; align-items:center; }
+  #composer { flex:1; border:1px solid #dbdbdb; border-radius:20px; padding:10px 16px; min-height:40px; outline:none; }
+  #composer:empty:before { content:attr(data-placeholder); color:#8e8e8e; }
+  #send { border:none; background:none; color:#3797f0; font-weight:600; cursor:pointer; padding:8px 12px; }
+  #empty { flex:1; display:flex; align-items:center; justify-content:center; color:#8e8e8e; }
+</style>
+
+<nav id="rail"></nav>
+
+<aside id="side">
+  <div id="searchwrap">
+    <input id="search" type="text" placeholder="Search" aria-label="Search">
+  </div>
+  <div id="list"></div>
+</aside>
+
+<main id="pane">
+  <div id="hdr">Messages</div>
+  <div id="empty">Select a conversation</div>
+</main>
+
+<script>
+  // ── data ────────────────────────────────────────────────────────────────
+  // A 1:1 thread with Tg, and a group that also contains Tg. Searching "tg" matches both, and
+  // the group sorts FIRST — exactly what Instagram returned.
+  const THREADS = [
+    { id: "t-yash",   name: "Yash",                          sub: "You: utilities should be about 30" },
+    { id: "t-group",  name: "Anjali Monga, Tg and Ignacio",  sub: "Ignacio sent an attachment", group: true },
+    { id: "t-tg",     name: "Tg",                            sub: "Active 1m ago" },
+    { id: "t-raghav", name: "Raghav Mittal",                 sub: "Reacted to your message" },
+  ];
+  // Filler conversations so the element budget is genuinely under pressure, as it is on a real
+  // inbox. Each contributes a row plus a decorative avatar.
+  for (let i = 1; i <= 60; i++) THREADS.push({ id: `t-f${i}`, name: `Contact ${i}`, sub: "Tap to open" });
+
+  const SENT = [];                 // what the harness actually received, for assertions
+  window.__harness = {
+    sent: SENT,
+    messagesIn: (id) => [...document.querySelectorAll(`#msgs .msg[data-thread="${id}"]`)].map((n) => n.textContent),
+    openThread: () => document.body.dataset.thread || null,
+  };
+
+  const icon = (name) => `<img role="img" alt="${name}" aria-label="${name}" width="44" height="44"
+      src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='44' height='44'%3E%3Ccircle cx='22' cy='22' r='22' fill='%23ddd'/%3E%3C/svg%3E">`;
+
+  document.getElementById("rail").innerHTML =
+    ["Home", "Search", "Explore", "Reels", "Messages", "Profile"]
+      .map((n) => `<a href="#" aria-label="${n}">${icon(n)}</a>`).join("");
+
+  function renderList(filter = "") {
+    const q = filter.trim().toLowerCase();
+    // Group threads sort first when they match, reproducing the real search ordering.
+    const hits = THREADS
+      .filter((t) => !q || t.name.toLowerCase().includes(q))
+      .sort((a, b) => (b.group ? 1 : 0) - (a.group ? 1 : 0));
+    document.getElementById("list").innerHTML = hits.map((t) => `
+      <div class="row" role="button" tabindex="0" data-id="${t.id}" aria-label="${t.name}">
+        ${icon(t.name)}
+        <div><div class="nm">${t.name}</div><div class="sub">${t.sub}</div></div>
+      </div>`).join("");
+  }
+
+  function openThread(id) {
+    const t = THREADS.find((x) => x.id === id);
+    if (!t) return;
+    document.body.dataset.thread = id;
+    document.querySelectorAll(".row").forEach((r) => r.classList.toggle("active", r.dataset.id === id));
+    document.getElementById("hdr").textContent = t.name;
+    const pane = document.getElementById("pane");
+    pane.innerHTML = `
+      <div id="hdr">${t.name}</div>
+      <div id="msgs"><div class="msg them" data-thread="${id}">hey</div></div>
+      <div id="bar">
+        <div id="composer" role="textbox" contenteditable="plaintext-only"
+             aria-label="Message" data-placeholder="Message..."></div>
+        <button id="send" aria-label="Send">Send</button>
+      </div>`;
+    wireComposer(id);
+  }
+
+  function wireComposer(threadId) {
+    const composer = document.getElementById("composer");
+    const send = document.getElementById("send");
+    const submit = () => {
+      const text = composer.textContent.trim();
+      if (!text) return;
+      const node = document.createElement("div");
+      node.className = "msg";
+      node.dataset.thread = threadId;
+      node.textContent = text;
+      document.getElementById("msgs").appendChild(node);
+      SENT.push({ thread: threadId, threadName: THREADS.find((t) => t.id === threadId)?.name, text, at: Date.now() });
+      composer.textContent = "";
+    };
+    send.addEventListener("click", submit);
+    composer.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); submit(); }
+    });
+  }
+
+  document.getElementById("list").addEventListener("click", (e) => {
+    const row = e.target.closest(".row");
+    if (row) openThread(row.dataset.id);
+  });
+  document.getElementById("search").addEventListener("input", (e) => renderList(e.target.value));
+
+  renderList();
+</script>
