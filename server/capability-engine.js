@@ -16,6 +16,7 @@ const { createUniversalBrowserAgent } = require("./universal-browser-agent");
 const { PREPARE_ONLY_PHRASE, compileOutcome, resolveExecutableTask } = require("./automation/outcome-compiler");
 const { trace } = require("./automation/trace");
 const { createContactStore } = require("./contacts");
+const { enrichCandidates } = require("./automation/identity-enrichment");
 
 const execFileAsync = promisify(execFile);
 const CONFIRMATIONS_FILE = "confirmations.json";
@@ -2761,16 +2762,19 @@ function createCapabilityEngine({
       // the machine cannot. Refusing made that the owner's problem ("specify the exact handle") for
       // someone they message daily. Handing back the candidates turns one refusal into one question,
       // asked once, and the answer is kept.
-      const identityChoices = (result.candidates || [])
-        .filter((item) => item && (item.name || item.text))
-        .slice(0, 6)
-        .map((item) => ({
-          ref: item.ref || "",
-          label: cleanString(item.name || item.text, 140),
-          detail: cleanString([item.text, item.href].filter(Boolean).join(" · "), 160),
-          handle: cleanString(String(item.href || "").split("/").filter(Boolean).pop() || "", 100),
-          profileUrl: cleanString(item.href || "", 500),
-        }));
+      // A row gives a display name and nothing else, so two rows reading "Tg" produce a choice
+      // between "Tg" and "Tg" — the same non-answer as refusing. Each candidate is opened and read
+      // so the card can show the account behind it: handle, picture, thread. That costs a page load
+      // per candidate and runs only here, where the alternative is a dead end.
+      const shouldOfferChoice = Boolean(result.blocked) && Boolean(namedPerson) && (result.candidates || []).length > 1;
+      const identityChoices = shouldOfferChoice
+        ? await enrichCandidates({
+            browserService: managedBrowser,
+            taskId: `identify-${crypto.randomUUID()}`,
+            candidates: result.candidates || [],
+            inboxUrl: surfaceChannel === "instagram" ? "https://www.instagram.com/direct/inbox/" : (startUrl || result.finalUrl || ""),
+          }).catch(() => [])
+        : [];
       const identityCard = result.blocked && identityChoices.length > 1 && namedPerson
         ? {
             kind: "contact-choice",
