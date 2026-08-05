@@ -58,31 +58,10 @@ function projectAnalysis(p: any): string {
 
 type WidgetView = "chip" | "card" | "expanded";
 
-interface WidgetDef {
-  id: string;
-  label: string;
-  icon: string;
-}
-
-const WIDGETS: WidgetDef[] = [
-  { id: "runtime",     label: "Runtime",     icon: "R" },
-  { id: "profile",     label: "Profile",     icon: "◐" },
-  { id: "weather",     label: "Weather",     icon: "☀" },
-  { id: "vitals",      label: "Vitals",      icon: "◍" },
-  { id: "modules",     label: "Modules",     icon: "⬡" },
-  { id: "projects",    label: "Projects",    icon: "◫" },
-  { id: "agents",      label: "Agents",      icon: "◉" },
-  { id: "connections", label: "Connections", icon: "⚡" },
-  { id: "trust",       label: "Trust",       icon: "◇" },
-  { id: "kalshi",      label: "Kalshi",      icon: "▲" },
-  { id: "vision",      label: "Vision",      icon: "◎" },
-  { id: "memory",      label: "Memory",      icon: "◈" },
-  { id: "devices",     label: "Devices",     icon: "◫" },
-  { id: "receipts",    label: "Receipts",    icon: "◻" },
-  { id: "graph",       label: "Graph",       icon: "❖" },
-  { id: "helix",       label: "Helix",       icon: "⬡" },
-  { id: "synapse",     label: "Synapse",     icon: "⬢" },
-];
+// One registry, shared with the launcher. It used to live here and be hand-copied there, with a
+// comment claiming no import was needed; the two lists were already drifting, and a widget present
+// in one and absent from the other fails silently in both directions.
+import { WIDGETS, type WidgetDef } from "./widget-registry";
 
 // ─── Inline style constants ───────────────────────────────────────────────────
 
@@ -1882,6 +1861,21 @@ export function WidgetStrip({ mode }: { mode: string; showChips?: boolean }) {
   useEffect(() => {
     try { localStorage.setItem(SPATIAL_STORAGE_KEY, JSON.stringify(windows)); } catch { /* persistence is best effort */ }
   }, [windows]);
+
+  // The launcher marks which modules are already on screen. This state lives here, so it is
+  // broadcast rather than duplicated — a second copy would confidently label a closed widget "open"
+  // the moment the two fell out of step. The query event exists because the launcher mounts after
+  // the last change was announced and would otherwise show nothing as open until something moved.
+  const openIds = Object.keys(windows);
+  const openKey = openIds.join(",");
+  useEffect(() => {
+    function announce() {
+      document.dispatchEvent(new CustomEvent("jarvis:widgets-changed", { detail: { ids: openKey ? openKey.split(",") : [] } }));
+    }
+    announce();
+    document.addEventListener("jarvis:widgets-query", announce);
+    return () => document.removeEventListener("jarvis:widgets-query", announce);
+  }, [openKey]);
 
   const refresh = useCallback(async (id: string) => {
     if (inFlightRef.current.has(id)) return;

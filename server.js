@@ -10,6 +10,7 @@ const { createCapabilityEngine } = require("./server/capability-engine");
 const { createSecretStore } = require("./server/secret-store");
 const { classifyToolResults, summaryPrefix } = require("./server/tool-result-honesty");
 const { createContactStore } = require("./server/contacts");
+const { createAvatarCache } = require("./server/contact-avatars");
 const { createRequestTrust } = require("./server/request-trust");
 // Cortex v4 — single Gemini model registry (verified available on this key).
 const { MODELS: GEMINI_MODELS, strengthProfile: geminiStrengthProfile, resolveCortexExecution } = require("./server/gemini-models");
@@ -54,8 +55,9 @@ const { yahooChart: apexYahooChart, yahooChartPeriod: apexYahooChartPeriod } = r
 // Brain turn-classification — single source of truth (grounding trigger + evidence gate share it).
 const { rawUserMessage, needsFreshInfo } = require("./server/brain-classify");
 const { createApexPaper } = require("./server/apex/apex-paper");
+const { createApexPortfolio } = require("./server/apex/apex-portfolio");
 const { createApexBots } = require("./server/apex/apex-bots");
-let apexEngine = null, apexPaper = null, apexBots = null, apexOracle = null;
+let apexEngine = null, apexPaper = null, apexPortfolio = null, apexBots = null, apexOracle = null;
 const APEX_ENV = loadEnvFile(__dirname); // load .env keys into process.env before ingest init
 const { detectTabType, buildTabData, getProjectClassificationBias } = require("./server/helix-tab-classifier");
 const { PERSONALITY_VERSION, personalityInstruction, evaluatePersonality, polishPersonality } = require("./server/jarvis-personality");
@@ -105,6 +107,24 @@ const CONFIG_DIR = path.join(ROOT, "config");
 const RUNTIME_DIR = path.resolve(process.env.JARVIS_RUNTIME_DIR || path.join(ROOT, "runtime"));
 const SETTINGS_PATH = path.join(RUNTIME_DIR, "settings.json");
 const contactStore = createContactStore({ runtimeDir: RUNTIME_DIR });
+const contactAvatars = createAvatarCache({ runtimeDir: RUNTIME_DIR });
+
+// What the UI needs that the stored record does not literally contain: whether a face is actually
+// on disk, and where each channel points. Computed here so the client never has to guess at either
+// — a client-side guess is how you end up rendering an <img> for a photo that was never fetched.
+function decorateContact(contact) {
+  if (!contact) return contact;
+  const channels = {};
+  for (const [key, account] of Object.entries(contact.channels || {})) {
+    channels[key] = { ...account, link: contactStore.linkForChannel(key, account) };
+  }
+  return {
+    ...contact,
+    channels,
+    hasAvatar: Boolean(contactAvatars.existingFor(contact.id)),
+    channelCount: Object.keys(channels).length,
+  };
+}
 const AGENTS_PATH = path.join(RUNTIME_DIR, "agents.json");
 const DEVICES_PATH = path.join(RUNTIME_DIR, "devices.json");
 const PAIRINGS_PATH = path.join(RUNTIME_DIR, "pairings.json");
@@ -959,6 +979,17 @@ function validateHost(req) {
   return host;
 }
 
+// The application/json requirement below is a CSRF defence: a cross-origin <form> can send
+// text/plain or urlencoded without a preflight, so demanding JSON forces one. That reasoning does
+// not reach a bodyless DELETE — no form can emit DELETE at all, so the browser preflights it
+// regardless and the origin check above is what actually guards it. Requiring a content-type on a
+// request with no content defended nothing and made DELETE /api/contacts/<id> answer 415 forever.
+function isBodylessDelete(req) {
+  if (req.method !== "DELETE") return false;
+  const length = Number(req.headers["content-length"] || 0);
+  return !length && !req.headers["transfer-encoding"];
+}
+
 function validateMutationRequest(req, pathname, session) {
   const isMutation = !["GET", "HEAD", "OPTIONS"].includes(req.method);
   if (!isMutation) return;
@@ -982,7 +1013,7 @@ function validateMutationRequest(req, pathname, session) {
   }
   if (req.jarvisDevice?.approved) {
     const contentType = String(req.headers["content-type"] || "");
-    if (!contentType.includes("application/json")) {
+    if (!isBodylessDelete(req) && !contentType.includes("application/json")) {
       throw Object.assign(new Error("Mutation requests must use application/json"), { statusCode: 415 });
     }
     return;
@@ -1005,7 +1036,7 @@ function validateMutationRequest(req, pathname, session) {
     if (!isLocalhost && !allowed.has(origin)) throw Object.assign(new Error("Request origin rejected"), { statusCode: 403 });
   }
   const contentType = String(req.headers["content-type"] || "");
-  if (!contentType.includes("application/json")) {
+  if (!isBodylessDelete(req) && !contentType.includes("application/json")) {
     throw Object.assign(new Error("Mutation requests must use application/json"), { statusCode: 415 });
   }
 }
@@ -6802,9 +6833,10 @@ async function handleApi(req, res, pathname, url) {
   if (pathname.startsWith("/api/apex/")) {
     if (!apexIngest || !apexDb) { sendJson(res, 503, { error: "APEX data layer unavailable" }); return; }
     try {
-      if (req.method === "GET" && pathname === "/api/apex/overview") { sendJson(res, 200, { overview: apexIngest.getOverview(), gainers: apexIngest.getGainers(), yields: apexIngest.getYields(), cryptoGlobal: apexIngest.getCryptoGlobal(), macro: apexIngest.getMacro(), movers: apexIngest.getMovers(), regime: apexIngest.getRegime(), internals: apexIngest.getInternals(), sectors: apexIngest.getSectors(), insider: apexIngest.getInsider(), session: apexIngest.getSession(), correlation: apexIngest.getCorrelation(), rrg: apexIngest.getRRG(), cryptoFng: apexIngest.getCryptoFng(), attention: apexIngest.getAttention(), form4: apexIngest.getForm4(), btcNet: apexIngest.getBtcNet(), anomalies: apexIngest.getAnomalies() }); return; }
+      if (req.method === "GET" && pathname === "/api/apex/overview") { sendJson(res, 200, { overview: apexIngest.getOverview(), gainers: apexIngest.getGainers(), yields: apexIngest.getYields(), cryptoGlobal: apexIngest.getCryptoGlobal(), macro: apexIngest.getMacro(), macroAlt: apexIngest.getMacroAlt(), movers: apexIngest.getMovers(), regime: apexIngest.getRegime(), internals: apexIngest.getInternals(), sectors: apexIngest.getSectors(), insider: apexIngest.getInsider(), session: apexIngest.getSession(), correlation: apexIngest.getCorrelation(), rrg: apexIngest.getRRG(), cryptoFng: apexIngest.getCryptoFng(), attention: apexIngest.getAttention(), form4: apexIngest.getForm4(), btcNet: apexIngest.getBtcNet(), anomalies: apexIngest.getAnomalies() }); return; }
       if (req.method === "GET" && pathname === "/api/apex/altdata") { sendJson(res, 200, { cryptoFng: apexIngest.getCryptoFng(), attention: apexIngest.getAttention(), form4: apexIngest.getForm4(), btcNet: apexIngest.getBtcNet() }); return; }
       if (req.method === "GET" && pathname === "/api/apex/macro") { sendJson(res, 200, { macro: apexIngest.getMacro() }); return; }
+      if (req.method === "GET" && pathname === "/api/apex/macro-alt") { sendJson(res, 200, { macroAlt: apexIngest.getMacroAlt() }); return; }
       if (req.method === "GET" && pathname === "/api/apex/movers") { sendJson(res, 200, { movers: apexIngest.getMovers() }); return; }
       if (req.method === "GET" && pathname === "/api/apex/regime") { sendJson(res, 200, { regime: apexIngest.getRegime(), internals: apexIngest.getInternals() }); return; }
       if (req.method === "GET" && pathname === "/api/apex/sectors") { sendJson(res, 200, { sectors: apexIngest.getSectors() }); return; }
@@ -6820,6 +6852,9 @@ async function handleApi(req, res, pathname, url) {
       const mcM = pathname.match(/^\/api\/apex\/montecarlo\/([^/]+)$/);
       if (req.method === "GET" && mcM) { const days = Math.max(5, Math.min(120, Number(url.searchParams.get("days")) || 30)); const target = url.searchParams.get("target") ? Number(url.searchParams.get("target")) : null; sendJson(res, 200, { mc: await apexIngest.getMonteCarlo(decodeURIComponent(mcM[1]), { days, target }) }); return; }
       if (req.method === "GET" && pathname === "/api/apex/insider") { sendJson(res, 200, { insider: apexIngest.getInsider() }); return; }
+      if (req.method === "GET" && pathname.startsWith("/api/apex/company-intel/")) { const sym = decodeURIComponent(pathname.split("/").pop() || ""); sendJson(res, 200, { company: await apexIngest.getCompanyIntel(sym) }); return; }
+      if (req.method === "GET" && pathname.startsWith("/api/apex/short-volume/")) { const sym = decodeURIComponent(pathname.split("/").pop() || ""); sendJson(res, 200, { shortVolume: await apexIngest.getShortVolume(sym) }); return; }
+      if (req.method === "GET" && pathname.startsWith("/api/apex/options/")) { const sym = decodeURIComponent(pathname.split("/").pop() || ""); sendJson(res, 200, { options: await apexIngest.getOptionsChain(sym) }); return; }
       const insM = pathname.match(/^\/api\/apex\/insider\/([^/]+)$/);
       if (req.method === "GET" && insM) { sendJson(res, 200, { ticker: decodeURIComponent(insM[1]), insider: apexIngest.getInsider(decodeURIComponent(insM[1])) }); return; }
       if (req.method === "GET" && pathname === "/api/apex/crypto/global") { sendJson(res, 200, { global: apexIngest.getCryptoGlobal() }); return; }
@@ -6836,6 +6871,34 @@ async function handleApi(req, res, pathname, url) {
       if (req.method === "GET" && pathname === "/api/apex/nws") { sendJson(res, 200, { alerts: apexIngest.getNws() }); return; }
       if (req.method === "GET" && pathname === "/api/apex/sources") { sendJson(res, 200, { sources: apexIngest.listSources() }); return; }
       if (req.method === "GET" && pathname === "/api/apex/health/latest") { sendJson(res, 200, apexDb.latestHealthReport() || { report: [] }); return; }
+      if (pathname === "/api/apex/portfolios" || pathname.startsWith("/api/apex/portfolios/")) {
+        if (!apexPortfolio) apexPortfolio = createApexPortfolio(RUNTIME_DIR);
+        if (req.method === "GET" && pathname === "/api/apex/portfolios") { sendJson(res, 200, { portfolios: apexPortfolio.list() }); return; }
+        if (req.method === "POST" && pathname === "/api/apex/portfolios") { const b = await parseRequestData(req); sendJson(res, 200, { ok: true, ...apexPortfolio.create(b || {}) }); return; }
+        const portM = pathname.match(/^\/api\/apex\/portfolios\/([^/]+)(?:\/([^/]+))?$/);
+        if (portM) {
+          const portfolioId = decodeURIComponent(portM[1]);
+          const section = portM[2] || "";
+          if (req.method === "GET" && !section) { sendJson(res, 200, apexPortfolio.get(portfolioId)); return; }
+          if (req.method === "GET" && section === "account") { sendJson(res, 200, apexPortfolio.account(portfolioId)); return; }
+          if (req.method === "GET" && section === "reconciliation") { sendJson(res, 200, apexPortfolio.reconciliation(portfolioId)); return; }
+          if (req.method === "GET" && section === "positions") { sendJson(res, 200, { positions: apexPortfolio.positions(portfolioId) }); return; }
+          if (req.method === "GET" && section === "orders") { sendJson(res, 200, { orders: apexPortfolio.orders(portfolioId, Number(url.searchParams.get("limit")) || 80) }); return; }
+          if (req.method === "GET" && section === "journal") { sendJson(res, 200, { fills: apexPortfolio.journal(portfolioId, Number(url.searchParams.get("limit")) || 80) }); return; }
+          if (req.method === "GET" && section === "equity") { sendJson(res, 200, { curve: apexPortfolio.equityCurve(Number(url.searchParams.get("limit")) || 300) }); return; }
+          if (req.method === "GET" && section === "performance") { sendJson(res, 200, apexPortfolio.performance(portfolioId)); return; }
+          if (req.method === "GET" && section === "attribution") { const p = apexPortfolio.performance(portfolioId); sendJson(res, 200, { contributionByInstrument: p.contributionByInstrument, contributionByOwner: p.contributionByOwner, asOf: p.asOf }); return; }
+          if (req.method === "GET" && section === "allocation") { sendJson(res, 200, apexPortfolio.allocation(portfolioId)); return; }
+          if (req.method === "GET" && section === "exposure") { const a = apexPortfolio.allocation(portfolioId); sendJson(res, 200, { summary: a.summary, positions: a.positions, groups: a.groups, guardrails: a.guardrails, asOf: a.asOf }); return; }
+          if (req.method === "GET" && section === "risk") { sendJson(res, 200, apexPortfolio.risk(portfolioId)); return; }
+          if (req.method === "POST" && section === "cash") { const b = await parseRequestData(req); sendJson(res, 200, { ok: true, account: apexPortfolio.adjustCash(portfolioId, b || {}) }); return; }
+          if (req.method === "POST" && section === "holdings") { const b = await parseRequestData(req); sendJson(res, 200, { ok: true, account: apexPortfolio.addHolding(portfolioId, b || {}) }); return; }
+          if (req.method === "POST" && section === "what-if") { const b = await parseRequestData(req); sendJson(res, 200, apexPortfolio.whatIf(portfolioId, b || {})); return; }
+          if (req.method === "POST" && section === "rebalance-proposal") { const b = await parseRequestData(req); sendJson(res, 200, apexPortfolio.rebalanceProposal(portfolioId, b || {})); return; }
+          if (req.method === "POST" && section === "hedge-proposal") { const b = await parseRequestData(req); sendJson(res, 200, apexPortfolio.hedgeProposal(portfolioId, b || {})); return; }
+        }
+        sendJson(res, 404, { error: "Unknown portfolio route" }); return;
+      }
       // ── APEX ↔ native quant engine (NO SIDECAR — native Node port of Vibe-Trading) ──
       if (pathname.startsWith("/api/apex/engine/")) {
         if (!apexEngine) apexEngine = createVibeNativeEngine({
@@ -7585,8 +7648,14 @@ async function handleApi(req, res, pathname, url) {
       sendJson(res, 403, { error: "Contacts are available only on the direct owner surface." });
       return;
     }
+    // The editor builds itself from this, so a channel can never be offered that the store would
+    // drop — the drift that makes an address book quietly lose what you typed into it.
+    if (req.method === "GET" && pathname === "/api/contacts/meta") {
+      sendJson(res, 200, { channels: contactStore.channelCatalogue() });
+      return;
+    }
     if (req.method === "GET" && pathname === "/api/contacts") {
-      sendJson(res, 200, { contacts: contactStore.list() });
+      sendJson(res, 200, { contacts: contactStore.list().map(decorateContact) });
       return;
     }
     if (req.method === "POST" && pathname === "/api/contacts") {
@@ -7597,15 +7666,66 @@ async function handleApi(req, res, pathname, url) {
           name: data.name,
           aliases: Array.isArray(data.aliases) ? data.aliases : (data.alias ? [data.alias] : []),
           channels: data.channels && typeof data.channels === "object" ? data.channels : {},
+          notes: data.notes,
+          tags: data.tags,
+          pinned: data.pinned,
+          // The editor always sends the complete alias list, so removing one actually removes it.
+          replaceAliases: data.replaceAliases === true,
         });
-        sendJson(res, 200, { contact: saved });
+        sendJson(res, 200, { contact: decorateContact(saved) });
       } catch (error) {
         sendJson(res, 400, { error: error.message });
       }
       return;
     }
+
+    // The cached face. Served from disk, never redirected to the remote CDN — the stored bytes are
+    // the whole point, and a redirect would put an expiring signed URL back in the page.
+    const avatarMatch = pathname.match(/^\/api\/contacts\/([^/]+)\/avatar$/);
+    if (req.method === "GET" && avatarMatch) {
+      const file = contactAvatars.existingFor(avatarMatch[1]);
+      if (!file) { sendJson(res, 404, { error: "No avatar is cached for that contact." }); return; }
+      const bytes = fs.readFileSync(file);
+      res.writeHead(200, {
+        "Content-Type": contactAvatars.contentTypeFor(file),
+        "Content-Length": bytes.length,
+        "Cache-Control": "private, max-age=60",
+      });
+      res.end(bytes);
+      return;
+    }
+    if (req.method === "POST" && avatarMatch) {
+      const contact = contactStore.get(avatarMatch[1]);
+      if (!contact) { sendJson(res, 404, { error: "No contact with that id." }); return; }
+      const data = await parseRequestData(req);
+      // Either the owner supplies the image, or we use the one already observed on their profile.
+      const known = Object.values(contact.channels || {}).map((account) => account?.avatarUrl).find(Boolean);
+      const source = String(data?.imageUrl || known || "").trim();
+      if (!source) {
+        sendJson(res, 422, { error: "No image URL is known for this contact yet. Open their profile once, or paste an image URL." });
+        return;
+      }
+      try {
+        const stored = await contactAvatars.store(contact.id, source);
+        contactStore.setAvatarPath(contact.id, stored.path);
+        sendJson(res, 200, { contact: decorateContact(contactStore.get(contact.id)), bytes: stored.bytes, kind: stored.kind });
+      } catch (error) {
+        sendJson(res, 502, { error: error.message });
+      }
+      return;
+    }
+    if (req.method === "DELETE" && avatarMatch) {
+      const cleared = contactAvatars.clear(avatarMatch[1]);
+      contactStore.setAvatarPath(avatarMatch[1], "");
+      sendJson(res, 200, { cleared });
+      return;
+    }
+
     const contactDeleteMatch = pathname.match(/^\/api\/contacts\/([^/]+)$/);
     if (req.method === "DELETE" && contactDeleteMatch) {
+      // The face outlives the contact otherwise, and the id would be reused by nobody — it is just
+      // an orphaned picture of a real person sitting on disk.
+      contactAvatars.clear(contactDeleteMatch[1]);
       sendJson(res, 200, { removed: contactStore.remove(contactDeleteMatch[1]) });
       return;
     }

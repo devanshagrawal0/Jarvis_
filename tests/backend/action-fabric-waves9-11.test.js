@@ -17,8 +17,16 @@ test("Wave 9: Runtime task lifecycle supports pause, correction, takeover, retur
 });
 
 test("Wave 9: Runtime is the only added widget and has exactly the three spatial states",()=>{
-  const strip=fs.readFileSync(path.join(__dirname,"../../src/globe-room/WidgetStrip.tsx"),"utf8");const launcher=fs.readFileSync(path.join(__dirname,"../../src/globe-room/WidgetLauncher.tsx"),"utf8");const frame=fs.readFileSync(path.join(__dirname,"../../src/globe-room/SpatialWidgetFrame.tsx"),"utf8");
-  assert.equal((strip.match(/id: "runtime"/g)||[]).length,1);assert.equal((launcher.match(/id: "runtime"/g)||[]).length,1);
+  // This used to require exactly one `id: "runtime"` in BOTH WidgetStrip and WidgetLauncher, which
+  // enforced the intent ("registered once") by encoding the accident that the list was written out
+  // twice. The two copies were already drifting. There is now one registry, so the check is that
+  // runtime is declared once there and that neither consumer has grown its own copy back.
+  const registry=fs.readFileSync(path.join(__dirname,"../../src/globe-room/widget-registry.ts"),"utf8");const strip=fs.readFileSync(path.join(__dirname,"../../src/globe-room/WidgetStrip.tsx"),"utf8");const launcher=fs.readFileSync(path.join(__dirname,"../../src/globe-room/WidgetLauncher.tsx"),"utf8");const frame=fs.readFileSync(path.join(__dirname,"../../src/globe-room/SpatialWidgetFrame.tsx"),"utf8");
+  assert.equal((registry.match(/id: "runtime"/g)||[]).length,1,"runtime must be declared exactly once, in the registry");
+  for(const [name,source] of [["WidgetStrip",strip],["WidgetLauncher",launcher]]){
+    assert.equal((source.match(/id: "runtime"/g)||[]).length,0,`${name} must not re-declare widgets — it imports the registry`);
+    assert.match(source,/from "\.\/widget-registry"/,`${name} must import the shared registry`);
+  }
   assert.match(frame,/"minimized" \| "normal" \| "expanded"/);assert.doesNotMatch(frame,/"detached"|"docked"|"monitor"/);
 });
 

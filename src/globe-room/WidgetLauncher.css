@@ -1,0 +1,286 @@
+/* Module Deck — the launcher for everything Jarvis can put on screen.
+ *
+ * It replaced a 220px column of seventeen identical rows: no search for a list too long to scan, no
+ * grouping, nothing saying what any of them did, and no way to tell what was already open. It read
+ * as a debug menu attached to a cinematic scene.
+ *
+ * The panel sits above the command bar it belongs to, and its colours are taken from the scene
+ * behind it — deep blue glass, cyan hairlines — so it reads as part of the console rather than a
+ * dialog dropped on top of it. Corners are tight (10px), borders are hairlines, and the only strong
+ * colour is the per-group accent, which is what lets a group be recognised before it is read.
+ */
+
+/* Just enough to push the scene back and stop the eye wandering into it — not a blackout. The globe
+ * is the best thing on screen; dimming it to near-black to show a menu trades the whole atmosphere
+ * for contrast that a hairline border already provides. */
+.jml-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1190;
+  background: radial-gradient(120% 90% at 50% 100%, rgba(2, 10, 20, .16), rgba(1, 5, 11, .34));
+  animation: jmlFade .16s ease both;
+}
+
+.jml {
+  position: fixed;
+  left: 50%;
+  bottom: calc(4.5vh + 104px);
+  transform: translateX(-50%);
+  z-index: 1200;
+  width: min(680px, calc(100vw - 32px));
+  max-height: min(62vh, 620px);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid rgba(96, 208, 255, .16);
+  border-radius: 12px;
+  background:
+    radial-gradient(90% 120% at 50% 0%, rgba(24, 62, 96, .38), transparent 62%),
+    linear-gradient(180deg, rgba(5, 17, 30, .96), rgba(3, 10, 19, .97));
+  backdrop-filter: blur(26px);
+  -webkit-backdrop-filter: blur(26px);
+  box-shadow: 0 26px 70px rgba(0, 0, 0, .62), inset 0 1px 0 rgba(130, 224, 255, .09);
+  color: #dff4fb;
+  font-family: Inter, "Segoe UI", system-ui, sans-serif;
+  animation: jmlRise .2s cubic-bezier(.2, .8, .3, 1) both;
+}
+
+.jml * { box-sizing: border-box; }
+
+@keyframes jmlFade { from { opacity: 0 } to { opacity: 1 } }
+@keyframes jmlRise { from { opacity: 0; transform: translateX(-50%) translateY(10px) } to { opacity: 1; transform: translateX(-50%) translateY(0) } }
+
+@media (prefers-reduced-motion: reduce) {
+  .jml, .jml-backdrop { animation: none; }
+  .jml-tile { transition: none !important; }
+}
+
+/* ── header ─────────────────────────────────────────────────────────────── */
+
+.jml-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 13px 15px 11px;
+  border-bottom: 1px solid rgba(96, 208, 255, .1);
+}
+
+.jml-head b {
+  font: 600 9.5px Orbitron, sans-serif;
+  letter-spacing: .18em;
+  text-transform: uppercase;
+  color: #6fdcff;
+}
+
+.jml-count {
+  padding: 2px 7px;
+  border: 1px solid rgba(96, 208, 255, .18);
+  border-radius: 999px;
+  color: rgba(223, 244, 251, .5);
+  font-size: 9px;
+  font-variant-numeric: tabular-nums;
+}
+
+.jml-hint {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  color: rgba(223, 244, 251, .34);
+  font-size: 9px;
+}
+
+/* The words belong to the key before them, so the gap after a word must be wider than the gap
+ * inside a pair. Without this it reads as one run-on string. */
+.jml-hint em { font-style: normal; margin: 0 9px 0 1px; }
+.jml-hint em:last-child { margin-right: 0; }
+
+.jml-hint kbd {
+  padding: 1px 5px;
+  border: 1px solid rgba(96, 208, 255, .18);
+  border-radius: 4px;
+  background: rgba(96, 208, 255, .05);
+  font: 600 8.5px ui-monospace, "Courier New", monospace;
+  color: rgba(223, 244, 251, .58);
+}
+
+.jml-x {
+  padding: 3px 6px;
+  border: 0;
+  border-radius: 5px;
+  background: none;
+  color: rgba(223, 244, 251, .45);
+  font-size: 15px;
+  line-height: 1;
+  cursor: pointer;
+  min-height: auto;
+}
+.jml-x:hover { color: #dff4fb; background: rgba(96, 208, 255, .08); }
+
+/* ── search ─────────────────────────────────────────────────────────────── */
+
+.jml-search {
+  position: relative;
+  padding: 11px 15px 9px;
+  border-bottom: 1px solid rgba(96, 208, 255, .08);
+}
+
+.jml-search input {
+  width: 100%;
+  padding: 9px 12px 9px 30px;
+  border: 1px solid rgba(96, 208, 255, .16);
+  border-radius: 8px;
+  background: rgba(2, 11, 21, .8);
+  color: #e8f9ff;
+  font-size: 12px;
+  outline: none;
+}
+.jml-search input::placeholder { color: rgba(223, 244, 251, .3); }
+.jml-search input:focus { border-color: rgba(96, 208, 255, .42); box-shadow: 0 0 0 3px rgba(72, 216, 255, .07); }
+
+.jml-search i {
+  position: absolute;
+  left: 26px;
+  top: 50%;
+  transform: translateY(-42%);
+  color: rgba(111, 220, 255, .5);
+  font-size: 12px;
+  font-style: normal;
+  pointer-events: none;
+}
+
+/* ── body ───────────────────────────────────────────────────────────────── */
+
+/* Seventeen modules will not fit whatever the height, so the list scrolls — but a tile sliced in
+ * half by a hard panel edge reads as a rendering bug, not as "there is more below". The mask fades
+ * the last few pixels so the cut is obviously a horizon. */
+.jml-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 6px 15px 18px;
+  -webkit-mask-image: linear-gradient(180deg, #000 0, #000 calc(100% - 26px), transparent 100%);
+  mask-image: linear-gradient(180deg, #000 0, #000 calc(100% - 26px), transparent 100%);
+}
+.jml-body::-webkit-scrollbar { width: 8px; }
+.jml-body::-webkit-scrollbar-thumb { border-radius: 99px; background: rgba(96, 208, 255, .14); }
+
+.jml-group { margin-top: 12px; }
+
+.jml-group > header {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin-bottom: 7px;
+}
+
+.jml-group > header span {
+  font: 600 8px Orbitron, sans-serif;
+  letter-spacing: .2em;
+  text-transform: uppercase;
+  color: var(--jml-accent);
+}
+
+/* The rule carries the group's accent so the eye groups the tiles below it without reading. */
+.jml-group > header i {
+  flex: 1;
+  height: 1px;
+  background: linear-gradient(90deg, color-mix(in srgb, var(--jml-accent) 34%, transparent), transparent);
+}
+
+.jml-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+
+/* ── tile ───────────────────────────────────────────────────────────────── */
+
+.jml-tile {
+  position: relative;
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+  padding: 9px 10px;
+  border: 1px solid rgba(96, 208, 255, .09);
+  border-radius: 10px;
+  background: rgba(9, 24, 40, .5);
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color .13s ease, background .13s ease, transform .13s ease;
+}
+
+.jml-tile:hover,
+.jml-tile[data-cursor="true"] {
+  border-color: color-mix(in srgb, var(--jml-accent) 42%, transparent);
+  background: rgba(16, 40, 63, .62);
+  transform: translateY(-1px);
+}
+
+.jml-tile:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--jml-accent) 70%, transparent);
+  outline-offset: 2px;
+}
+
+.jml-glyph {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  border: 1px solid color-mix(in srgb, var(--jml-accent) 26%, transparent);
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--jml-accent) 9%, transparent);
+  color: var(--jml-accent);
+  font-size: 14px;
+}
+
+.jml-text { min-width: 0; }
+
+.jml-text strong {
+  display: block;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: rgba(232, 249, 255, .93);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.jml-text small {
+  display: block;
+  margin-top: 2px;
+  font-size: 9.5px;
+  line-height: 1.35;
+  color: rgba(223, 244, 251, .42);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Knowing what is already on screen is the difference between opening a thing and hunting for the
+ * window you already opened. */
+.jml-open {
+  position: absolute;
+  top: 8px;
+  right: 9px;
+  padding: 1px 5px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--jml-accent) 16%, transparent);
+  color: var(--jml-accent);
+  font: 600 7px Orbitron, sans-serif;
+  letter-spacing: .12em;
+}
+
+.jml-tile[data-open="true"] { border-color: color-mix(in srgb, var(--jml-accent) 30%, transparent); }
+.jml-tile[data-open="true"] .jml-text small { color: rgba(223, 244, 251, .3); }
+
+.jml-empty {
+  padding: 30px 12px;
+  text-align: center;
+  color: rgba(223, 244, 251, .38);
+  font-size: 11px;
+}
+.jml-empty b { display: block; margin-bottom: 4px; color: rgba(232, 249, 255, .72); font-weight: 600; }
+
+@media (max-width: 560px) {
+  .jml-grid { grid-template-columns: 1fr; }
+  .jml-hint { display: none; }
+}
