@@ -32,8 +32,12 @@ const { compileOutcome, resolveExecutableTask } = await import("../server/automa
 // verifying against clean phrasing would prove nothing about what really happens.
 //
 //   node scripts/verify-send-pipeline.mjs "<recipient>" "<message>"
-const RECIPIENT = process.argv[2] || process.env.VERIFY_RECIPIENT || "";
-const MESSAGE = process.argv[3] || process.env.VERIFY_MESSAGE || "hi";
+// --approve carries the owner's approval through to the pending commit. Without it the script stops
+// at the boundary and sends nothing, which is the default and the normal use.
+const APPROVE = process.argv.includes("--approve");
+const positional = process.argv.slice(2).filter((a) => !a.startsWith("--"));
+const RECIPIENT = positional[0] || process.env.VERIFY_RECIPIENT || "";
+const MESSAGE = positional[1] || process.env.VERIFY_MESSAGE || "hi";
 if (!RECIPIENT) {
   console.error('usage: node scripts/verify-send-pipeline.mjs "<recipient>" ["<message>"]');
   process.exit(1);
@@ -74,7 +78,9 @@ const onStep = async (s) => {
 console.log("\n2. LIVE RUN (stops at the approval boundary; sends nothing)");
 let result;
 try {
-  result = await agent.execute(resolved.executableTask, { taskId: `verify-${Date.now()}`, startUrl: "https://www.instagram.com/direct/inbox/", maxSteps: 18, onStep });
+  // keepBrowserOpen so the task page — and therefore the pending action's element reference —
+  // survives long enough for approval to act on it.
+  result = await agent.execute(resolved.executableTask, { taskId: `verify-${Date.now()}`, startUrl: "https://www.instagram.com/direct/inbox/", maxSteps: 18, onStep, keepBrowserOpen: true });
 } catch (error) {
   result = { success: false, error: `threw: ${error.message}` };
 }
@@ -120,6 +126,33 @@ try {
   const found = findMessageComposer(snap.elements || []);
   console.log(`\n   composer detection on the live page: ${found ? `${found.element.ref} (${found.basis})` : "NOT FOUND"}`);
 } catch { /* the task page may already be released */ }
+
+// ── 4. approval, only when the owner asked for it on this invocation ─────────
+//
+// The element reference in the pending action belongs to THIS browser session, so approval has to
+// happen here, before the browser closes. Replaying a saved descriptor later resolves a ref that no
+// longer exists.
+if (APPROVE && result.requiresConfirmation && result.pendingAction) {
+  const commit = result.pendingAction.pendingAction || {};
+  console.log(`\n4. APPROVING — ${commit.action} on ${JSON.stringify(String(commit.label).slice(0, 80))}`);
+  const sent = await agent.execute(resolved.executableTask, {
+    resume: result.pendingAction,
+    approvedExternal: true,
+    maxSteps: 8,
+    onStep,
+    keepBrowserOpen: true,
+  });
+  console.log(`\n   success   : ${sent.success === true}`);
+  console.log(`   result    : ${String(sent.result || sent.error || "").slice(0, 260)}`);
+  const committed = (sent.history || sent.steps || []).filter((h) => h.committed === true && h.ok !== false);
+  check("the approved action was committed", committed.length === 1, `${committed.length} commits`);
+  // The page's own record, not the agent's claim about it.
+  const proof = (sent.evidence || []).filter((e) => e.kind === "post-commit-observation");
+  const visible = proof.some((e) => new RegExp(`(^|\\s)${MESSAGE}(\\s|$)`, "i").test(String(e.pageText || "")));
+  check("the sent message is visible in the conversation afterwards", visible,
+    proof.length ? "checked the post-send page text" : "no post-commit observation captured");
+  check("the run reports success", sent.success === true, String(sent.error || "").slice(0, 120));
+}
 
 await browser.close().catch(() => null);
 
