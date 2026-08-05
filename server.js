@@ -8,6 +8,7 @@ const { URL, URLSearchParams } = require("url");
 const QRCode = require("qrcode");
 const { createCapabilityEngine } = require("./server/capability-engine");
 const { createSecretStore } = require("./server/secret-store");
+const { classifyToolResults, summaryPrefix } = require("./server/tool-result-honesty");
 const { createRequestTrust } = require("./server/request-trust");
 // Cortex v4 — single Gemini model registry (verified available on this key).
 const { MODELS: GEMINI_MODELS, strengthProfile: geminiStrengthProfile, resolveCortexExecution } = require("./server/gemini-models");
@@ -2473,10 +2474,15 @@ function compactToolValue(value, depth = 0) {
   return entries.map(([key, item]) => `${key}: ${compactToolValue(item, depth + 1)}`).join(", ");
 }
 
+// "observe" tools read the world; they never change it. The registry already tiers every tool, so
+// the honesty rule keys off that rather than a hand-maintained list that would drift.
+function observeOnlyTools() {
+  const definitions = Array.isArray(capabilityEngine?.definitions) ? capabilityEngine.definitions : [];
+  return new Set(definitions.filter((item) => item.risk === "observe").map((item) => item.name));
+}
+
 function summarizeVerifiedToolResults(toolResults) {
-  const confirmations = toolResults.filter((item) => item.status === "confirmation_required");
-  const completed = toolResults.filter((item) => item.ok);
-  const failed = toolResults.filter((item) => !item.ok && item.status !== "confirmation_required");
+  const { confirmations, completed, failed, effective } = classifyToolResults(toolResults, observeOnlyTools());
   const lines = [];
   for (const item of completed) {
     if (item.tool === "screen_capture") {
@@ -2524,12 +2530,7 @@ function summarizeVerifiedToolResults(toolResults) {
   }
   for (const item of failed) lines.push(`${item.tool} failed: ${item.error || "the adapter returned an error"}.`);
   if (!lines.length) return "The request did not produce a verified tool result.";
-  const prefix = completed.length
-    ? "Done, sir. The verified result is:"
-    : confirmations.length
-      ? "Ready, sir."
-      : "I could not complete the requested action.";
-  return `${prefix}\n\n${lines.map((line) => `- ${line}`).join("\n")}`;
+  return `${summaryPrefix({ effective, confirmations, completed })}\n\n${lines.map((line) => `- ${line}`).join("\n")}`;
 }
 
 function collectSourcesFromEvidence(toolResults = [], groundingMetadata = {}) {

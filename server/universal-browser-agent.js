@@ -284,7 +284,18 @@ function deterministicDecision({ outcome, snapshot, history = [], entityHints = 
       model: "local-semantic-fast-path",
     };
   }
-  if (person && !filledPerson) {
+  // `!identityChosen` matters as much as `!filledPerson`. Without it, a run that had ALREADY opened
+  // the right conversation went back and searched for the person again.
+  //
+  // That is the whole shape of the failed Raghav send. Step 2 clicked his thread and landed on
+  // /direct/t/17847063437627518/ — correct chat, composer on screen. Step 3 typed "Raghav" into
+  // search anyway, step 4 clicked a search result that opened his PROFILE, step 5 navigated back to
+  // the inbox, step 6 clicked "Next", step 7 reopened the thread, and steps 8-11 gave up and read
+  // the page three times. It never typed a single character of the message.
+  //
+  // Searching is how you FIND someone. Once their conversation is open, the next thing to do is
+  // write; searching again just leaves the place you needed to be.
+  if (person && !filledPerson && !identityChosen) {
     const target = elements.find((item) => {
       const role = normalized(item.role || item.tag);
       const label = normalized([item.name, item.placeholder, item.ariaLabel].filter(Boolean).join(" "));

@@ -13,6 +13,7 @@ const { createPcKnowledgeGraph } = require("./pc-knowledge-graph");
 const { createSkillAutopilot } = require("./skill-autopilot");
 const { createComputerUse } = require("./computer-use");
 const { createUniversalBrowserAgent } = require("./universal-browser-agent");
+const { PREPARE_ONLY_PHRASE } = require("./automation/outcome-compiler");
 
 const execFileAsync = promisify(execFile);
 const CONFIRMATIONS_FILE = "confirmations.json";
@@ -703,7 +704,7 @@ function createCapabilityEngine({
       question: { type: "STRING", description: "What to look for or analyze on screen. Omit for a general description of everything visible." },
     } } },
     { name: "computer_use", description: description("computer_use"), parameters: { type: "OBJECT", properties: {
-      task: { type: "STRING", description: "Natural language task to execute visually on screen, e.g. 'search YouTube for lo-fi music and play the first result' or 'open Instagram DMs and send Avery a message saying hey'." },
+      task: { type: "STRING", description: "Natural language task to execute visually on screen, e.g. 'search YouTube for lo-fi music and play the first result' or 'open Instagram DMs and send Avery a message saying hey'. State the outcome the owner asked for and nothing more. NEVER append your own safety wording such as 'leave it unsent', 'do not click Send' or 'stop before sending' — the runtime already pauses every send, post, like, purchase and delete at the final control for the owner's approval, and that wording cancels the send outright so the owner is never asked. If the owner explicitly wants a draft, put the text in prepareOnlyText instead." },
       maxSteps: { type: "INTEGER", description: "Maximum automation steps, 1 to 25. Defaults to 15." },
       startUrl: { type: "STRING", description: "Optional already-open HTTPS surface to keep re-focused during visible browser automation." },
       prepareOnlyText: { type: "STRING", description: "Optional exact draft text that may be prepared but must never be submitted during this capability call." },
@@ -2598,6 +2599,19 @@ function createCapabilityEngine({
       if (/\b(password|captcha|purchase|buy|sell|trade|submit.*payment|pay|checkout|wire|bank|delete account)\b/i.test(task)) {
         throw errorWithStatus("computer_use blocked a sensitive or financial action. Use an explicit approved workflow instead.", 403);
       }
+      // The planner writes the task string, and it kept writing its own caution INTO it:
+      // asked "send raghav hi on instagram", it produced
+      //   "...type 'hi' into the message input, and leave it unsent at the exact Send button."
+      // The outcome compiler reads that phrase and clears the commit, so the run never reaches the
+      // approval boundary at all. The owner asked to send, the planner quietly demoted it to a
+      // draft, and nothing ever asked the owner anything. Caution that removes the owner's choice
+      // is not caution.
+      //
+      // Draft-only has a designated channel — the `prepareOnlyText` parameter — which the owner's
+      // own wording routes into. Prose in `task` with that parameter unset is the planner
+      // editorialising, and it is recorded so the result can say so instead of reporting "done".
+      const ownerRequestedDraft = Boolean(cleanString(args.prepareOnlyText || args.prepare_only_text, 2000));
+      const plannerDemotedTheSend = !ownerRequestedDraft && PREPARE_ONLY_PHRASE.test(task);
       const complexitySignals = (task.match(/\b(?:then|after|across|multiple|compare|analyse|analyze|evidence|source|different|tabs?|report|download|upload|repository|workflow)\b/gi) || []).length;
       const defaultMaxSteps = complexitySignals >= 6 ? 40 : complexitySignals >= 3 ? 32 : 24;
       const maxSteps = Math.min(asNumber(args.maxSteps || args.max_steps, defaultMaxSteps, 1, 40), 40);
@@ -2670,7 +2684,14 @@ function createCapabilityEngine({
       // fallback below turned a specific, actionable reason into "computer_use completed without
       // verifying the requested outcome.", which is the sentence the owner actually saw. Same
       // defect class as B-13 in run_command: the reason existed and was dropped at the boundary.
-      return { ok: result.success, task, result: result.result, error: result.error || null, blocked: result.blocked || false, candidates: result.candidates || null, steps: stepLog.length ? stepLog : result.history || result.steps || [], evidence: result.evidence || [], statePath: result.statePath || null, taskId: result.taskId || automationOptions.taskId || null, stepsCompleted: result.stepsCompleted, mode: result.mode, finalUrl: result.finalUrl || null, finalTitle: result.finalTitle || null, reveal };
+      // A run the planner demoted to a draft did not do what the owner asked, however cleanly it
+      // finished. `completed: false` routes it away from the "Done, sir." sentence and the reason
+      // travels with it, so the owner learns their send became a draft instead of being told it
+      // succeeded.
+      const demotionNotice = plannerDemotedTheSend
+        ? "The task text told the browser to stop before sending, so nothing was sent. That restriction was added by the planner, not requested. Ask again to send it for real."
+        : null;
+      return { ok: result.success, task, result: result.result, error: result.error || demotionNotice, blocked: result.blocked || false, candidates: result.candidates || null, completed: plannerDemotedTheSend ? false : undefined, plannerDemotedTheSend, steps: stepLog.length ? stepLog : result.history || result.steps || [], evidence: result.evidence || [], statePath: result.statePath || null, taskId: result.taskId || automationOptions.taskId || null, stepsCompleted: result.stepsCompleted, mode: result.mode, finalUrl: result.finalUrl || null, finalTitle: result.finalTitle || null, reveal };
     },
     screen_locate: async (args) => {
       if (!computerUse) throw errorWithStatus("screen_locate requires screen capture.", 412);

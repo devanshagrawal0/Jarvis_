@@ -54,6 +54,13 @@ function maskCommitNouns(text) {
   return String(text || "").replace(NOUN_PHRASE, MASK);
 }
 
+// Phrases that turn a requested send into a draft. Exported because two callers must agree
+// exactly: this compiler, which cancels the commit when the phrase is present, and the
+// `computer_use` handler, which needs to know whether the PLANNER added it to a task the owner
+// asked to have sent. A second private copy of this pattern in the handler would drift, and the
+// drift would be invisible — the handler would stop flagging demotions that still happen here.
+const PREPARE_ONLY_PHRASE = /\b(?:draft only|prepare only|do not send|don'?t send|do not click send|without (?:clicking )?(?:send|sending)|without submitting|leave (?:it|this|the message) unsent|stop before (?:send|sending)|do not transmit|without transmitting)\b/i;
+
 function clauses(text) {
   return String(text || "")
     .split(/\b(?:then|after that|afterwards|next|and then|finally)\b|[;\n]+/i)
@@ -168,7 +175,7 @@ function fileReferences(text) {
 function commitFor(text) {
   const classifiable = maskCommitNouns(text);
   const intended = [...new Set(COMMIT_TYPES.filter(([, pattern]) => pattern.test(classifiable)).map(([type]) => type))];
-  const explicitlyPrepareOnly = /\b(?:draft only|prepare only|do not send|don'?t send|do not click send|without (?:clicking )?(?:send|sending)|without submitting|leave (?:it|this|the message) unsent|stop before (?:send|sending)|do not transmit|without transmitting)\b/i.test(text);
+  const explicitlyPrepareOnly = PREPARE_ONLY_PHRASE.test(text);
   const matches = explicitlyPrepareOnly ? intended.filter((type) => !["send", "submit"].includes(type)) : intended;
   // `intended` is what the owner asked for before the prepare-only filter removes the terminal
   // step. A draft-only task still needs its message payload extracted, so downstream consumers key
@@ -239,4 +246,4 @@ function compileOutcome(objective, options = {}) {
   };
 }
 
-module.exports = { COMMIT_TYPES, SITE_ALIASES, clauses, compileOutcome, deliveryFor, probablePeople, requestedMessages };
+module.exports = { COMMIT_TYPES, PREPARE_ONLY_PHRASE, SITE_ALIASES, clauses, compileOutcome, deliveryFor, probablePeople, requestedMessages };
