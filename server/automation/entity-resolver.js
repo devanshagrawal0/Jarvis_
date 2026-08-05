@@ -91,8 +91,28 @@ function uniqueIdentityCandidates(candidates = []) {
   });
 }
 
+// ARIA landmarks are page structure: the region everything sits inside, never a person or a thing
+// you can pick. Their accessible text is the concatenation of everything they contain, so a query
+// for a name matches the landmark exactly as well as it matches the row that actually holds it.
+//
+// Measured on a real Instagram inbox, a contact's full name ranked three candidates at 0.940 each:
+//
+//   e12  role=main        the whole page container
+//   e13  role=navigation  "Thread list", the container of every conversation
+//   e37  role=button      the actual conversation row
+//
+// Three-way tie, margin 0.000, so the resolver refused a completely unambiguous page and the task
+// died with "Top match margin 0.000 is insufficient for a consequential action." The guard was
+// working perfectly; it was being fed nonsense candidates.
+const LANDMARK_ROLES = new Set(["main", "navigation", "banner", "contentinfo", "complementary", "region", "document", "application", "presentation", "none", "list", "table", "grid", "tablist", "toolbar", "menubar", "feed", "search", "form"]);
+
+function isLandmark(element = {}) {
+  return LANDMARK_ROLES.has(normalize(element.role));
+}
+
 function rankCandidates(query, elements = [], { threshold = 0.38, limit = 8 } = {}) {
   return elements
+    .filter((element) => !isLandmark(element))
     .map((element) => ({ ...element, matchScore: Number(scoreCandidate(query, element).toFixed(4)) }))
     .filter((item) => item.matchScore >= threshold)
     .sort((left, right) => right.matchScore - left.matchScore)

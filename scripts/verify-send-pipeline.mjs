@@ -67,15 +67,31 @@ check("send intent survived the planner", outcome.commit.required === true);
 const browser = createBrowserAutomationService({ runtimeDir: RUNTIME_DIR, workspaceRoot: ROOT, headless: true, channel: undefined });
 const agent = createUniversalBrowserAgent({ browserService: browser, runtimeDir: RUNTIME_DIR, getSettings: () => ({ geminiKey }) });
 
+// Timing, because "does it work" and "is it usable" are different questions. Each line carries the
+// elapsed time since the run started, so a slow phase is visible rather than inferred.
 const steps = [];
+let runStarted = 0;
 const onStep = async (s) => {
   if (s.phase === "planned" || s.phase === "observed") return;
-  steps.push(s);
-  const target = String(s.targetName || s.ref || s.url || "").replace(/\s+/g, " ").slice(0, 58);
-  console.log(`   [${String(s.step).padStart(2)}] ${String(s.phase).padEnd(17)} ${String(s.action || "").padEnd(9)} ${target}${s.error ? `  !! ${String(s.error).slice(0, 70)}` : ""}`);
+  steps.push({ ...s, atMs: Date.now() - runStarted });
+  const target = String(s.targetName || s.ref || s.url || "").replace(/\s+/g, " ").slice(0, 52);
+  const at = `${String(((Date.now() - runStarted) / 1000).toFixed(1)).padStart(5)}s`;
+  console.log(`   ${at} [${String(s.step).padStart(2)}] ${String(s.phase).padEnd(16)} ${String(s.action || "").padEnd(9)} ${target}${s.error ? `  !! ${String(s.error).slice(0, 60)}` : ""}`);
+};
+
+// Production's own planner trace, so latency comes from the code under test.
+const plannerCalls = [];
+const realLog = console.log;
+console.log = (...args) => {
+  const line = args.map(String).join(" ");
+  const match = /^\[auto:planner\] (ok|fail|timeout) (\{.*\})$/.exec(line);
+  if (match) { try { plannerCalls.push({ result: match[1], ...JSON.parse(match[2]) }); } catch { } return; }
+  if (/^\[auto:(resolver|browser)\]/.test(line)) return;
+  realLog(...args);
 };
 
 console.log("\n2. LIVE RUN (stops at the approval boundary; sends nothing)");
+runStarted = Date.now();
 let result;
 try {
   // keepBrowserOpen so the task page — and therefore the pending action's element reference —
@@ -154,7 +170,22 @@ if (APPROVE && result.requiresConfirmation && result.pendingAction) {
   check("the run reports success", sent.success === true, String(sent.error || "").slice(0, 120));
 }
 
+const totalMs = Date.now() - runStarted;
 await browser.close().catch(() => null);
+console.log = realLog;
+
+console.log("\nTIMING");
+console.log(`   total wall clock            : ${(totalMs / 1000).toFixed(1)}s`);
+if (plannerCalls.length) {
+  const times = plannerCalls.map((c) => Number(c.durationMs) || 0);
+  const plannerMs = times.reduce((a, b) => a + b, 0);
+  console.log(`   planner: ${plannerCalls.length} call(s), ${(plannerMs / 1000).toFixed(1)}s total, ${Math.round(plannerMs / times.length)}ms avg, ${Math.max(...times)}ms worst`);
+  console.log(`   share of wall clock spent waiting on the model: ${Math.round((plannerMs / totalMs) * 100)}%`);
+  console.log(`   everything else (browser, page loads, DOM)   : ${Math.round(((totalMs - plannerMs) / totalMs) * 100)}%`);
+} else {
+  console.log("   planner: 0 calls — the deterministic fast path covered every step");
+}
+for (const s of steps) console.log(`   ${String((s.atMs / 1000).toFixed(1)).padStart(6)}s  ${s.phase} ${s.action || ""}`);
 
 console.log(`\n${"=".repeat(62)}`);
 for (const item of pass) console.log(`  PASS  ${item}`);
