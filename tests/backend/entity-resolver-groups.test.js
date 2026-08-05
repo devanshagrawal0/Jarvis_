@@ -17,6 +17,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 
 const { resolveEntity, hintsForOutcome } = require("../../server/automation/entity-resolver");
+const { deterministicDecision } = require("../../server/universal-browser-agent");
 
 const el = (ref, name) => ({ ref, role: "button", name });
 
@@ -104,16 +105,13 @@ test("group-only results block immediately rather than entering the load-wait lo
 test("the agent's fast path turns that into a blocked action carrying the reason", () => {
   // Drive the real deterministic fast path, so this asserts agent behaviour rather than
   // resolver behaviour. Reaching it requires the recipient name to have been typed already.
-  const source = fs.readFileSync(path.join(__dirname, "..", "..", "server", "universal-browser-agent.js"), "utf8");
-  const start = source.indexOf("function deterministicDecision(");
-  const end = source.indexOf("\n}\n", start) + 3;
-  // eslint-disable-next-line no-new-func
-  const decide = new Function("normalized", `${source.slice(start, end)}\nreturn deterministicDecision;`)(
-    (v) => String(v || "").toLowerCase().replace(/\s+/g, " ").trim(),
-  );
-
+  //
+  // This used to slice the function out of the source file and rebuild it with `new Function`,
+  // injecting a hand-written `normalized`. That exercised a re-parsed copy with substituted
+  // dependencies rather than the function production calls, and it broke the moment the real one
+  // referenced a helper the harness did not know to inject. The function is exported; import it.
   const hint = { kind: "person", query: "tg", ...resolveEntity("tg", SEARCH_RESULTS, { singleRecipient: true }) };
-  const decision = decide({
+  const decision = deterministicDecision({
     outcome: { entities: { people: ["tg"] } },
     snapshot: { elements: SEARCH_RESULTS },
     history: [{ action: "fill", value: "tg", ok: true }],

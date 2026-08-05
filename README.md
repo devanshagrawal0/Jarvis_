@@ -9,7 +9,7 @@
 <p>
 <img alt="License" src="https://img.shields.io/badge/license-MIT-22d3ee?style=flat-square" />
 <img alt="Node" src="https://img.shields.io/badge/node-%E2%89%A520-3fd0ff?style=flat-square" />
-<img alt="Tests" src="https://img.shields.io/badge/tests-534%20passing-4aff9e?style=flat-square" />
+<img alt="Tests" src="https://img.shields.io/badge/tests-542%20passing-4aff9e?style=flat-square" />
 <img alt="Lines" src="https://img.shields.io/badge/code-167k%20lines-9e4aff?style=flat-square" />
 <img alt="Platform" src="https://img.shields.io/badge/platform-Windows%20%7C%20Web-a98bff?style=flat-square" />
 </p>
@@ -103,7 +103,7 @@ The engineering theme running through the codebase is **verifiability**. The ass
 
 **Phone pairing over automatic tunnel.** A Cloudflare Quick Tunnel starts with the server so a phone can pair from any network with no configuration. Pairing is a six-character code plus a server-rendered QR, with permission tiers chosen at approval time.
 
-**Verified test suite.** 534 passing and 1 skipped across 73 files on Node's built-in runner, written under a mutation-testing discipline: a fix is not accepted until the original defect is reinstated and the new test is confirmed to fail.
+**Verified test suite.** 542 passing and 1 skipped across 74 files on Node's built-in runner, written under a mutation-testing discipline: a fix is not accepted until the original defect is reinstated and the new test is confirmed to fail.
 
 ---
 
@@ -242,7 +242,7 @@ npm run app:build:win    # portable Windows executable via electron-builder
 ### Verifying the install
 
 ```bash
-npm run test:backend     # 535 tests
+npm run test:backend     # 543 tests
 npm run check            # syntax check + typecheck + production build
 ```
 
@@ -585,7 +585,7 @@ Widgets share one frame implementation — draggable, resizable, with minimized,
 npm run dev              # frontend with HMR
 npm start                # backend
 npm run app:dev          # Electron desktop shell
-npm run test:backend     # 535 tests, single-threaded
+npm run test:backend     # 543 tests, single-threaded
 npm run check            # node --check + tsc --noEmit + vite build
 npm run test:feature     # Playwright feature specs
 ```
@@ -614,7 +614,7 @@ src/
     synapse/                cross-machine collaboration
   phone/                  paired phone interface
 electron/               desktop shell · takeover overlay
-tests/backend/          73 files · 535 tests
+tests/backend/          74 files · 543 tests
 scripts/                capture, checks, benchmarks
 docs/                   audit, specifications, screenshots
 ```

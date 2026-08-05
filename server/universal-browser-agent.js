@@ -184,7 +184,20 @@ function canonicalVisibleText(value) {
 function visiblyContains(value, expected) {
   const haystack = canonicalVisibleText(value);
   const needle = canonicalVisibleText(expected);
-  return Boolean(needle && ` ${haystack} `.includes(` ${needle} `));
+  if (!needle) return false;
+  if (` ${haystack} `.includes(` ${needle} `)) return true;
+  // Rendered text attaches punctuation to names and payloads constantly: a thread header reads
+  // "Tg." and a sent bubble reads "hi.". canonicalVisibleText preserves . _ and - on purpose,
+  // because handles depend on them — but that made an edge period defeat the match entirely.
+  //
+  // A false negative here is not the safe direction. This function is how the runtime decides
+  // whether an executed send is verified; failing to see a message that was in fact delivered
+  // makes the agent treat the send as unconfirmed and try again, so the owner receives it twice.
+  // Trimming punctuation only at token edges keeps "dev.agrawal" a single distinct token, so a
+  // query for "dev" still does not match it.
+  const trimEdges = (text) => text.split(" ").map((token) => token.replace(/^[._-]+/, "").replace(/[._-]+$/, "")).filter(Boolean).join(" ");
+  const trimmedNeedle = trimEdges(needle);
+  return Boolean(trimmedNeedle && ` ${trimEdges(haystack)} `.includes(` ${trimmedNeedle} `));
 }
 
 function inferredStepBudget(objective, outcome = {}) {
@@ -208,11 +221,27 @@ function deterministicDecision({ outcome, snapshot, history = [], entityHints = 
   const personHint = entityHints.find((item) => item.kind === "person");
   const exactPerson = personHint?.status === "resolved" && personHint.match?.ref ? personHint : null;
   const directAddressAccepted = Boolean(person?.includes("@") && filledPersonAction && /\b(to|recipient|email address)\b/i.test(filledPersonAction.targetName || ""));
+  // `identityChosen` is what unlocks the send step, so what counts as evidence for it matters more
+  // than anything else in this function.
+  //
+  // It used to accept the planner's own prose: a click whose `reason` matched
+  // /resolved|selected|exact/ near "recipient" and mentioned the name was enough. That is a check
+  // that cannot fail — the model writes its own passing grade, and a planner that clicks the wrong
+  // row while narrating "selected recipient tg" advances straight to the send control. Prose is a
+  // claim about the world, not an observation of it.
+  //
+  // `targetName` is different: the agent builds it from the snapshot element the click actually
+  // landed on (see the elementFor lookup below), so it is DOM-authored. That is real evidence.
+  // The prose branch survives only as a corroborated one — the planner may say it resolved the
+  // identity, but the page it produced must visibly name that person for the claim to count.
+  const personOnPage = Boolean(person && visiblyContains(snapshot?.pageText, person));
   const identityChosen = directAddressAccepted || Boolean(person && history.some((item) => {
     if (item.action !== "click" || item.ok === false) return false;
     const target = normalized(item.targetName);
+    if (target.includes(normalized(person))) return true;
     const reason = normalized(`${item.reason || ""} ${item.expected || ""}`);
-    return target.includes(normalized(person)) || (/\b(?:resolved|selected|exact)\s+(?:recipient|identity|person|profile)\b/.test(reason) && reason.includes(normalized(person)));
+    const claimed = /\b(?:resolved|selected|exact)\s+(?:recipient|identity|person|profile)\b/.test(reason) && reason.includes(normalized(person));
+    return claimed && personOnPage;
   }));
   const identityLoadWaits = history.filter((item) => item.action === "wait" && /identity search results/i.test(item.reason || "") && item.ok !== false).length;
   if (person && filledPerson && !identityChosen && personHint?.status === "not_found" && identityLoadWaits < 3) {
@@ -359,7 +388,16 @@ function completionProblems(state, snapshot) {
   if (state.outcome?.completionContract?.requireRecipientVerification) {
     const recipients = state.outcome?.entities?.people || [];
     const identityVisible = recipients.length === 0 || recipients.some((person) => visiblyContains(retainedVisibleProof, person));
-    const identityResolved = successful.some((item) => (item.action === "click" && /identity|conversation|recipient|chat/i.test(`${item.reason || ""} ${item.expected || ""}`))
+    // The same defect as `identityChosen`, and worse here because this is the last gate before a
+    // completion claim is accepted. The click branch matched /identity|conversation|recipient|chat/
+    // against the PLANNER'S OWN reason and expected fields, so "Open the chat list" satisfied
+    // "the intended recipient is evidenced" — a click on nothing in particular, described in
+    // passing, cleared the recipient check. This branch only runs when the recipient is NOT
+    // visible on the page, which is exactly when a model-authored claim is least trustworthy.
+    //
+    // `targetName` comes from the snapshot element the click landed on, and the fill branch already
+    // pairs a DOM-authored field label with the recipient's actual value. Both are observations.
+    const identityResolved = successful.some((item) => (item.action === "click" && recipients.some((person) => visiblyContains(item.targetName, person)))
       || (item.action === "fill" && /\b(to|recipient|email address)\b/i.test(item.targetName || "") && recipients.some((person) => normalized(person) === normalized(item.value))));
     if (!identityVisible && !identityResolved) problems.push("the intended recipient is not evidenced on the current page or in the verified action history");
   }
