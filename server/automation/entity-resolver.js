@@ -149,8 +149,14 @@ function resolveEntityInner(query, elements, options = {}) {
     if (groups.length) {
       const individuals = ranked.filter((item) => !candidateNamesMultipleParties(item));
       if (!individuals.length) {
+        // Deliberately "ambiguous", not "not_found". In the agent's fast path `not_found` means
+        // "the identity search has not finished loading" and triggers a wait-and-retry loop
+        // (universal-browser-agent.js:218). Group-only results are the opposite situation: the
+        // results HAVE loaded and none of them is acceptable, so waiting three more times finds
+        // nothing and only delays the refusal. "ambiguous" routes to the blocked branch, which
+        // surfaces this reason and the candidate list to the owner immediately.
         return {
-          status: "not_found",
+          status: "ambiguous",
           query,
           candidates: ranked,
           rejectedGroups: groups.length,
