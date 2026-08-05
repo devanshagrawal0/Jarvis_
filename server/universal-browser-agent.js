@@ -8,6 +8,7 @@ const { compileOutcome } = require("./automation/outcome-compiler");
 const { TaskWorldModel } = require("./automation/task-world-model");
 const { hintsForOutcome } = require("./automation/entity-resolver");
 const { createNavigationMemory } = require("./automation/navigation-memory");
+const { trace } = require("./automation/trace");
 
 const COMMIT_WORDS = /\b(send|like|unlike|post|publish|submit|follow|subscribe|delete|remove|purchase|buy|checkout|pay|transfer|confirm|create repository|create repo|book|reserve|apply)\b/i;
 const ACTIONS = new Set(["navigate", "click", "fill", "press", "select", "check", "uncheck", "hover", "scroll", "upload", "download", "find_file", "synthesize_report", "new_tab", "switch_tab", "go_back", "reload", "wait", "extract", "complete", "blocked"]);
@@ -522,10 +523,14 @@ Return ONLY JSON:
         const text = data.candidates?.[0]?.content?.parts?.map((part) => part.text || "").join("") || "";
         const parsed = parseJson(text);
         attempts.push({ model, ok: true, durationMs: Date.now() - attemptStarted, timeoutMs });
+        trace("planner", "ok", { model, durationMs: Date.now() - attemptStarted, timeoutMs, promptBytes: prompt.length, attempt: attempts.length });
         return { ...parsed, model, usage: data.usageMetadata || null, plannerLatencyMs: Date.now() - plannerStarted, plannerAttempts: attempts };
       } catch (error) {
         lastError = error;
         attempts.push({ model, ok: false, durationMs: Date.now() - attemptStarted, timeoutMs, error: clip(error.message, 180) });
+        // A timeout here is the single most common cause of a task dying with no useful
+        // reason. `promptBytes` vs `timeoutMs` is exactly the comparison that diagnoses it.
+        trace("planner", "fail", { model, durationMs: Date.now() - attemptStarted, timeoutMs, promptBytes: prompt.length, attempt: attempts.length, error: clip(error.message, 180) });
       } finally {
         clearTimeout(timer);
       }

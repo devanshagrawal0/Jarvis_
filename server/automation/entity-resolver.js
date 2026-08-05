@@ -1,5 +1,7 @@
 "use strict";
 
+const { trace } = require("./trace");
+
 function normalize(value) {
   return String(value || "").normalize("NFKD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[^a-z0-9@._ -]+/g, " ").replace(/\s+/g, " ").trim();
 }
@@ -98,7 +100,70 @@ function rankCandidates(query, elements = [], { threshold = 0.38, limit = 8 } = 
 }
 
 function resolveEntity(query, elements, options = {}) {
+  const outcome = resolveEntityInner(query, elements, options);
+  trace("resolver", outcome.status, {
+    query: String(query || "").length,            // length only — never the recipient's name
+    status: outcome.status,
+    reason: outcome.reason || null,
+    candidateCount: (outcome.candidates || []).length,
+    topScores: (outcome.candidates || []).slice(0, 4).map((c) => Number(c.matchScore || 0).toFixed(3)),
+    topRoles: (outcome.candidates || []).slice(0, 4).map((c) => String(c.role || c.tag || "?")),
+  });
+  return outcome;
+}
+
+// A label naming several people. Messaging surfaces render group threads as a joined list —
+// "Anjali Monga, Tg and Ignacio" — so a query for one person scores highly against a thread that
+// contains that person plus others.
+//
+// This was a live hole, not a theoretical one. `resolveEntity("tg", [group threads only])`
+// returned status "resolved" against "Anjali Monga, Tg and Ignacio" at 0.94: with a single ranked
+// candidate there is no runner-up to create a margin, so the `!second` branch admits it and a
+// send would have reached three people. The one real run that got this far refused only because
+// several candidates happened to tie at identical scores — protection by accident of the result
+// set, not by design.
+const MULTI_PARTY = /,|\band\b|&|\+\s*\d+\s*(?:others?|more)\b/i;
+
+function namesMultipleParties(label) {
+  const text = String(label || "").trim();
+  if (!text || !MULTI_PARTY.test(text)) return false;
+  // The separator must actually join name-like tokens, so "Sanders, Jr." or a single name that
+  // contains the letters "and" ("Alexander") is not misread as a group.
+  const parts = text.split(/\s*,\s*|\s+\band\b\s+|\s*&\s*/i).map((p) => p.trim()).filter(Boolean);
+  return parts.length > 1;
+}
+
+function candidateNamesMultipleParties(candidate) {
+  return candidateLabels(candidate).some((label) => namesMultipleParties(label));
+}
+
+function resolveEntityInner(query, elements, options = {}) {
   const ranked = rankCandidates(query, elements, options);
+
+  // When the owner named one recipient and the action commits something outward, a multi-party
+  // thread is never an acceptable resolution. Refusing costs a retry; sending costs a message to
+  // people who were never named. Callers opt in with `options.singleRecipient`, which commit-risk
+  // automation sets; read-only lookups are unaffected.
+  if (options.singleRecipient && !namesMultipleParties(query)) {
+    const groups = ranked.filter(candidateNamesMultipleParties);
+    if (groups.length) {
+      const individuals = ranked.filter((item) => !candidateNamesMultipleParties(item));
+      if (!individuals.length) {
+        return {
+          status: "not_found",
+          query,
+          candidates: ranked,
+          rejectedGroups: groups.length,
+          reason: `Only group conversations match "${query}". A message addressed to one person is not sent to a group.`,
+        };
+      }
+      return resolveFromCandidates(query, individuals, options);
+    }
+  }
+  return resolveFromCandidates(query, ranked, options);
+}
+
+function resolveFromCandidates(query, ranked, options = {}) {
   const exact = ranked.filter((item) => candidateLabels(item).some((label) => label === normalize(query)));
   const uniqueActionableContainer = () => {
     const actionable = uniqueIdentityCandidates(ranked.filter((item) => ["button", "link", "option", "menuitem", "radio"].includes(normalize(item.role || item.tag))
@@ -134,7 +199,15 @@ function resolveEntity(query, elements, options = {}) {
 
 function hintsForOutcome(outcome, snapshot) {
   const people = outcome?.entities?.people || [];
-  return people.map((person) => ({ kind: "person", query: person, ...resolveEntity(person, snapshot?.elements || []) }));
+  // `people` are individuals the task named, so each resolution is single-recipient by
+  // definition — that is what enables the group-thread guard. This is the only production caller
+  // of `resolveEntity`, so omitting the flag here would leave the guard as dead code.
+  // A query that itself names a group is detected inside and bypasses the guard.
+  return people.map((person) => ({
+    kind: "person",
+    query: person,
+    ...resolveEntity(person, snapshot?.elements || [], { singleRecipient: true }),
+  }));
 }
 
 module.exports = { candidateLabels, editDistance, hintsForOutcome, identityKey, jaccard, normalize, rankCandidates, resolveEntity, scoreCandidate, uniqueIdentityCandidates };

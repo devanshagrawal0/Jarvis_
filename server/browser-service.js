@@ -12,6 +12,7 @@ const {
   validateScreenshotName,
   validateSelector,
 } = require("./browser-validation");
+const { trace } = require("./automation/trace");
 
 const DEFAULT_TIMEOUT_MS = 8_000;
 const DEFAULT_NAVIGATION_TIMEOUT_MS = 12_000;

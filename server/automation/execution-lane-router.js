@@ -1,5 +1,7 @@
 "use strict";
 
+const { trace } = require("./trace");
+
 const SITE_START_URLS = Object.freeze({
   instagram: "https://www.instagram.com/direct/inbox/",
   whatsapp: "https://web.whatsapp.com/",
@@ -52,6 +54,19 @@ function browserOutcome(text) {
 }
 
 function routeExecutionLane(text, settings = {}) {
+  const lane = routeExecutionLaneInner(text, settings);
+  trace("lane", lane.lane, {
+    lane: lane.lane,
+    surface: lane.surface || null,
+    site: lane.site || null,
+    toolCount: (lane.tools || []).length,
+    tools: lane.tools || [],
+    promptChars: String(text || "").length,
+  });
+  return lane;
+}
+
+function routeExecutionLaneInner(text, settings = {}) {
   const prompt = String(text || "").trim();
   let site = siteFor(prompt);
   const email = emailIntent(prompt);
