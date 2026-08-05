@@ -2766,20 +2766,25 @@ function createCapabilityEngine({
       // between "Tg" and "Tg" — the same non-answer as refusing. Each candidate is opened and read
       // so the card can show the account behind it: handle, picture, thread. That costs a page load
       // per candidate and runs only here, where the alternative is a dead end.
-      const shouldOfferChoice = Boolean(result.blocked) && Boolean(namedPerson) && (result.candidates || []).length > 1;
+      const shouldOfferChoice = Boolean(result.blocked) && Boolean(namedPerson) && (result.candidates || []).length > 0;
       const identityChoices = shouldOfferChoice
         ? await enrichCandidates({
             browserService: managedBrowser,
             taskId: `identify-${crypto.randomUUID()}`,
             candidates: result.candidates || [],
+            // Without the query, a row that merely quotes the name in an old message ranks as a
+            // candidate for who that person is — the live card offered "Casey i will tg not to · 1y".
+            query: namedPerson,
             inboxUrl: surfaceChannel === "instagram" ? "https://www.instagram.com/direct/inbox/" : (startUrl || result.finalUrl || ""),
           }).catch(() => [])
         : [];
-      const identityCard = result.blocked && identityChoices.length > 1 && namedPerson
+      const identityCard = result.blocked && identityChoices.length > 0 && namedPerson
         ? {
             kind: "contact-choice",
-            title: `Which "${namedPerson}"?`,
-            body: "Pick the right one and I will remember it, so this is never asked again.",
+            title: identityChoices.length > 1 ? `Which "${namedPerson}"?` : `Is this "${namedPerson}"?`,
+            body: identityChoices.length > 1
+              ? "Pick the right one and I will remember it, so this is never asked again."
+              : "Confirm and I will remember it, so this is never asked again.",
             query: namedPerson,
             channel: surfaceChannel || "instagram",
             task,
@@ -2996,6 +3001,23 @@ function createCapabilityEngine({
       }
       const explicitlyFailed = result && typeof result === "object"
         && (result.ok === false || result.success === false);
+      // A failure that comes with a question for the owner is not a dead end, and throwing discards
+      // the question along with everything else on the result.
+      //
+      // This is what a blocked identity looks like: the run stopped because two people share a name,
+      // the candidates were opened and enriched, a contact-choice card was built — and then the
+      // throw dropped it and the caller got a bare 502. The one case the card exists for was the one
+      // case it could never reach the owner. It is returned as a normal unsuccessful result instead,
+      // carrying the card, so the UI can ask.
+      if (explicitlyFailed && result.card) {
+        return {
+          ok: false,
+          status: "needs_owner_input",
+          capability: definition,
+          result,
+          error: cleanString(result.error || `${tool} needs the owner to identify who was meant.`, 1000),
+        };
+      }
       if (explicitlyFailed) {
         throw errorWithStatus(
           cleanString(result.error || result.result || `${tool} completed without verifying the requested outcome.`, 1000),

@@ -18,7 +18,7 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 
-const { avatarForHandle, counterpartHandles, enrichCandidates, handleFromHref, ownerHandleFrom } = require("../../server/automation/identity-enrichment");
+const { avatarForHandle, counterpartHandles, enrichCandidates, handleFromHref, handleFromLabel, namesTheQuery, ownerHandleFrom } = require("../../server/automation/identity-enrichment");
 
 // Shaped like a real Instagram DM thread: nav chrome carrying the owner's own account, then the
 // other party's profile link with their avatar inside it.
@@ -125,8 +125,88 @@ test("one unreadable candidate does not lose the question", async () => {
   assert.equal(enriched[1].handle, "sam_main");
 });
 
-test("a single candidate is not a question", async () => {
+// ── what the live card actually contained ─────────────────────────────────────
+// Run for real with the contact removed, the picker offered four rows (shapes preserved below,
+// names replaced — this repo is public):
+//
+//   "Casey i will tg not to · 1y"                      ← a year-old message quoting the word
+//   "Instagram User ... club tg once · 1y"             ← another one
+//   "Tg sam_main"                                      ← the actual account
+//   "Rowing Club dana_r, jules.k"                      ← a group
+//
+// and every enriched field was empty, because these came from SEARCH and the enrichment was looking
+// for them on the inbox, where search rows do not exist.
+
+test("a row that merely quotes the name is not a candidate for who someone is", () => {
+  assert.equal(namesTheQuery("Tg sam_main", "tg"), true);
+  assert.equal(namesTheQuery("Tg Active 5h ago", "tg"), true);
+  assert.equal(namesTheQuery("Casey i will tg not to · 1y", "tg"), false);
+  assert.equal(namesTheQuery("Instagram User ... club tg once · 1y", "tg"), false);
+  assert.equal(namesTheQuery("Rowing Club dana_r", "tg"), false);
+});
+
+test("a search row's handle is read off the label, since opening it would find nothing", () => {
+  assert.equal(handleFromLabel("Tg sam_main"), "sam_main");
+  assert.equal(handleFromLabel("Sam @sam_main"), "sam_main");
+  assert.equal(handleFromLabel("Priya Nair priya_n_iv"), "priya_n_iv");
+});
+
+test("a timestamp is not an account", () => {
+  // Every one of these satisfies the shape of a handle — lowercase, contains a digit — and the
+  // first version duly reported "5h" as the account for "Tg Active 5h ago". A row's age is not
+  // a person.
+  for (const label of ["Tg Active 5h ago", "Tg 2 new messages · 13h Unread", "Yash Active 13m ago", "Sam You: hi · 3h"]) {
+    assert.equal(handleFromLabel(label), "", `no account in: ${label}`);
+  }
+});
+
+test("junk candidates are dropped before anything is opened", async () => {
+  // The four live rows. Only the two that actually name the query should survive, and no page load
+  // should be spent on a year-old message.
+  const rows = [
+    { ref: "e39", role: "button", name: "Casey i will tg not to · 1y" },
+    { ref: "e41", role: "button", name: "Instagram User ... club tg once · 1y" },
+    { ref: "e47", role: "button", name: "Tg sam_main" },
+    { ref: "e48", role: "button", name: "Tg sam_alt" },
+    { ref: "e35", role: "button", name: "Rowing Club dana_r, jules.k" },
+  ];
+  const browserService = {
+    navigate: async () => {},
+    wait: async () => {},
+    click: async () => { throw new Error("no row should need opening — the handles are on the labels"); },
+    snapshot: async () => ({ url: "https://www.instagram.com/direct/inbox/", elements: [] }),
+  };
+  const enriched = await enrichCandidates({ browserService, taskId: "t", inboxUrl: "https://www.instagram.com/direct/inbox/", candidates: rows, query: "tg", waitMs: 0 });
+  assert.equal(enriched.length, 2, `only the rows naming "tg" survive, got ${JSON.stringify(enriched.map((i) => i.label))}`);
+  assert.deepEqual(enriched.map((item) => item.handle), ["sam_main", "sam_alt"]);
+  assert.deepEqual(enriched.map((item) => item.profileUrl), ["https://www.instagram.com/sam_main/", "https://www.instagram.com/sam_alt/"]);
+});
+
+test("one match is still a question — is this them?", async () => {
+  // This used to return nothing, on the reasoning that a single candidate is unambiguous. It cost
+  // the useful case: filtering junk out of a search left exactly one real person, the run had
+  // nothing to offer, and it died with a bare error while holding the answer. One match is "is this
+  // them?", which is what turns a found account into a saved contact.
+  const browserService = {
+    navigate: async () => {},
+    wait: async () => {},
+    click: async () => { throw new Error("nothing to open — the handle is on the label"); },
+    snapshot: async () => ({ url: "https://www.instagram.com/direct/inbox/", elements: [] }),
+  };
+  const enriched = await enrichCandidates({
+    browserService,
+    taskId: "t",
+    inboxUrl: "https://www.instagram.com/direct/inbox/",
+    candidates: [{ ref: "e1", name: "Tg sam_main" }],
+    query: "tg",
+    waitMs: 0,
+  });
+  assert.equal(enriched.length, 1);
+  assert.equal(enriched[0].handle, "sam_main");
+  assert.equal(enriched[0].profileUrl, "https://www.instagram.com/sam_main/");
+});
+
+test("nothing at all is still nothing", async () => {
   const browserService = { navigate: async () => {}, wait: async () => {}, click: async () => {}, snapshot: async () => ({ url: "", elements: [] }) };
-  const enriched = await enrichCandidates({ browserService, taskId: "t", inboxUrl: "https://x.invalid/", candidates: [{ ref: "e1", name: "Tg" }], waitMs: 0 });
-  assert.deepEqual(enriched, [], "there is nothing to disambiguate, so nothing is opened");
+  assert.deepEqual(await enrichCandidates({ browserService, taskId: "t", inboxUrl: "https://x.invalid/", candidates: [], waitMs: 0 }), []);
 });
