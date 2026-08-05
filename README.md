@@ -9,7 +9,7 @@
 <p>
 <img alt="License" src="https://img.shields.io/badge/license-MIT-22d3ee?style=flat-square" />
 <img alt="Node" src="https://img.shields.io/badge/node-%E2%89%A520-3fd0ff?style=flat-square" />
-<img alt="Tests" src="https://img.shields.io/badge/tests-503%20passing-4aff9e?style=flat-square" />
+<img alt="Tests" src="https://img.shields.io/badge/tests-526%20passing-4aff9e?style=flat-square" />
 <img alt="Lines" src="https://img.shields.io/badge/code-167k%20lines-9e4aff?style=flat-square" />
 <img alt="Platform" src="https://img.shields.io/badge/platform-Windows%20%7C%20Web-a98bff?style=flat-square" />
 </p>
@@ -103,7 +103,7 @@ The engineering theme running through the codebase is **verifiability**. The ass
 
 **Phone pairing over automatic tunnel.** A Cloudflare Quick Tunnel starts with the server so a phone can pair from any network with no configuration. Pairing is a six-character code plus a server-rendered QR, with permission tiers chosen at approval time.
 
-**Verified test suite.** 503 tests across 69 files on Node's built-in runner, written under a mutation-testing discipline: a fix is not accepted until the original defect is reinstated and the new test is confirmed to fail.
+**Verified test suite.** 526 passing and 1 skipped across 72 files on Node's built-in runner, written under a mutation-testing discipline: a fix is not accepted until the original defect is reinstated and the new test is confirmed to fail.
 
 ---
 
@@ -242,7 +242,7 @@ npm run app:build:win    # portable Windows executable via electron-builder
 ### Verifying the install
 
 ```bash
-npm run test:backend     # 503 tests
+npm run test:backend     # 527 tests
 npm run check            # syntax check + typecheck + production build
 ```
 
@@ -379,6 +379,8 @@ The **knowledge graph** is a WebGL force-directed 3D layout built on `@react-thr
 ### Arbiter — prediction-market divergence
 
 Identifies price divergence for the same real-world outcome across Kalshi and Polymarket, computes a fair value, and proposes the convergence trade. Four views: Timeline, Edges, Signals, Scorecard.
+
+The server-side modules exist and the route responds, but it currently returns no matched pairs, so the room falls back to a fixture edge set — including in the screenshot above. Treat every number shown in Arbiter as illustrative until the venue matcher is finished. See [Planned](#planned).
 
 ### Synapse — cross-machine collaboration
 
@@ -583,7 +585,7 @@ Widgets share one frame implementation — draggable, resizable, with minimized,
 npm run dev              # frontend with HMR
 npm start                # backend
 npm run app:dev          # Electron desktop shell
-npm run test:backend     # 503 tests, single-threaded
+npm run test:backend     # 527 tests, single-threaded
 npm run check            # node --check + tsc --noEmit + vite build
 npm run test:feature     # Playwright feature specs
 ```
@@ -612,7 +614,7 @@ src/
     synapse/                cross-machine collaboration
   phone/                  paired phone interface
 electron/               desktop shell · takeover overlay
-tests/backend/          69 files · 503 tests
+tests/backend/          72 files · 527 tests
 scripts/                capture, checks, benchmarks
 docs/                   audit, specifications, screenshots
 ```
@@ -649,7 +651,7 @@ The project is under active development. This table reflects the state of each s
 
 | Area | Notes |
 |---|---|
-| Arbiter backend | The room is complete as an interface and currently renders from fixtures. |
+| Arbiter backend | The interface is complete and the divergence modules are written, but the cross-venue matcher returns no pairs, so the room renders a fixture edge set. |
 | Scheduled autonomous tasks | Not implemented. |
 | APEX Scanner | Depends on an external factor engine not included in this repository. |
 | Cross-platform secret store | Currently DPAPI, and therefore Windows-only. |

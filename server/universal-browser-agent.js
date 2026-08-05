@@ -526,16 +526,41 @@ Return ONLY JSON:
         trace("planner", "ok", { model, durationMs: Date.now() - attemptStarted, timeoutMs, promptBytes: prompt.length, attempt: attempts.length });
         return { ...parsed, model, usage: data.usageMetadata || null, plannerLatencyMs: Date.now() - plannerStarted, plannerAttempts: attempts };
       } catch (error) {
-        lastError = error;
-        attempts.push({ model, ok: false, durationMs: Date.now() - attemptStarted, timeoutMs, error: clip(error.message, 180) });
+        // An aborted fetch surfaces as the bare string "This operation was aborted", which is
+        // what reached the owner as the entire explanation for a dead task. It names neither
+        // the cause, the budget, nor the model. Rewriting it here is the difference between a
+        // receipt that explains itself and one that does not.
+        //
+        // Measured, so this is not a guess: on a realistic messaging page the prompt is ~4.4 KB
+        // and its two largest sections are hard-capped (page text 2,500 chars, controls 70
+        // elements), so a heavier page cannot inflate it much. A timeout at this budget is
+        // about model or network latency, not payload size.
+        const aborted = error?.name === "AbortError" || /operation was aborted/i.test(error?.message || "");
+        lastError = aborted
+          ? Object.assign(
+              new Error(`Planner timed out: ${model} did not answer within ${timeoutMs}ms (prompt ${prompt.length} bytes). This is a latency budget, not a page-size problem.`),
+              { code: "PLANNER_TIMEOUT", model, timeoutMs, promptBytes: prompt.length },
+            )
+          : error;
+        attempts.push({ model, ok: false, durationMs: Date.now() - attemptStarted, timeoutMs, timedOut: aborted, error: clip(lastError.message, 180) });
         // A timeout here is the single most common cause of a task dying with no useful
         // reason. `promptBytes` vs `timeoutMs` is exactly the comparison that diagnoses it.
-        trace("planner", "fail", { model, durationMs: Date.now() - attemptStarted, timeoutMs, promptBytes: prompt.length, attempt: attempts.length, error: clip(error.message, 180) });
+        trace("planner", aborted ? "timeout" : "fail", { model, durationMs: Date.now() - attemptStarted, timeoutMs, promptBytes: prompt.length, attempt: attempts.length, error: clip(lastError.message, 180) });
       } finally {
         clearTimeout(timer);
       }
     }
-    throw lastError || new Error("Browser planner failed");
+    // Every model in the chain failed. The last error alone hides that fact — it reads as one
+    // model having a bad moment when in truth the whole fallback chain was exhausted, which is a
+    // different problem with a different fix.
+    const failure = lastError || new Error("Browser planner failed");
+    if (attempts.length > 1) {
+      const detail = attempts.map((a) => `${a.model} ${a.timedOut ? `timed out at ${a.timeoutMs}ms` : `failed after ${a.durationMs}ms`}`).join("; ");
+      failure.message = `${failure.message} All ${attempts.length} planner models failed: ${detail}.`;
+    }
+    failure.plannerAttempts = attempts;
+    failure.promptBytes = prompt.length;
+    throw failure;
   }
 
   async function synthesizeReport(state, action) {
@@ -786,7 +811,36 @@ ${JSON.stringify(evidence).slice(0, 70_000)}`;
       };
       const decisionStarted = Date.now();
       const localDecision = deterministicDecision(plannerPayload);
-      const decision = localDecision || await askPlanner(plannerPayload);
+      // A planner failure used to escape execute() as a raw exception. Every other terminal
+      // condition in this loop returns a receipt — history, evidence, world model, state path —
+      // but this one path threw, so the caller received an exception object and the entire record
+      // of what the run had already done (navigated, searched, opened a thread) was discarded.
+      // The owner then saw an unexplained crash for what is really a bounded, reportable failure.
+      let decision;
+      try {
+        decision = localDecision || await askPlanner(plannerPayload);
+      } catch (error) {
+        state.status = "blocked";
+        state.recovery.lastError = String(error.message || error).slice(0, 500);
+        const failedPath = persist(state);
+        await onStep?.({ taskId, step: state.history.length + 1, phase: "failed", mode: "playwright", action: "plan", error: error.message, plannerAttempts: error.plannerAttempts || [] });
+        return {
+          success: false,
+          blocked: true,
+          taskId,
+          error: `The browser planner could not produce a next action: ${error.message}`,
+          plannerAttempts: error.plannerAttempts || [],
+          history: state.history,
+          evidence: state.evidence,
+          outcome,
+          world: world.toJSON(),
+          statePath: failedPath,
+          stepsCompleted: state.history.length,
+          finalUrl: state.url,
+          finalTitle: state.title,
+          mode: "playwright-universal-v2",
+        };
+      }
       decision.plannerLatencyMs = Number(decision.plannerLatencyMs) || (Date.now() - decisionStarted);
       decision.plannerAttempts ||= localDecision ? [{ model: "local-semantic-fast-path", ok: true, durationMs: decision.plannerLatencyMs, timeoutMs: 0 }] : [];
       const actions = (Array.isArray(decision.actions) ? decision.actions : []).slice(0, 3).map((item) => ({ ...item, action: String(item.action || "").toLowerCase() })).filter((item) => ACTIONS.has(item.action));
@@ -795,7 +849,16 @@ ${JSON.stringify(evidence).slice(0, 70_000)}`;
           actions[index].ref = actions[index - 1].ref;
         }
       }
-      if (!actions.length) throw new Error("The browser planner returned no valid action");
+      if (!actions.length) {
+        // Same reasoning as the planner-failure branch above: a planner that answers with nothing
+        // usable is a reportable outcome, not a crash. Throwing here discarded the run's history
+        // and left the owner with an exception instead of a receipt.
+        state.status = "blocked";
+        const emptyPath = persist(state);
+        const reason = decision.blocker || decision.summary || "no recognizable action in its response";
+        await onStep?.({ taskId, step: state.history.length + 1, phase: "failed", mode: "playwright", action: "plan", error: `Planner returned no valid action (${reason})`, model: decision.model });
+        return { success: false, blocked: true, taskId, error: `The browser planner returned no valid action: ${reason}`, history: state.history, evidence: state.evidence, outcome, world: world.toJSON(), statePath: emptyPath, stepsCompleted: state.history.length, finalUrl: state.url, finalTitle: state.title, mode: "playwright-universal-v2" };
+      }
 
       for (const action of actions) {
         const step = state.history.length + 1;
