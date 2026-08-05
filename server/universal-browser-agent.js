@@ -213,6 +213,63 @@ function isComposerLabel(value) {
   return /\b(message|write|composer|chat|reply|body|email content)\b/i.test(String(value || ""));
 }
 
+// Real Instagram's message box carries no label at all. Inspected live, it is
+//
+//   e75  tag=div  role=textbox  name=""  aria-label=""  placeholder=""  text=""
+//
+// so every label-based test says "not a composer", the fill guard refuses it as an unlabeled field,
+// and the send cannot happen. The chat-harness fixture gave its composer aria-label="Message",
+// which is why the harness passed while the real site never could — the fixture was more generous
+// than reality, and that is a defect in the fixture.
+//
+// A label is not the only evidence available. What surrounds an element is DOM-authored too, and on
+// the real page e75 sits inside the compose toolbar: emoji picker, voice clip, add photo, GIF
+// sticker. A typable that is not a search field and is bracketed by compose affordances is the
+// message box, labelled or not.
+const COMPOSE_AFFORDANCE = /\b(?:emoji|gif|sticker|voice clip|voice message|add photo|add file|attach|record|send)\b/i;
+const IDENTITY_FIELD = /\b(search|find|to|recipient|people|person|name|query|filter)\b/i;
+const TYPABLE_ROLES = new Set(["textbox", "searchbox", "combobox"]);
+
+function isTypable(element = {}) {
+  const role = normalized(element.role);
+  const tag = normalized(element.tag);
+  return TYPABLE_ROLES.has(role) || tag === "input" || tag === "textarea" || element.contentEditable != null;
+}
+
+function labelsOf(element = {}) {
+  return [element.name, element.placeholder, element.ariaLabel, element.title, element.text].filter(Boolean).join(" ");
+}
+
+// `window` is deliberately small. Compose controls sit immediately around the box; a wide window
+// would let an unrelated "send" elsewhere on the page vouch for a random field.
+function composeAffordancesAround(elements, index, window = 4) {
+  let count = 0;
+  for (let i = Math.max(0, index - window); i <= Math.min(elements.length - 1, index + window); i += 1) {
+    if (i === index) continue;
+    if (COMPOSE_AFFORDANCE.test(labelsOf(elements[i]))) count += 1;
+  }
+  return count;
+}
+
+function findMessageComposer(elements = []) {
+  // A labelled composer is still preferred: it is the strongest evidence, and it keeps every
+  // ordinary messaging surface working exactly as before.
+  const labelled = elements.find((element) => isTypable(element) && isComposerLabel(labelsOf(element)) && !IDENTITY_FIELD.test(labelsOf(element)));
+  if (labelled) return { element: labelled, basis: "label" };
+
+  // Otherwise the unlabelled candidate must EARN it: typable, not an identity/search field, and
+  // surrounded by at least two compose affordances. Two, not one, so a lone "Send" somewhere on the
+  // page cannot promote an unrelated input.
+  for (let index = 0; index < elements.length; index += 1) {
+    const element = elements[index];
+    if (!isTypable(element)) continue;
+    const labels = labelsOf(element);
+    if (labels.trim() && IDENTITY_FIELD.test(labels)) continue;
+    if (composeAffordancesAround(elements, index) >= 2) return { element, basis: "compose-toolbar" };
+  }
+  return null;
+}
+
 function deterministicDecision({ outcome, snapshot, history = [], entityHints = [] } = {}) {
   const elements = snapshot?.elements || [];
   const person = outcome?.entities?.people?.[0];
@@ -350,11 +407,9 @@ function deterministicDecision({ outcome, snapshot, history = [], entityHints = 
     };
   }
   if (message && !history.some((item) => item.action === "fill" && normalized(item.value) === normalized(message) && item.ok !== false)) {
-    const target = elements.find((item) => {
-      const role = normalized(item.role || item.tag);
-      const label = normalized([item.name, item.placeholder, item.ariaLabel].filter(Boolean).join(" "));
-      return (role === "textbox" || role === "input" || role === "textarea") && /\b(message|write|composer|chat|reply|body|email content)\b/.test(label);
-    });
+    // Was a label-only lookup, which finds nothing on a real Instagram thread — the composer there
+    // is an unlabelled div[role=textbox]. findMessageComposer falls back to structural evidence.
+    const target = findMessageComposer(elements)?.element;
     if (target?.ref && (!person || history.some((item) => item.action === "click" && item.ok !== false))) {
       return {
         summary: "The exact requested message and a semantic message composer are available.",
@@ -995,7 +1050,14 @@ ${JSON.stringify(evidence).slice(0, 70_000)}`;
           const requestedMessages = outcome?.entities?.messageValues?.length ? outcome.entities.messageValues : outcome?.entities?.quotedValues || [];
           const isRequestedMessageFill = action.action === "fill" && requestedMessages.some((value) => normalized(value) === normalized(action.value));
           if (isRequestedMessageFill && !isComposerLabel(action.targetName)) {
-            throw new Error(`Refused to place the requested message into ${action.targetName || "an unlabeled field"}; a semantic message composer is required.`);
+            // The guard stays, but "unlabeled" is no longer the same as "unidentified". On the real
+            // Instagram thread the composer is an unlabelled div[role=textbox]; refusing it on the
+            // absence of a label made the send impossible while typing into the wrong box remained
+            // just as impossible. Structural identification is the difference.
+            const composer = findMessageComposer(snapshot?.elements || []);
+            if (!composer || composer.element.ref !== action.ref) {
+              throw new Error(`Refused to place the requested message into ${action.targetName || "an unlabeled field"}; a semantic message composer is required.`);
+            }
           }
           const actionStarted = Date.now();
           const result = await perform(action, state);
@@ -1042,4 +1104,4 @@ ${JSON.stringify(evidence).slice(0, 70_000)}`;
   return { execute, stateDir, navigationMemory };
 }
 
-module.exports = { MAX_PLANNER_MODELS, MAX_STAGNANT_OBSERVATIONS, PLANNER_ACTION_TIMEOUT_MS, PLANNER_RESPONSE_SCHEMA, PLANNER_ROUTER_TIMEOUT_MS, canonicalVisibleText, completionProblems, createUniversalBrowserAgent, commitBoundary, deterministicDecision, fingerprint, inferredStepBudget, isComposerLabel, parseJson, visiblyContains };
+module.exports = { MAX_PLANNER_MODELS, MAX_STAGNANT_OBSERVATIONS, PLANNER_ACTION_TIMEOUT_MS, PLANNER_RESPONSE_SCHEMA, PLANNER_ROUTER_TIMEOUT_MS, canonicalVisibleText, completionProblems, createUniversalBrowserAgent, commitBoundary, deterministicDecision, findMessageComposer, fingerprint, inferredStepBudget, isComposerLabel, parseJson, visiblyContains };

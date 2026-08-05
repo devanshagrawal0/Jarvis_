@@ -1,0 +1,809 @@
+{
+  "note": "Structure of a real Instagram DM thread, captured live 2026-08-05 and scrubbed of all personal content. The composer is ref e75: a div[role=textbox] with NO label of any kind.",
+  "url": "https://www.instagram.invalid/direct/t/REDACTED/",
+  "title": "Instagram - Messages",
+  "elementCandidates": 81,
+  "truncated": false,
+  "elements": [
+    {
+      "ref": "e1",
+      "tag": "a",
+      "role": "link",
+      "name": "Person 1",
+      "text": "Person 2",
+      "placeholder": "",
+      "type": "",
+      "sensitive": false
+    },
+    {
+      "ref": "e2",
+      "tag": "a",
+      "role": "link",
+      "name": "Person 3",
+      "text": "Person 4",
+      "placeholder": "",
+      "type": "",
+      "sensitive": false
+    },
+    {
+      "ref": "e3",
+      "tag": "a",
+      "role": "link",
+      "name": "Person 5",
+      "text": "Person 6",
+      "placeholder": "",
+      "type": "",
+      "sensitive": false
+    },
+    {
+      "ref": "e4",
+      "tag": "a",
+      "role": "link",
+      "name": "Person 7",
+      "text": "Person 8",
+      "placeholder": "",
+      "type": "",
+      "sensitive": false
+    },
+    {
+      "ref": "e5",
+      "tag": "a",
+      "role": "link",
+      "name": "Person 9",
+      "text": "Person 10",
+      "placeholder": "",
+      "type": "",
+      "sensitive": false
+    },
+    {
+      "ref": "e6",
+      "tag": "a",
+      "role": "link",
+      "name": "Person 11",
+      "text": "Person 12",
+      "placeholder": "",
+      "type": "",
+      "sensitive": false
+    },
+    {
+      "ref": "e7",
+      "tag": "a",
+      "role": "link",
+      "name": "Person 13",
+      "text": "Person 14",
+      "placeholder": "",
+      "type": "",
+      "sensitive": false
+    },
+    {
+      "ref": "e8",
+      "tag": "a",
+      "role": "link",
+      "name": "Profile",
+      "text": "Profile",
+      "placeholder": "",
+      "type": "",
+      "sensitive": false
+    },
+    {
+      "ref": "e9",
+      "tag": "span",
+      "role": "link",
+      "name": "",
+      "text": "",
+      "placeholder": "",
+      "type": "",
+      "sensitive": false
+    },
+    {
+      "ref": "e10",
+      "tag": "a",
+      "role": "link",
+      "name": "Person 15",
+      "text": "Person 16",
+      "placeholder": "",
+      "type": "",
+      "sensitive": false
+    },
+    {
+      "ref": "e11",
+      "tag": "a",
+      "role": "link",
+      "name": "Person 17",
+      "text": "Person 18",
+      "placeholder": "",
+      "type": "",
+      "sensitive": false
+    },
+    {
+      "ref": "e12",
+      "tag": "main",
+      "role": "main",
+      "name": "Person 19",
+      "text": "Person 20",
+      "placeholder": "",
+      "type": "",
+      "sensitive": false
+    },
+    {
+      "ref": "e13",
+      "tag": "div",
+      "role": "navigation",
+      "name": "Person 21",
+      "text": "Person 22",
+      "placeholder": "",
+      "type": "",
+      "sensitive": false
+    },
+    {
+      "ref": "e14",
+      "tag": "div",
+      "role": "button",
+      "name": "Person 23",
+      "text": "Person 24",
+      "placeholder": "",
+      "type": "",
+      "sensitive": false
+    },
+    {
+      "ref": "e15",
+      "tag": "div",
+      "role": "button",
+      "name": "New message",
+      "text": "New message",
+      "placeholder": "",
+      "type": "",
+      "sensitive": false
+    },
+    {
+      "ref": "e16",
+      "tag": "svg",
+      "role": "img",
+      "name": "Search",
+      "text": "Search",
+      "placeholder": "",
+      "type": "",
+      "sensitive": false
+    },
+    {
+      "ref": "e17",
+      "tag": "input",
+      "role": "textbox",
+      "name": "Search",
+      "text": "",
+      "placeholder": "Search",
+      "type": "text",
+      "sensitive": false
+    },
+    {
+      "ref": "e18",
+      "tag": "div",
+      "role": "presentation",
+      "name": "Person 25",
+      "text": "Person 26",
+      "placeholder": "",
+      "type": "",
+      "sensitive": false
+    },
+    {
+      "ref": "e19",
+      "tag": "li",
+      "role": "",
+      "name": "Person 27",
+      "text": "Person 28",
+      "placeholder": "",
+      "type": "",
+      "sensitive": false
+    },
+    {
+      "ref": "e20",
+      "tag": "div",
+      "role": "button",
+      "name": "Person 29",
+      "text": "Person 30",
+      "placeholder": "",
+      "type": "",
+      "sensitive": false
+    },
+    {
+      "ref": "e21",
+      "tag": "span",
+      "role": "link",
+      "name": "",
+      "text": "",
+      "placeholder": "",
+      "type": "",
+      "sensitive": false
+    },
+    {
+      "ref": "e22",
+      "tag": "li",
+      "role": "",
+      "name": "Person 31",
+      "text": "Person 32",
+      "placeholder": "",
+      "type": "",
+      "sensitive": false
+    },
+    {
+      "ref": "e23",
+      "tag": "div",
+      "role": "button",
+      "name": "Person 33",
+      "text": "Person 34",
+      "placeholder": "",
+      "type": "",
+      "sensitive": false
+    },
+    {
+      "ref": "e24",
+      "tag": "span",
+      "role": "link",
+      "name": "",
+      "text": "",
+      "placeholder": "",
+      "type": "",
+      "sensitive": false
+    },
+    {
+      "ref": "e25",
+      "tag": "li",
+      "role": "",
+      "name": "Person 35",
+      "text": "Person 36",
+      "placeholder": "",
+      "type": "",
+      "sensitive": false
+    },
+    {
+      "ref": "e26",
+      "tag": "div",
+      "role": "button",
+      "name": "Person 37",
+      "text": "Person 38",
+      "placeholder": "",
+      "type": "",
+      "sensitive": false
+    },
+    {
+      "ref": "e27",
+      "tag": "span",
+      "role": "link",
+      "name": "",
+      "text": "",
+      "placeholder": "",
+      "type": "",
+      "sensitive": false
+    },
+    {
+      "ref": "e28",
+      "tag": "li",
+      "role": "",
+      "name": "Person 39",
+      "text": "Person 40",
+      "placeholder": "",
+      "type": "",
+      "sensitive": false
+    },
+    {
+      "ref": "e29",
+      "tag": "div",
+      "role": "button",
+      "name": "Person 41",
+      "text": "Person 42",
+      "placeholder": "",
+      "type": "",
+      "sensitive": false
+    },
+    {
+      "ref": "e30",
+      "tag": "a",
+      "role": "link",
+      "name": "Person 43",
+      "text": "Person 44",
+      "placeholder": "",
+      "type": "",
+      "sensitive": false
+    },
+    {
+      "ref": "e31",
+      "tag": "span",
+      "role": "link",
+      "name": "",
+      "text": "",
+      "placeholder": "",
+      "type": "",
+      "sensitive": false
+    },
+    {
+      "ref": "e32",
+      "tag": "li",
+      "role": "",
+      "name": "Person 45",
+      "text": "Person 46",
+      "placeholder": "",
+      "type": "",
+      "sensitive": false
+    },
+    {
+      "ref": "e33",
+      "tag": "div",
+      "role": "button",
+      "name": "Person 47",
+      "text": "Person 48",
+      "placeholder": "",
+      "type": "",
+      "sensitive": false
+    },
+    {
+      "ref": "e34",
+      "tag": "span",
+      "role": "link",
+      "name": "",
+      "text": "",
+      "placeholder": "",
+      "type": "",
+      "sensitive": false
+    },
+    {
+      "ref": "e35",
+      "tag": "button",
+      "role": "button",
+      "name": "Next",
+      "text": "",
+      "placeholder": "",
+      "type": "",
+      "sensitive": false
+    },
+    {
+      "ref": "e36",
+      "tag": "a",
+      "role": "link",
+      "name": "Requests",
+      "text": "Requests",
+      "placeholder": "",
+      "type": "",
+      "sensitive": false
+    },
+    {
+      "ref": "e37",
+      "tag": "div",
+      "role": "button",
+      "name": "Person 49",
+      "text": "Person 50",
+      "placeholder": "",
+      "type": "",
+      "sensitive": false
+    },
+    {
+      "ref": "e38",
+      "tag": "div",
+      "role": "button",
+      "name": "Person 51",
+      "text": "Person 52",
+      "placeholder": "",
+      "type": "",
+      "sensitive": false
+    },
+    {
+      "ref": "e39",
+      "tag": "div",
+      "role": "button",
+      "name": "Person 53",
+      "text": "Person 54",
+      "placeholder": "",
+      "type": "",
+      "sensitive": false
+    },
+    {
+      "ref": "e40",
+      "tag": "div",
+      "role": "button",
+      "name": "Person 55",
+      "text": "Person 56",
+      "placeholder": "",
+      "type": "",
+      "sensitive": false
+    },
+    {
+      "ref": "e41",
+      "tag": "div",
+      "role": "button",
+      "name": "Person 57",
+      "text": "Person 58",
+      "placeholder": "",
+      "type": "",
+      "sensitive": false
+    },
+    {
+      "ref": "e42",
+      "tag": "div",
+      "role": "button",
+      "name": "Person 59",
+      "text": "Person 60",
+      "placeholder": "",
+      "type": "",
+      "sensitive": false
+    },
+    {
+      "ref": "e43",
+      "tag": "div",
+      "role": "button",
+      "name": "Person 61",
+      "text": "Person 62",
+      "placeholder": "",
+      "type": "",
+      "sensitive": false
+    },
+    {
+      "ref": "e44",
+      "tag": "div",
+      "role": "button",
+      "name": "Person 63",
+      "text": "Person 64",
+      "placeholder": "",
+      "type": "",
+      "sensitive": false
+    },
+    {
+      "ref": "e45",
+      "tag": "div",
+      "role": "button",
+      "name": "Person 65",
+      "text": "Person 66",
+      "placeholder": "",
+      "type": "",
+      "sensitive": false
+    },
+    {
+      "ref": "e46",
+      "tag": "div",
+      "role": "button",
+      "name": "",
+      "text": "",
+      "placeholder": "",
+      "type": "",
+      "sensitive": false
+    },
+    {
+      "ref": "e47",
+      "tag": "div",
+      "role": "status",
+      "name": "Person 67",
+      "text": "",
+      "placeholder": "",
+      "type": "",
+      "sensitive": false
+    },
+    {
+      "ref": "e48",
+      "tag": "div",
+      "role": "status",
+      "name": "Person 68",
+      "text": "",
+      "placeholder": "",
+      "type": "",
+      "sensitive": false
+    },
+    {
+      "ref": "e49",
+      "tag": "div",
+      "role": "status",
+      "name": "Person 69",
+      "text": "",
+      "placeholder": "",
+      "type": "",
+      "sensitive": false
+    },
+    {
+      "ref": "e50",
+      "tag": "a",
+      "role": "link",
+      "name": "Person 70",
+      "text": "Person 71",
+      "placeholder": "",
+      "type": "",
+      "sensitive": false
+    },
+    {
+      "ref": "e51",
+      "tag": "div",
+      "role": "button",
+      "name": "Person 72",
+      "text": "Person 73",
+      "placeholder": "",
+      "type": "",
+      "sensitive": false
+    },
+    {
+      "ref": "e52",
+      "tag": "div",
+      "role": "button",
+      "name": "Person 74",
+      "text": "Person 75",
+      "placeholder": "",
+      "type": "",
+      "sensitive": false
+    },
+    {
+      "ref": "e53",
+      "tag": "div",
+      "role": "button",
+      "name": "Person 76",
+      "text": "Person 77",
+      "placeholder": "",
+      "type": "",
+      "sensitive": false
+    },
+    {
+      "ref": "e54",
+      "tag": "div",
+      "role": "progressbar",
+      "name": "",
+      "text": "",
+      "placeholder": "",
+      "type": "",
+      "sensitive": false
+    },
+    {
+      "ref": "e55",
+      "tag": "svg",
+      "role": "img",
+      "name": "Person 78",
+      "text": "",
+      "placeholder": "",
+      "type": "",
+      "sensitive": false
+    },
+    {
+      "ref": "e56",
+      "tag": "div",
+      "role": "group",
+      "name": "Person 79",
+      "text": "Person 80",
+      "placeholder": "",
+      "type": "",
+      "sensitive": false
+    },
+    {
+      "ref": "e57",
+      "tag": "div",
+      "role": "none",
+      "name": "Person 81",
+      "text": "Person 82",
+      "placeholder": "",
+      "type": "",
+      "sensitive": false
+    },
+    {
+      "ref": "e58",
+      "tag": "div",
+      "role": "button",
+      "name": "Person 83",
+      "text": "Person 84",
+      "placeholder": "",
+      "type": "",
+      "sensitive": false
+    },
+    {
+      "ref": "e59",
+      "tag": "a",
+      "role": "link",
+      "name": "Person 85",
+      "text": "Person 86",
+      "placeholder": "",
+      "type": "",
+      "sensitive": false
+    },
+    {
+      "ref": "e60",
+      "tag": "div",
+      "role": "none",
+      "name": "",
+      "text": "",
+      "placeholder": "",
+      "type": "",
+      "sensitive": false
+    },
+    {
+      "ref": "e61",
+      "tag": "div",
+      "role": "none",
+      "name": "Person 87",
+      "text": "Person 88",
+      "placeholder": "",
+      "type": "",
+      "sensitive": false
+    },
+    {
+      "ref": "e62",
+      "tag": "div",
+      "role": "none",
+      "name": "Person 89",
+      "text": "Person 90",
+      "placeholder": "",
+      "type": "",
+      "sensitive": false
+    },
+    {
+      "ref": "e63",
+      "tag": "div",
+      "role": "button",
+      "name": "Person 91",
+      "text": "Person 92",
+      "placeholder": "",
+      "type": "",
+      "sensitive": false
+    },
+    {
+      "ref": "e64",
+      "tag": "div",
+      "role": "none",
+      "name": "Person 93",
+      "text": "Person 94",
+      "placeholder": "",
+      "type": "",
+      "sensitive": false
+    },
+    {
+      "ref": "e65",
+      "tag": "div",
+      "role": "group",
+      "name": "Person 95",
+      "text": "Person 96",
+      "placeholder": "",
+      "type": "",
+      "sensitive": false
+    },
+    {
+      "ref": "e66",
+      "tag": "div",
+      "role": "none",
+      "name": "Person 97",
+      "text": "Person 98",
+      "placeholder": "",
+      "type": "",
+      "sensitive": false
+    },
+    {
+      "ref": "e67",
+      "tag": "div",
+      "role": "button",
+      "name": "Person 99",
+      "text": "Person 100",
+      "placeholder": "",
+      "type": "",
+      "sensitive": false
+    },
+    {
+      "ref": "e68",
+      "tag": "a",
+      "role": "link",
+      "name": "Person 101",
+      "text": "Person 102",
+      "placeholder": "",
+      "type": "",
+      "sensitive": false
+    },
+    {
+      "ref": "e69",
+      "tag": "div",
+      "role": "none",
+      "name": "",
+      "text": "",
+      "placeholder": "",
+      "type": "",
+      "sensitive": false
+    },
+    {
+      "ref": "e70",
+      "tag": "div",
+      "role": "none",
+      "name": "Person 103",
+      "text": "Person 104",
+      "placeholder": "",
+      "type": "",
+      "sensitive": false
+    },
+    {
+      "ref": "e71",
+      "tag": "div",
+      "role": "none",
+      "name": "Person 105",
+      "text": "Person 106",
+      "placeholder": "",
+      "type": "",
+      "sensitive": false
+    },
+    {
+      "ref": "e72",
+      "tag": "div",
+      "role": "button",
+      "name": "Person 107",
+      "text": "Person 108",
+      "placeholder": "",
+      "type": "",
+      "sensitive": false
+    },
+    {
+      "ref": "e73",
+      "tag": "div",
+      "role": "none",
+      "name": "Person 109",
+      "text": "Person 110",
+      "placeholder": "",
+      "type": "",
+      "sensitive": false
+    },
+    {
+      "ref": "e74",
+      "tag": "div",
+      "role": "button",
+      "name": "Choose an emoji",
+      "text": "Choose an emoji",
+      "placeholder": "",
+      "type": "",
+      "sensitive": false
+    },
+    {
+      "ref": "e75",
+      "tag": "div",
+      "role": "textbox",
+      "name": "",
+      "text": "",
+      "placeholder": "",
+      "type": "",
+      "sensitive": false
+    },
+    {
+      "ref": "e76",
+      "tag": "div",
+      "role": "button",
+      "name": "Voice Clip",
+      "text": "Voice Clip",
+      "placeholder": "",
+      "type": "",
+      "sensitive": false
+    },
+    {
+      "ref": "e77",
+      "tag": "div",
+      "role": "button",
+      "name": "Add Photo or Video",
+      "text": "Add Photo or Video",
+      "placeholder": "",
+      "type": "",
+      "sensitive": false
+    },
+    {
+      "ref": "e78",
+      "tag": "div",
+      "role": "button",
+      "name": "Choose a GIF or sticker",
+      "text": "Choose a GIF or sticker",
+      "placeholder": "",
+      "type": "",
+      "sensitive": false
+    },
+    {
+      "ref": "e79",
+      "tag": "div",
+      "role": "button",
+      "name": "Person 111",
+      "text": "Person 112",
+      "placeholder": "",
+      "type": "",
+      "sensitive": false
+    },
+    {
+      "ref": "e80",
+      "tag": "div",
+      "role": "tooltip",
+      "name": "Person 113",
+      "text": "Person 114",
+      "placeholder": "",
+      "type": "",
+      "sensitive": false
+    }
+  ]
+}
