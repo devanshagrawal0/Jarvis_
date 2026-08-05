@@ -224,3 +224,47 @@ test("a channel link prefers what was observed over what can be generated", () =
     assert.equal(contacts.linkForChannel("instagram", {}), "", "no value means no link to offer");
   } finally { cleanup(); }
 });
+
+test("a rename blocked by a file lock is retried, not reported as a failed save", () => {
+  // Found live, not by unit test: this repo sits inside OneDrive, whose sync client holds a
+  // transient handle on the file it is uploading, and `rename` onto that handle fails EPERM. Saving
+  // one contact worked; saving the next answered 400. A temp directory and a single write never
+  // reproduce it, so the lock is simulated here.
+  const { store: contacts, cleanup } = store();
+  try {
+    contacts.save({ name: "First" });
+    const realRename = fs.renameSync;
+    let attempts = 0;
+    fs.renameSync = (from, to) => {
+      attempts += 1;
+      // Fail the way the sync client does — twice, then release.
+      if (attempts <= 2) throw Object.assign(new Error("EPERM: operation not permitted, rename"), { code: "EPERM" });
+      return realRename(from, to);
+    };
+    try {
+      const saved = contacts.save({ name: "Second" });
+      assert.equal(saved.name, "Second");
+      assert.ok(attempts > 1, "the rename must actually have been retried");
+    } finally { fs.renameSync = realRename; }
+    assert.deepEqual(contacts.list().map((item) => item.name), ["First", "Second"]);
+    assert.equal(fs.readdirSync(runtimeDirOf(contacts)).filter((name) => name.endsWith(".tmp")).length, 0, "no temp file may be left behind");
+  } finally { cleanup(); }
+});
+
+test("a rename that never succeeds fails loudly and leaves the book intact", () => {
+  // The wrong fix here is to give up and overwrite the target directly, which trades a failed save
+  // for a corrupted address book. A permanent failure must stay a failure.
+  const { store: contacts, cleanup } = store();
+  try {
+    contacts.save({ name: "First" });
+    const realRename = fs.renameSync;
+    fs.renameSync = () => { throw Object.assign(new Error("EPERM: operation not permitted, rename"), { code: "EPERM" }); };
+    try {
+      assert.throws(() => contacts.save({ name: "Second" }), /EPERM/);
+    } finally { fs.renameSync = realRename; }
+    assert.deepEqual(contacts.list().map((item) => item.name), ["First"], "the previous contents must survive");
+    assert.equal(fs.readdirSync(runtimeDirOf(contacts)).filter((name) => name.endsWith(".tmp")).length, 0, "no temp file may be left behind");
+  } finally { cleanup(); }
+});
+
+function runtimeDirOf(contacts) { return path.dirname(contacts.filePath); }

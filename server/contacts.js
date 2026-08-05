@@ -140,11 +140,44 @@ function createContactStore({ runtimeDir } = {}) {
     }
   }
 
+  // Write to a sibling, then rename over the target — so a crash mid-write cannot leave a truncated
+  // address book behind.
+  //
+  // The rename is the part that breaks on Windows. This repository lives inside OneDrive, and the
+  // sync client holds a transient handle on the file it is uploading; `rename` onto a handle it
+  // owns fails EPERM. It is intermittent by nature, which is why it survived the unit tests (a temp
+  // directory, one write) and only appeared saving a second contact in a row against the real
+  // runtime folder — the first save succeeded, the next answered 400.
+  //
+  // Retrying is the whole fix: the lock is released in milliseconds. What must NOT happen is
+  // falling back to a plain overwrite of the target, which trades a failed save for a corrupted one.
+  function renameOntoTarget(temporary) {
+    const transient = new Set(["EPERM", "EACCES", "EBUSY", "ENOTEMPTY"]);
+    let lastError = null;
+    for (let attempt = 0; attempt < 12; attempt += 1) {
+      try {
+        fs.renameSync(temporary, filePath);
+        return;
+      } catch (error) {
+        lastError = error;
+        if (!transient.has(error.code)) break;
+        // Busy-wait: this store is small, synchronous, and called once per edit. A few milliseconds
+        // of blocking beats an async rewrite of every caller.
+        const until = Date.now() + 25;
+        while (Date.now() < until) { /* let the sync client release the handle */ }
+      }
+    }
+    try { fs.unlinkSync(temporary); } catch { /* the temp file is already gone or unreachable */ }
+    throw lastError;
+  }
+
   function persist(contacts) {
     fs.mkdirSync(runtimeDir, { recursive: true });
-    const temporary = `${filePath}.${process.pid}.tmp`;
+    // Unique per write, not just per process: two saves in the same process previously reused one
+    // temp name, so a retry could collide with the file it was retrying.
+    const temporary = `${filePath}.${process.pid}.${crypto.randomUUID().slice(0, 8)}.tmp`;
     fs.writeFileSync(temporary, `${JSON.stringify({ version: 1, contacts }, null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
-    fs.renameSync(temporary, filePath);
+    renameOntoTarget(temporary);
   }
 
   function list() {

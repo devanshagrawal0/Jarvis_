@@ -9,6 +9,7 @@ import { AgentsCommandCenter, ModulesCommandCenter, ProjectsCommandCenter } from
 import { ConnectionsCommandCenter, ReceiptsCommandCenter, TrustCommandCenter } from "./AssuranceCommandCenters";
 import { ProfileCommandCenter, VitalsCommandCenter, WeatherCommandCenter } from "./PersonalCommandCenters";
 import { MemoryCommandCenter } from "./MemoryCommandCenter";
+import { ContactsCommandCenter } from "./ContactsCommandCenter";
 import { RuntimeMinimized, RuntimeWidget } from "./runtime/RuntimeWidget";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -1349,6 +1350,7 @@ function getChipStat(id: string, data: any): string {
   if (!data) return "—";
   switch (id) {
     case "runtime":     return `${(data.tasks ?? []).filter((task: any) => ["queued", "planning", "ready", "running", "waiting_approval", "waiting_owner", "paused", "recovering", "verified"].includes(task.state)).length} active`;
+    case "contacts":    return `${data.contacts?.length ?? 0} known`;
     case "profile":     return data.identity?.preferred_name ?? "—";
     case "weather":     return data.current ? `${data.current.temp}°` : "—";
     case "vitals":      return data.memory ? `${data.memory.pct}%` : "—";
@@ -1430,6 +1432,20 @@ async function fetchWidgetData(id: string): Promise<any> {
         automations: automations.automations || [],
         __state: [status, tasks, surfaces, automations].every((item) => item.__state === "live") ? "live" : "disconnected",
         __error: [status, tasks, surfaces, automations].find((item) => item.__error)?.__error,
+        __fetchedAt: new Date().toISOString(),
+      }));
+    case "contacts":
+      // The channel catalogue comes with the list so the editor can render every field the store
+      // accepts. Fetching it separately inside the component would let the two disagree about what
+      // exists — a field offered that is silently dropped, or a stored channel with no way to edit.
+      return Promise.all([
+        widgetApi("/api/contacts", { contacts: [] }),
+        widgetApi("/api/contacts/meta", { channels: [] }),
+      ]).then(([list, meta]) => ({
+        contacts: list.contacts || [],
+        channels: meta.channels || [],
+        __state: list.__state,
+        __error: list.__error,
         __fetchedAt: new Date().toISOString(),
       }));
     case "profile":
@@ -1660,6 +1676,7 @@ function LegacyWidgetStrip({ mode, showChips = true }: { mode: string; showChips
     const loading = loadingIds.has(id);
     const props = { data, loading, onClose: handleClose };
     switch (id) {
+      case "contacts":    return <ContactsCommandCenter data={data} loading={loading} onRefresh={() => void handleRefresh(id)} />;
       case "profile":     return <ProfileCommandCenter data={data} loading={loading} />;
       case "weather":     return <WeatherCommandCenter data={data} loading={loading} />;
       case "vitals":      return <VitalsCommandCenter data={data} loading={loading} />;
@@ -1964,6 +1981,7 @@ export function WidgetStrip({ mode }: { mode: string; showChips?: boolean }) {
     const props = { data, loading, onClose };
     switch (id) {
       case "runtime":     return <RuntimeWidget mode={state.mode} initialData={data} onRefresh={() => void refresh(id)} />;
+      case "contacts":    return <ContactsCommandCenter data={data} loading={loading} onRefresh={() => void refresh(id)} />;
       case "profile":     return <ProfileCommandCenter data={data} loading={loading} />;
       case "weather":     return <WeatherCommandCenter data={data} loading={loading} />;
       case "vitals":      return <VitalsCommandCenter data={data} loading={loading} />;
