@@ -59,6 +59,10 @@ for (const row of rows) {
   console.log(`  ${String(row.bytes).padStart(7)} B  ${String(row.pct).padStart(5)}%  ${row.name}`);
 }
 console.log(`  ${String(total).padStart(7)} B         TOTAL (sections only, excludes the static rule text)\n`);
+console.log(`NOTE: this is the VARIABLE portion only. The full prompt measured against the same page`);
+console.log(`during a live run is ~11.5 KB — the static rule block is the larger half. Neither number`);
+console.log(`explains a timeout: see scripts/benchmark-planner-latency.mjs, where the router answers`);
+console.log(`in a 1.6-2.8s band against a 4s budget.\n`);
 
 // Where does entityHints spend its bytes?
 const hint = entityHints[0];

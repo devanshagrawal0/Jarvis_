@@ -28,6 +28,32 @@ function compact(value, max = 600) {
   return String(value || "").replace(/\s+/g, " ").trim().slice(0, max);
 }
 
+// "message", "email", "reply", "post" and "like" are verbs and nouns, and the commit classifier
+// only ever tested for the word. So "report the exact text of the most recent MESSAGE shown in it"
+// — a request to read — compiled to commit.required with type "send".
+//
+// That was not theoretical. Run against the chat harness, that objective made the agent open a
+// conversation, type "in it" into the composer, and stop at the approval gate asking to send it to
+// a real name. The gate held, which is why this was caught rather than delivered, but a gate is the
+// last line of defence and an owner who habitually approves would have sent nonsense to a contact.
+//
+// A determiner in front of one of these words makes it a noun phrase: "the message", "his reply",
+// "each unread email". Masking those before classification leaves genuine verb uses ("message Tg",
+// "reply to Yash", "send ...") matching exactly as before.
+const DETERMINER = "(?:the|a|an|this|that|these|those|my|your|his|her|their|its|our|(?:most\\s+)?recent|latest|last|first|previous|next|new|old|unread|each|any|every|all|another|same|original)";
+const COMMIT_NOUN = "(?:messages?|dms?|emails?|repl(?:y|ies)|posts?|comments?|likes?|follows?|reviews?)";
+const NOUN_PHRASE = new RegExp(`\\b${DETERMINER}\\s+(?:\\w+\\s+){0,2}?${COMMIT_NOUN}\\b`, "gi");
+
+// The placeholder must be unmatchable by the routing patterns, which capture `[A-Za-z][\w.-]*`.
+// An earlier version substituted the word "item" and promptly had "item" resolved as a recipient
+// in "type 'hi' into the message input field" — the mask created the very false positive it exists
+// to remove. A non-word token cannot be captured by anything downstream.
+const MASK = " ~ ";
+
+function maskCommitNouns(text) {
+  return String(text || "").replace(NOUN_PHRASE, MASK);
+}
+
 function clauses(text) {
   return String(text || "")
     .split(/\b(?:then|after that|afterwards|next|and then|finally)\b|[;\n]+/i)
@@ -104,7 +130,9 @@ function probablePeople(text) {
   const candidates = [];
   // Content inside quotes is payload, not routing metadata. Without this,
   // `send "say hi to dad" to AJ` incorrectly treats dad as a second recipient.
-  const routingText = String(text || "").replace(/["“”']([^"“”']{1,300})["“”']/g, " ");
+  // Masked for the same reason as the commit classifier: "the most recent message shown in it"
+  // matched the `message\s+(\w+)` routing pattern and produced "shown" as a recipient.
+  const routingText = maskCommitNouns(String(text || "").replace(/["“”']([^"“”']{1,300})["“”']/g, " "));
   const patterns = [
     /\b(?:to|email|send(?:\s+an?\s+email)?\s+to)\s+([A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,})\b/gi,
     /\b(?:[Tt]o|[Aa]sk|[Tt]ell|[Cc]ontact|[Dd][Mm]|[Mm]essage|[Ss]end)\s+([A-Z][\w.-]+(?:\s+[A-Z][\w.-]+){0,3})\b/g,
@@ -138,10 +166,14 @@ function fileReferences(text) {
 }
 
 function commitFor(text) {
-  let matches = COMMIT_TYPES.filter(([, pattern]) => pattern.test(text)).map(([type]) => type);
+  const classifiable = maskCommitNouns(text);
+  const intended = [...new Set(COMMIT_TYPES.filter(([, pattern]) => pattern.test(classifiable)).map(([type]) => type))];
   const explicitlyPrepareOnly = /\b(?:draft only|prepare only|do not send|don'?t send|do not click send|without (?:clicking )?(?:send|sending)|without submitting|leave (?:it|this|the message) unsent|stop before (?:send|sending)|do not transmit|without transmitting)\b/i.test(text);
-  if (explicitlyPrepareOnly) matches = matches.filter((type) => !["send", "submit"].includes(type));
-  return { required: matches.length > 0, types: [...new Set(matches)], approval: matches.length ? "terminal-effect" : "none" };
+  const matches = explicitlyPrepareOnly ? intended.filter((type) => !["send", "submit"].includes(type)) : intended;
+  // `intended` is what the owner asked for before the prepare-only filter removes the terminal
+  // step. A draft-only task still needs its message payload extracted, so downstream consumers key
+  // off intent rather than off `types`, which by then no longer mentions sending.
+  return { required: matches.length > 0, types: [...new Set(matches)], intendedTypes: intended, prepareOnly: explicitlyPrepareOnly, approval: matches.length ? "terminal-effect" : "none" };
 }
 
 function criterionFor(step) {
@@ -181,7 +213,11 @@ function compileOutcome(objective, options = {}) {
     entities: {
       people: probablePeople(source),
       quotedValues: quotedValues(source),
-      messageValues: requestedMessages(source),
+      // A payload only exists if the owner asked for something to be written and sent. Extracting
+      // one from a read request is how "report the most recent message shown in it" became a
+      // prepared send of the text "in it": the fast path composes any single messageValue into the
+      // first composer it finds and then looks for Send. No send intent, no payload.
+      messageValues: commit.intendedTypes.includes("send") ? requestedMessages(source) : [],
       files: fileReferences(source),
     },
     constraints: {
