@@ -251,6 +251,20 @@ function composeAffordancesAround(elements, index, window = 4) {
   return count;
 }
 
+// Whether a recorded fill actually landed in a message composer.
+//
+// Every downstream check asked `isComposerLabel(item.targetName)`, which is empty for Instagram's
+// unlabelled box. Verified live: the agent typed "hi" into the real composer successfully, and then
+// `messagePrepared` was false, so the fast path never advanced to Send and the run wandered until
+// it exhausted its recovery budget. Finding the composer was only half the problem — the runtime
+// also has to recognise that it used it.
+//
+// `composerFill` is stamped on the action by the executor when the target IS the identified
+// composer, so this is a record of what happened rather than another guess about a label.
+function isComposerFill(item = {}) {
+  return item.composerFill === true || isComposerLabel(item.targetName);
+}
+
 function findMessageComposer(elements = []) {
   // A labelled composer is still preferred: it is the strongest evidence, and it keeps every
   // ordinary messaging surface working exactly as before.
@@ -385,7 +399,7 @@ function deterministicDecision({ outcome, snapshot, history = [], entityHints = 
   }
   const requestedMessages = outcome?.entities?.messageValues?.length ? outcome.entities.messageValues : outcome?.entities?.quotedValues || [];
   const message = requestedMessages.length === 1 ? requestedMessages[0] : null;
-  const messagePrepared = message && history.some((item) => item.action === "fill" && normalized(item.value) === normalized(message) && isComposerLabel(item.targetName) && item.ok !== false);
+  const messagePrepared = message && history.some((item) => item.action === "fill" && normalized(item.value) === normalized(message) && isComposerFill(item) && item.ok !== false);
   const identityOpened = !person || identityChosen;
   const committed = history.some((item) => item.committed === true && item.ok !== false);
   if (messagePrepared && identityOpened && outcome?.commit?.required && committed && visiblyContains(snapshot?.pageText, message) && (!person || visiblyContains(snapshot?.pageText, person))) {
@@ -470,12 +484,12 @@ function completionProblems(state, snapshot) {
   const requestedMessages = state.outcome?.entities?.messageValues || [];
   if (requestedMessages.length === 1 && state.outcome?.commit?.required) {
     const exactMessage = requestedMessages[0];
-    const prepared = successful.some((item) => item.action === "fill" && normalized(item.value) === normalized(exactMessage) && isComposerLabel(item.targetName));
+    const prepared = successful.some((item) => item.action === "fill" && normalized(item.value) === normalized(exactMessage) && isComposerFill(item));
     if (!prepared) problems.push("the exact requested message was never verified in a semantic message composer before commit");
     if (!visiblyContains(retainedVisibleProof, exactMessage)) problems.push("the exact requested message is not visible in the retained post-send conversation evidence");
   }
   if (requestedMessages.length === 1 && state.outcome?.commit?.required === false) {
-    const prepared = successful.some((item) => item.action === "fill" && normalized(item.value) === normalized(requestedMessages[0]) && isComposerLabel(item.targetName));
+    const prepared = successful.some((item) => item.action === "fill" && normalized(item.value) === normalized(requestedMessages[0]) && isComposerFill(item));
     if (!prepared) problems.push("the exact draft was not verified in a semantic message composer");
   }
   return problems;
@@ -506,7 +520,7 @@ function commitBoundary(objective, action, snapshot, context = {}) {
   // trip this. Over-gating costs one approval prompt; under-gating sends a message nobody approved.
   const commitIntended = context.outcome?.commit?.required === true || COMMIT_WORDS.test(String(objective || ""));
   const composed = (context.history || []).some((item) => ["fill", "type"].includes(String(item.action || "").toLowerCase())
-    && isComposerLabel(item.targetName) && item.ok !== false);
+    && isComposerFill(item) && item.ok !== false);
   const unlabelledCommit = commitIntended && composed;
   if (!terminalEnter && !sensitiveControl && !unlabelledCommit) return null;
   const label = fullDescription
@@ -1036,6 +1050,11 @@ ${JSON.stringify(evidence).slice(0, 70_000)}`;
             taskId,
             pendingAction: { taskId, objective: state.objective, outcome, world: world.toJSON(), knownFiles: state.knownFiles, recovery: state.recovery, pendingAction, history: state.history, evidence: state.evidence, factLedger: state.factLedger },
             steps: state.history,
+            // Every other terminal return calls the trail `history`. This one called it only
+            // `steps`, so a caller reading `history` — as the verification harness did — saw an
+            // empty run that had in fact done everything correctly. Both names, one array.
+            history: state.history,
+            evidence: state.evidence,
             result: `Prepared the task up to the external commit: ${pendingAction.label}`,
             stepsCompleted: state.history.length,
             finalUrl: state.url,
@@ -1049,15 +1068,21 @@ ${JSON.stringify(evidence).slice(0, 70_000)}`;
           if (stopped) return stopped;
           const requestedMessages = outcome?.entities?.messageValues?.length ? outcome.entities.messageValues : outcome?.entities?.quotedValues || [];
           const isRequestedMessageFill = action.action === "fill" && requestedMessages.some((value) => normalized(value) === normalized(action.value));
-          if (isRequestedMessageFill && !isComposerLabel(action.targetName)) {
+          if (isRequestedMessageFill) {
             // The guard stays, but "unlabeled" is no longer the same as "unidentified". On the real
             // Instagram thread the composer is an unlabelled div[role=textbox]; refusing it on the
             // absence of a label made the send impossible while typing into the wrong box remained
             // just as impossible. Structural identification is the difference.
             const composer = findMessageComposer(snapshot?.elements || []);
-            if (!composer || composer.element.ref !== action.ref) {
+            const targetIsComposer = Boolean(composer && composer.element.ref === action.ref);
+            if (!targetIsComposer && !isComposerLabel(action.targetName)) {
               throw new Error(`Refused to place the requested message into ${action.targetName || "an unlabeled field"}; a semantic message composer is required.`);
             }
+            // Stamped on the action so every later check — was the message prepared, may we click
+            // Send, is this completion evidenced — can tell that it landed in the composer. Without
+            // it, the live run typed "hi" into the real composer successfully and then behaved as
+            // though it never had, because those checks could only read a label it does not have.
+            if (targetIsComposer) action.composerFill = true;
           }
           const actionStarted = Date.now();
           const result = await perform(action, state);
