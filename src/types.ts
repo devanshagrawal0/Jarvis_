@@ -118,6 +118,23 @@ export type JarvisResponseCard = {
   value?: string;
   status?: string;
   items?: string[];
+  // kind === "contact-choice": two people can share a display name — an inbox with two rows both
+  // reading "Tg" is ordinary, and the machine cannot tell them apart while the owner can, instantly.
+  // These are the candidates it found, handed over to be chosen from rather than refused.
+  query?: string;
+  channel?: string;
+  task?: string;
+  candidates?: JarvisContactCandidate[];
+};
+
+export type JarvisContactCandidate = {
+  ref?: string;
+  label: string;
+  detail?: string;
+  handle?: string;
+  profileUrl?: string;
+  avatarUrl?: string;
+  threadUrl?: string;
 };
 
 export type JarvisUiAction = {

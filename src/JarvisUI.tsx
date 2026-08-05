@@ -11,7 +11,7 @@ import { ArbiterRoom } from "./rooms/ArbiterRoom";
 import { SynapseRoom } from "./rooms/synapse/SynapseRoom";
 import { api, post, resolveOwnerChallenge, streamPost } from "./api";
 import { LiveVoiceController } from "./liveVoice";
-import type { BrainResponse, JarvisActivityEvent, JarvisArtifact, JarvisUiAction } from "./types";
+import type { BrainResponse, JarvisActivityEvent, JarvisArtifact, JarvisContactCandidate, JarvisResponseCard, JarvisUiAction } from "./types";
 import "./JarvisUI.css";
 
 const PANEL_CSS = `
@@ -102,6 +102,23 @@ const PANEL_CSS = `
 .jr-activity-row[data-status="error"] .jr-activity-dot { background:#ff6767; }
 .jr-activity-row[data-status="approval"] .jr-activity-dot { background:#ffc16b; }
 .jr-cards { display:grid; gap:8px; margin-top:12px; }
+.jr-contact-choice { border-color:rgba(255,193,107,.34); background:rgba(28,20,6,.42); }
+.jr-contact-choice .jr-card-title { color:#ffc16b; }
+.jr-contact-grid { display:grid; gap:7px; margin-top:9px; }
+.jr-contact-option { display:flex; align-items:center; gap:11px; width:100%; padding:9px 11px; text-align:left; cursor:pointer;
+  border:1px solid rgba(var(--jr-a),.24); border-radius:10px; background:rgba(2,15,31,.62); color:inherit; font:inherit;
+  transition:border-color .14s ease, background .14s ease, transform .14s ease; }
+.jr-contact-option:hover:not(:disabled) { border-color:rgba(255,193,107,.62); background:rgba(10,28,48,.78); transform:translateY(-1px); }
+.jr-contact-option:focus-visible { outline:2px solid rgba(255,193,107,.75); outline-offset:2px; }
+.jr-contact-option:disabled { opacity:.5; cursor:progress; }
+.jr-contact-avatar { width:40px; height:40px; border-radius:50%; object-fit:cover; flex:0 0 auto;
+  border:1px solid rgba(var(--jr-a),.3); background:rgba(0,20,42,.7); }
+.jr-contact-avatar-blank { display:flex; align-items:center; justify-content:center; font-weight:700; font-size:15px; color:rgba(var(--jr-a),.8); }
+.jr-contact-meta { display:grid; gap:2px; flex:1; min-width:0; }
+.jr-contact-name { font-size:13px; font-weight:650; color:rgba(var(--jr-tx),.9); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.jr-contact-handle { font-size:11.5px; font-weight:600; color:#ffc16b; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.jr-contact-detail { font-size:10.5px; color:rgba(var(--jr-tx),.52); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.jr-contact-pick { flex:0 0 auto; font-size:10.5px; font-weight:700; letter-spacing:.05em; text-transform:uppercase; color:rgba(var(--jr-a),.72); }
 .jr-card { border:1px solid rgba(var(--jr-a),.22); background:rgba(2,15,31,.55); border-radius:10px; padding:10px 12px; }
 .jr-card-title { font-size:11px; font-weight:700; letter-spacing:.06em; text-transform:uppercase; color:rgba(var(--jr-a),.78); }
 .jr-card-body { margin-top:5px; font-size:12px; line-height:1.45; color:rgba(var(--jr-tx),.72); }
@@ -126,6 +143,57 @@ type ApprovalRequest = {
 };
 
 type PreparedAttachment = { dataUrl?: string; text?: string; name: string; mimeType?: string; bytes: number };
+
+// Two people can share a display name. An inbox with two rows both reading "Tg" is ordinary, and
+// the machine genuinely cannot tell them apart while the owner can, instantly — but only if it is
+// shown the handle and the face, which is exactly what a bare name-tie refusal withheld.
+//
+// One question, asked once. The answer is saved, and every later mention of that name goes straight
+// to the right conversation without a search.
+function ContactChoiceCard({ card, onChoose }: { card: JarvisResponseCard; onChoose: (card: JarvisResponseCard, candidate: JarvisContactCandidate) => Promise<void> }) {
+  const [busy, setBusy] = useState<string | null>(null);
+  const [error, setError] = useState("");
+  const pick = async (candidate: JarvisContactCandidate) => {
+    setBusy(candidate.handle || candidate.label);
+    setError("");
+    try {
+      await onChoose(card, candidate);
+    } catch (failure) {
+      setError(failure instanceof Error ? failure.message : String(failure));
+    } finally {
+      setBusy(null);
+    }
+  };
+  return (
+    <div className="jr-card jr-contact-choice">
+      <div className="jr-card-title">{card.title}</div>
+      {card.body ? <div className="jr-card-body">{card.body}</div> : null}
+      <div className="jr-contact-grid">
+        {card.candidates!.map((candidate, index) => (
+          <button
+            type="button"
+            key={`${candidate.handle || candidate.label}-${index}`}
+            className="jr-contact-option"
+            onClick={() => void pick(candidate)}
+            disabled={busy !== null}
+          >
+            {candidate.avatarUrl
+              ? <img className="jr-contact-avatar" src={candidate.avatarUrl} alt="" referrerPolicy="no-referrer" />
+              : <span className="jr-contact-avatar jr-contact-avatar-blank">{(candidate.label || "?").trim().charAt(0).toUpperCase()}</span>}
+            <span className="jr-contact-meta">
+              <span className="jr-contact-name">{candidate.label}</span>
+              {/* The handle is the thing that actually distinguishes two people with one name. */}
+              {candidate.handle ? <span className="jr-contact-handle">@{candidate.handle}</span> : null}
+              {candidate.detail ? <span className="jr-contact-detail">{candidate.detail}</span> : null}
+            </span>
+            <span className="jr-contact-pick">{busy === (candidate.handle || candidate.label) ? "saving…" : "this one"}</span>
+          </button>
+        ))}
+      </div>
+      {error ? <div className="jr-card-body" style={{ color: "#ff9a9a" }}>{error}</div> : null}
+    </div>
+  );
+}
 
 function fileSize(bytes?: number) {
   if (!bytes) return "file";
@@ -381,6 +449,27 @@ export function JarvisUI() {
     return () => document.removeEventListener("jarvis:command", handleWidgetCommand);
   }, [handleSubmit]);
 
+  // Picking a person from the disambiguation card. Saves who they are, then re-runs the request
+  // that could not identify them — so the answer is given once and the original intent still
+  // happens, rather than the owner having to retype it.
+  const chooseContact = useCallback(async (card: JarvisResponseCard, candidate: JarvisContactCandidate) => {
+    const name = String(card.query || candidate.label || "").trim();
+    const channel = String(card.channel || "instagram");
+    await post<any>("/api/contacts", {
+      name,
+      aliases: candidate.handle && candidate.handle !== name ? [candidate.handle] : [],
+      channels: {
+        [channel]: {
+          handle: candidate.handle || "",
+          threadUrl: candidate.threadUrl || "",
+          profileUrl: candidate.profileUrl || "",
+          avatarUrl: candidate.avatarUrl || "",
+        },
+      },
+    });
+    if (card.task) await handleSubmit(card.task, []);
+  }, [handleSubmit]);
+
   const decideApproval = useCallback(async (approval: ApprovalRequest, decision: "approve" | "deny") => {
     // `if (!approval.ownerChallenge) return;` made the button do nothing, with no error shown,
     // on the fallback path — `requestConfirmation`'s inline confirmations deliberately omit the
@@ -524,7 +613,11 @@ export function JarvisUI() {
             {typeof meta.usage?.costUsd === "number" ? <span>${meta.usage.costUsd.toFixed(4)}</span> : null}
             {meta.timing?.totalMs ? <span>{(meta.timing.totalMs / 1000).toFixed(1)}s</span> : null}
           </div> : null}
-          {(meta.cards || []).length ? <div className="jr-cards">{meta.cards!.map((card, index) => <div className="jr-card" key={`${card.title}-${index}`}><div className="jr-card-title">{card.title}{card.value ? ` · ${card.value}` : ""}</div>{card.body ? <div className="jr-card-body">{card.body}</div> : null}{card.items?.length ? <div className="jr-card-body">{card.items.map((item) => <div key={item}>• {item}</div>)}</div> : null}</div>)}</div> : null}
+          {(meta.cards || []).length ? <div className="jr-cards">{meta.cards!.map((card, index) => (
+            card.kind === "contact-choice" && card.candidates?.length
+              ? <ContactChoiceCard key={`contact-${index}`} card={card} onChoose={chooseContact} />
+              : <div className="jr-card" key={`${card.title}-${index}`}><div className="jr-card-title">{card.title}{card.value ? ` · ${card.value}` : ""}</div>{card.body ? <div className="jr-card-body">{card.body}</div> : null}{card.items?.length ? <div className="jr-card-body">{card.items.map((item) => <div key={item}>• {item}</div>)}</div> : null}</div>
+          ))}</div> : null}
           {meta.receipt || meta.timing ? <details className="jr-trace"><summary>Technical trace</summary><pre className="jr-card-body">{JSON.stringify({ receipt: meta.receipt, timing: meta.timing, usage: meta.usage }, null, 2)}</pre></details> : null}
           {approvals.length > 0 ? (
             <div className="jr-approvals" aria-label="Actions awaiting owner approval">
