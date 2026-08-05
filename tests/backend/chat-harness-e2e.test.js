@@ -22,7 +22,8 @@ const os = require("node:os");
 const path = require("node:path");
 
 const { createBrowserAutomationService } = require("../../server/browser-service");
-const { resolveEntity } = require("../../server/automation/entity-resolver");
+const { resolveEntity, hintsForOutcome } = require("../../server/automation/entity-resolver");
+const { deterministicDecision } = require("../../server/universal-browser-agent");
 
 const FIXTURE = path.join(__dirname, "..", "fixtures", "chat-harness", "index.html");
 
@@ -116,6 +117,39 @@ test("searching for a person surfaces the group first, and the resolver refuses 
   const refused = resolveEntity("tg", groupsOnly, { singleRecipient: true });
   assert.notEqual(refused.status, "resolved", "a single-recipient send must never resolve to a group");
   assert.match(refused.reason, /group/i);
+});
+
+test("the agent opens the thread already in the inbox instead of searching", async () => {
+  // The strategy error behind the original failure. The inbox already contained a 1:1 thread with
+  // the named person, and the agent typed the name into search anyway — where the group thread
+  // outranked the individual. Searching was never necessary; it was the step that created the
+  // hazard the resolver then had to refuse.
+  //
+  // This asserts the choice against a REAL snapshot of the inbox, so it stays honest about
+  // truncation and element ordering rather than testing a curated list of four elements.
+  await ctx.browser.navigate({ url: ctx.url, taskId: "harness" });
+  const inbox = await ctx.browser.snapshot({ taskId: "harness", limit: 140 });
+
+  const search = findRef(inbox, (el) => /^input$/i.test(el.tag || "") && nameOf(el) === "Search");
+  assert.ok(search, "precondition: a search field is available, so searching is a live option");
+  const tg = findRef(inbox, (el) => nameOf(el) === "Tg");
+  const group = findRef(inbox, (el) => /^Anjali Monga, Tg and Ignacio$/.test(nameOf(el)));
+  assert.ok(tg && group, "precondition: both the individual and the group are visible in the inbox");
+
+  const outcome = { entities: { people: ["tg"], messageValues: ["hi"] }, commit: { required: true } };
+  const decision = deterministicDecision({
+    outcome,
+    snapshot: inbox,
+    history: [],
+    entityHints: hintsForOutcome(outcome, inbox),
+  });
+
+  assert.ok(decision, "the fast path should decide this without spending a planner call");
+  const first = decision.actions[0];
+  assert.equal(first.action, "click", "the thread is already present; typing into search is a detour into ambiguity");
+  assert.notEqual(first.ref, search.ref, "it must not fill or click the search field");
+  assert.notEqual(first.ref, group.ref, "and never the group thread");
+  assert.equal(first.ref, tg.ref, "it must open the 1:1 thread that is already on screen");
 });
 
 test("a message actually lands in the correct thread", async () => {

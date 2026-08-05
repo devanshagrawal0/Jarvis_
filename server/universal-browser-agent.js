@@ -377,7 +377,7 @@ function completionProblems(state, snapshot) {
   return problems;
 }
 
-function commitBoundary(objective, action, snapshot) {
+function commitBoundary(objective, action, snapshot, context = {}) {
   // Drafting, searching, choosing a file, and filling fields are preparation.
   // The gate belongs on the terminal click/Enter that changes external state.
   if (!["click", "press"].includes(action.action)) return null;
@@ -389,7 +389,25 @@ function commitBoundary(objective, action, snapshot) {
   if (searchPreparation) return null;
   const terminalEnter = action.action === "press" && /^(enter|return)$/i.test(String(action.key || "")) && COMMIT_WORDS.test(fullDescription);
   const sensitiveControl = Boolean(element?.sensitive || COMMIT_WORDS.test(controlDescription));
-  if (!terminalEnter && !sensitiveControl) return null;
+  // Ported from computer-use's B-12(1), because this lane had the identical hole.
+  //
+  // Both `element.sensitive` and COMMIT_WORDS read text: an accessible name, a title, a planner's
+  // own prose. An icon-only send button with no accessible name, a non-English label, or a planner
+  // that writes "clicking the blue arrow" all evaluate to false, and the click then committed with
+  // no approval at all. The words are evidence of a commit, not the definition of one.
+  //
+  // So on a task whose entire point is an outward effect, a click that FOLLOWS composing text into
+  // a message composer is a commit candidate whether or not anything on the page said so. Search
+  // and selection steps already returned above, so navigating to the right conversation does not
+  // trip this. Over-gating costs one approval prompt; under-gating sends a message nobody approved.
+  const commitIntended = context.outcome?.commit?.required === true || COMMIT_WORDS.test(String(objective || ""));
+  const composed = (context.history || []).some((item) => ["fill", "type"].includes(String(item.action || "").toLowerCase())
+    && isComposerLabel(item.targetName) && item.ok !== false);
+  const unlabelledCommit = commitIntended && composed;
+  if (!terminalEnter && !sensitiveControl && !unlabelledCommit) return null;
+  const label = fullDescription
+    || (unlabelledCommit ? "an unlabelled control clicked after composing the message" : "")
+    || "external account action";
   return {
     action: action.action,
     ref: action.ref || null,
@@ -397,7 +415,10 @@ function commitBoundary(objective, action, snapshot) {
     value: action.value == null ? null : String(action.value),
     path: action.path || null,
     paths: action.paths || null,
-    label: clip(fullDescription || "external account action", 300),
+    label: clip(label, 300),
+    // Say which rule caught it, so an approval prompt for an unnamed control is explicable rather
+    // than mysterious.
+    basis: terminalEnter ? "terminal-enter" : sensitiveControl ? "labelled-control" : "unlabelled-after-compose",
     expected: clip(action.expected || "The requested external change is visibly present after execution", 400),
   };
 }
@@ -897,7 +918,10 @@ ${JSON.stringify(evidence).slice(0, 70_000)}`;
 
         // Approval is a single-use capability for the exact pending action restored
         // above. It never authorizes later sends/posts/uploads in the same long task.
-        const pendingAction = commitBoundary(state.objective, action, snapshot);
+        // `context` carries what makes the unlabelled-commit rule work. Without it that rule is
+        // dead code and the icon-only send button walks straight through, so the test suite
+        // asserts on this call site by source, not only on the function.
+        const pendingAction = commitBoundary(state.objective, action, snapshot, { outcome, history: state.history });
         if (pendingAction) {
           state.status = "waiting_approval";
           persist(state);
