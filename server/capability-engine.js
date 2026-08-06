@@ -776,9 +776,33 @@ function createCapabilityEngine({
       id: item.id,
       tool,
       summary: confirmationSummary(args),
+      // The card used to render `summary` — the raw argument bag — so an owner deciding whether to
+      // send a message read `_commitBoundary: [object Object]` next to `plannerTask` and a truncated
+      // `task`. `commit` is the same decision expressed as the three things that actually matter:
+      // what the click does, where it lands, and which instruction it came from.
+      commit: commitCard(args),
       risk: item.risk,
       expiresAt: item.expiresAt,
       message: `Confirmation required to run ${tool}.`,
+    };
+  }
+
+  // Null for everything except a paused browser/screen commit, which is the only case that carries
+  // a boundary descriptor. Every field here is copied, never composed — nothing is inferred.
+  function commitCard(args = {}) {
+    const boundary = args && typeof args._commitBoundary === "object" ? args._commitBoundary : null;
+    if (!boundary) return null;
+    return {
+      intent: cleanString(boundary.intent, 200) || "Perform the pending action",
+      target: cleanString(boundary.targetName, 160),
+      url: cleanString(boundary.url, 300),
+      surface: cleanString(boundary.pageTitle, 200),
+      task: cleanString(boundary.task || args.task, 600),
+      action: cleanString(boundary.action, 40),
+      key: cleanString(boundary.key, 40),
+      // Kept visible because "an unlabelled control" is a real caveat the owner should weigh, not
+      // something to paper over with a confident-sounding label.
+      unlabelled: !cleanString(boundary.targetName, 160),
     };
   }
 
@@ -3150,6 +3174,9 @@ function createCapabilityEngine({
         tool: item.tool,
         risk: item.risk,
         summary: confirmationSummary(item.args || {}),
+        // The pending-list card and the inline card must describe the action the same way; the UI
+        // falls back to this list whenever the inline payload is missing.
+        commit: commitCard(item.args || {}),
         createdAt: item.createdAt,
         expiresAt: item.expiresAt,
         argumentHash: item.argumentHash,

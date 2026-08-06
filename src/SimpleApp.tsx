@@ -46,6 +46,7 @@ type Message = {
     tool: string;
     risk: string;
     summary?: { reason?: string };
+    commit?: { intent: string; task?: string; url?: string; surface?: string; unlabelled?: boolean } | null;
     message?: string;
   }>;
   sources?: Array<{ title: string; url: string }>;
@@ -1187,10 +1188,19 @@ export default function SimpleApp() {
       // Posting `{}` meant every approval from this surface came back 403 "Owner confirmation
       // challenge is invalid" — the engine compares a 32-byte one-time challenge.
       const ownerChallenge = await resolveOwnerChallenge(id);
-      const result = await post<{ ok: boolean; error?: string; result?: unknown }>(
-        `/api/confirmations/${encodeURIComponent(id)}/approve`,
-        { ownerChallenge },
-      );
+      const result = await post<{
+        ok: boolean; status?: string; error?: string; result?: unknown;
+        confirmation?: NonNullable<Message["confirmations"]>[number];
+      }>(`/api/confirmations/${encodeURIComponent(id)}/approve`, { ownerChallenge });
+      // Approving re-executes the task, which can stop at a further commit boundary. That reply has
+      // no `error`, so it used to print the generic "could not be completed" and throw the new card
+      // away — the owner approved, was told it failed, and no new card appeared.
+      if (result.status === "confirmation_required" && result.confirmation) {
+        addMessage("jarvis", "That step is done. The run stopped at another action that needs your approval.", [result.confirmation]);
+        setPhase("idle");
+        await refreshReceipts();
+        return;
+      }
       addMessage("jarvis", result.ok ? "Approved action completed and recorded." : result.error || "The action could not be completed.");
       setPhase(result.ok ? "idle" : "error");
       await refreshReceipts();
@@ -2038,7 +2048,10 @@ export default function SimpleApp() {
                 <div className="confirmation-row">
                   {message.confirmations.map((confirmation) => (
                     <button key={confirmation.id} onClick={() => approveConfirmation(confirmation.id)}>
-                      Approve {confirmation.summary?.reason || confirmation.tool.replaceAll("_", " ")}
+                      {/* `summary.reason` has never existed on these payloads, so every commit card
+                          on this surface read "Approve computer use" — the tool name, saying nothing
+                          about what was about to be sent or where. `commit.intent` is the action. */}
+                      Approve: {confirmation.commit?.intent || confirmation.summary?.reason || confirmation.tool.replaceAll("_", " ")}
                     </button>
                   ))}
                 </div>

@@ -7819,7 +7819,27 @@ async function handleApi(req, res, pathname, url) {
       source: "confirmed-api",
       ownerChallenge: String(data.ownerChallenge || ""),
     });
-    if (pending?.actionTaskId && actionFabric) {
+    // Approving re-executes the task, and that run can stop at a further commit boundary. That is
+    // not a failure — but it was treated as one: the task went to `failed`, and the guard above then
+    // auto-denied the NEXT approval as "no longer active". Two approvals in one task were therefore
+    // impossible, and the second card was dead before the owner ever saw it.
+    const repaused = result?.status === "confirmation_required" && Boolean(result?.confirmation?.id);
+    if (repaused && pending?.actionTaskId && actionFabric) {
+      try {
+        const task = actionFabric.kernel.get(pending.actionTaskId);
+        // Already waiting is the common case, and waiting_approval → waiting_approval is not a legal
+        // transition, so re-asserting it would throw and land in the catch below.
+        if (task.state !== "waiting_approval" && !["cancelled", "failed", "blocked", "delivered"].includes(task.state)) {
+          actionFabric.kernel.transition(task.id, "waiting_approval", {
+            currentStep: "Paused again at a further action needing owner approval",
+            confirmationId: result.confirmation.id,
+          });
+        }
+        actionFabric.kernel.event("approval.repaused", { confirmationId: pending.id, nextConfirmationId: result.confirmation.id, tool: pending.tool, detail: "Approved step ran; the task stopped at another action requiring approval" }, task.id);
+      } catch (error) {
+        try { actionFabric.kernel.event("approval.continuation_failed", { confirmationId: pending.id, tool: pending.tool, reason: error.message }, pending.actionTaskId); } catch {}
+      }
+    } else if (pending?.actionTaskId && actionFabric) {
       try {
         let task = actionFabric.kernel.get(pending.actionTaskId);
         if (task.state === "waiting_approval") task = actionFabric.kernel.transition(task.id, "ready", { currentStep: "Owner approved the prepared capability", confirmationId: pending.id });

@@ -74,6 +74,16 @@ function normalizeText(value) {
   return String(value || "").toLowerCase().replace(/\s+/g, " ").trim();
 }
 
+// Every DOM-authored fact about an element, in a fixed order, for identity across two snapshots.
+// Deliberately excludes `ref` (a per-snapshot slot number) and anything the model wrote.
+const SIGNATURE_FIELDS = ["role", "tag", "type", "name", "text", "ariaLabel", "placeholder", "title", "fieldName", "href", "id"];
+function elementSignature(element) {
+  if (!element || typeof element !== "object") return "";
+  return SIGNATURE_FIELDS
+    .map((field) => `${field}=${normalizeText(element[field]).slice(0, 120)}`)
+    .join("|");
+}
+
 // Returns [] when the completion is credible, otherwise the reasons it is not.
 function completionProblems(task, history = []) {
   const taskText = String(task || "");
@@ -111,23 +121,61 @@ function completionProblems(task, history = []) {
 function createCommitApproval(options = {}) {
   const approved = options.resume && typeof options.resume === "object" ? options.resume : null;
   let consumed = false;
+  const same = (a, b) => String(a ?? "").trim().toLowerCase() === String(b ?? "").trim().toLowerCase();
+  // "Enter" and "Return" are one physical key, and the planner may word it either way across the
+  // two runs. Comparing them literally would recreate, in miniature, the very bug being fixed here.
+  const keyOf = (value) => {
+    const key = String(value ?? "").trim().toLowerCase();
+    return key === "return" ? "enter" : key;
+  };
   return {
     // Returns true when this pending commit is the one the owner already approved.
+    //
+    // This used to require the element REF to be identical, and that made approval structurally
+    // unable to work. A ref (`e47`) is a slot number in one DOM snapshot. Approving does not resume
+    // the paused run — it re-executes the task from the beginning, which takes a fresh snapshot and
+    // assigns fresh refs. So the agent would reach the very same Send button, compare `e52` against
+    // the approved `e47`, refuse, and ask for approval again. The owner pressed Approve and nothing
+    // happened, every time, by construction.
+    //
+    // Ref equality was never a safety property either: it says which slot an element occupied, not
+    // what the element IS. What actually identifies the approved action across two runs:
+    //
+    //   • the same task — an approval must never carry over to a different instruction;
+    //   • the same action and key — approving a click does not approve pressing Enter;
+    //   • the same DOM-authored element signature — every fact the PAGE states about the control
+    //     (role, tag, type, name, text, aria-label, placeholder, title, href, id), which is stable
+    //     across snapshots because it describes the element rather than its position in a list.
+    //
+    // Still single-use: `consumed` means one approval authorises exactly one commit.
+    //
+    // Residual, stated plainly: two DIFFERENT controls that the page describes identically — both
+    // unlabelled `div[role=button]`, as Instagram's send control is — are not distinguishable here,
+    // because nothing durable distinguishes them. What still stands between them and an unattended
+    // commit: same task, same action and key, single use, and the run pausing at the first commit
+    // that does not match. Ref equality did not close this either; it only closed off approval.
     matches(pending) {
       if (!approved || consumed || !pending) return false;
-      const same = (a, b) => String(a ?? "").trim().toLowerCase() === String(b ?? "").trim().toLowerCase();
       if (!same(pending.action, approved.action)) return false;
-      if (approved.ref || pending.ref) { if (!same(pending.ref, approved.ref)) return false; }
-      else if (approved.elementId != null || pending.elementId != null) { if (Number(pending.elementId) !== Number(approved.elementId)) return false; }
-      else if (!same(pending.label, approved.label)) return false;
-      if (approved.key || pending.key) { if (!same(pending.key, approved.key)) return false; }
+      if (keyOf(approved.key) !== keyOf(pending.key)) return false;
+      // An approval belongs to the instruction it was granted for.
+      if (approved.task && pending.task && !same(pending.task, approved.task)) return false;
+      // The element must be the one the page described when the owner approved it.
+      if (String(approved.targetSignature ?? "") !== String(pending.targetSignature ?? "")) return false;
+      // A confirmation already on disk when this shipped has no signature, and an empty signature on
+      // both sides would otherwise mean "identity checked" while checking nothing. Such descriptors
+      // fall back to whatever identity they do carry — name, then label — rather than to nothing.
+      if (!approved.targetSignature) {
+        if (!same(pending.targetName, approved.targetName)) return false;
+        if (!same(pending.label, approved.label)) return false;
+      }
       consumed = true;
       return true;
     },
   };
 }
 
-function pendingExternalCommit(task, decision, elements = [], history = []) {
+function pendingExternalCommit(task, decision, elements = [], history = [], context = {}) {
   if (!EXTERNAL_COMMIT_TASK_RE.test(String(task || ""))) return null;
   const ref = String(decision?.ref || "");
   const element = elements.find((item) => String(item.ref || item.id || "") === ref || Number(item.id) === Number(decision?.elementId));
@@ -157,11 +205,43 @@ function pendingExternalCommit(task, decision, elements = [], history = []) {
   return {
     action: action || "commit",
     key: key || null,
+    // Kept for the approval CARD and for same-run resumption. Deliberately NOT what the approval
+    // matcher keys on: a ref is a slot in one snapshot and does not survive the re-run that
+    // approving triggers.
     ref: ref || null,
     elementId: decision?.elementId || null,
+    // DOM-authored only — the element's own accessible identity, with no planner prose mixed in.
+    // `label` below blends model reasoning with page text, which makes it useful to show a human
+    // and useless as an identity: the model can word its reasoning differently on the second run
+    // and the "same" button would stop matching itself.
+    targetName: String(element?.name || element?.text || element?.ariaLabel || "").replace(/\s+/g, " ").trim().slice(0, 160),
+    // Everything the PAGE says about this element, in a fixed order. This is what the approval is
+    // bound to across the re-run: not the ref (a slot number in one snapshot, which is why approval
+    // never worked) and not the label (part model prose, which the model rewords run to run).
+    targetSignature: elementSignature(element),
     label: String(label || "external account action").slice(0, 240),
     task: String(task || "").slice(0, 600),
+    // Shown on the approval card so the owner can see WHERE this lands. Deliberately not part of
+    // the match: a re-run picking up a tracking parameter would otherwise refuse its own approval,
+    // which is the failure this whole descriptor exists to avoid.
+    url: String(context?.url || "").slice(0, 300),
+    pageTitle: String(context?.title || "").slice(0, 200),
+    // What approving actually does, in a sentence, built from the DOM and the verb — not prose.
+    intent: commitIntent(action, key, String(element?.name || element?.text || element?.ariaLabel || "").trim()),
   };
+}
+
+// A plain-English description of the pending commit. When the page gives the control no name it
+// says so, rather than inventing one — an approval prompt that overstates what it knows is worse
+// than one that admits the gap.
+function commitIntent(action, key, name) {
+  const target = name ? `“${name.replace(/\s+/g, " ").slice(0, 60)}”` : "an unlabelled control";
+  // `key` arrives lower-cased from the gate; "Press enter" reads like a typo on a card whose whole
+  // job is to be read carefully.
+  const pressed = ["enter", "return"].includes(key) ? "Enter" : (key ? key.charAt(0).toUpperCase() + key.slice(1) : "a key");
+  if (["press", "key"].includes(action)) return `Press ${pressed} to send what is in the composer`;
+  if (action === "double_click") return `Double-click ${target}`;
+  return `Click ${target}`;
 }
 
 // ── PowerShell runner ─────────────────────────────────────────────────────────
@@ -642,7 +722,7 @@ Return ONLY valid JSON:
       history.push(decision);
       await onStep?.({ step: i + 1, phase: "planned", mode: "playwright", ...decision });
 
-      const proposedCommit = pendingExternalCommit(task, decision, elems, history.slice(0, -1));
+      const proposedCommit = pendingExternalCommit(task, decision, elems, history.slice(0, -1), { url, title });
       const pendingCommit = proposedCommit && commitApproval.matches(proposedCommit) ? null : proposedCommit;
       if (pendingCommit) {
         await onStep?.({ step: i + 1, phase: "waiting_approval", mode: "playwright", ...decision });
@@ -894,7 +974,8 @@ Return ONLY valid JSON (no markdown):
       history.push(decision);
       await onStep?.({ step: i + 1, phase: "planned", mode: "screen", ...decision });
 
-      const proposedCommit = pendingExternalCommit(task, decision, elements, history.slice(0, -1));
+      // The screen loop drives a native window, so the honest "where" is the process, not a URL.
+      const proposedCommit = pendingExternalCommit(task, decision, elements, history.slice(0, -1), { title: procName });
       const pendingCommit = proposedCommit && commitApproval.matches(proposedCommit) ? null : proposedCommit;
       if (pendingCommit) {
         await onStep?.({ step: i + 1, phase: "waiting_approval", mode: "screen", ...decision });

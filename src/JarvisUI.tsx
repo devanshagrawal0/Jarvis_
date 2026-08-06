@@ -88,6 +88,14 @@ const PANEL_CSS = `
 .jr-approval-head { display:flex; align-items:center; gap:8px; color:#ffc16b; font-size:11px; font-weight:700; letter-spacing:.08em; text-transform:uppercase; }
 .jr-approval-tool { margin-top:7px; color:rgba(var(--jr-tx),.96); font-size:14px; font-weight:650; }
 .jr-approval-summary { margin:8px 0; color:rgba(var(--jr-tx),.72); font-size:12px; line-height:1.45; white-space:pre-wrap; }
+/* The commit card. The decision is "does this one action go out or not", so the action itself is
+   the only thing set at reading size; the instruction and destination sit under it as context. */
+.jr-approval-intent { margin:8px 0 2px; color:rgba(var(--jr-tx),.96); font-size:15px; font-weight:600; line-height:1.35; }
+.jr-approval-facts { display:grid; gap:5px; margin:9px 0 11px; font-size:12px; line-height:1.45; }
+.jr-approval-fact { display:grid; grid-template-columns:58px 1fr; gap:9px; align-items:baseline; }
+.jr-approval-fact > dt { color:rgba(var(--jr-tx),.45); font-size:10.5px; letter-spacing:.07em; text-transform:uppercase; }
+.jr-approval-fact > dd { margin:0; color:rgba(var(--jr-tx),.8); min-width:0; overflow-wrap:anywhere; }
+.jr-approval-caveat { color:#ffc16b; font-size:11.5px; margin:-2px 0 10px; }
 .jr-approval-actions { display:flex; gap:8px; }
 .jr-approval-actions button { min-height:32px; border-radius:6px; padding:6px 12px; cursor:pointer; font-weight:650; }
 .jr-approve { color:#07170f; background:#20f7a4; border:1px solid #20f7a4; }
@@ -138,6 +146,18 @@ type ApprovalRequest = {
   tool: string;
   risk?: string;
   summary?: Record<string, unknown>;
+  // Present only for a paused browser/screen commit — the one case where we can say precisely what
+  // approving does. Every field is copied from the DOM-authored boundary descriptor.
+  commit?: {
+    intent: string;
+    target?: string;
+    url?: string;
+    surface?: string;
+    task?: string;
+    action?: string;
+    key?: string;
+    unlabelled?: boolean;
+  } | null;
   expiresAt?: string;
   ownerChallenge?: string;
 };
@@ -481,7 +501,30 @@ export function JarvisUI() {
       const result = await post<any>(`/api/confirmations/${encodeURIComponent(approval.id)}/${decision}`, {
         ownerChallenge,
       });
+      // Approving re-executes the task, and that run can stop at another commit boundary. The reply
+      // is then `{ok:false, status:"confirmation_required", confirmation}` — which fell through to
+      // `${tool} completed.` and dropped the new card on the floor. So the owner pressed Approve,
+      // was told it had completed, and nothing had happened. Whatever comes back, show it.
+      const next = result?.confirmation;
+      if (decision === "approve" && result?.status === "confirmation_required" && next?.id) {
+        // The inline confirmation deliberately omits the one-time owner challenge, and the card's
+        // buttons are disabled without it — so pushing `next` straight in would swap one dead end
+        // for another. Take the challenge-bearing copy from the pending list, as the normal turn does.
+        let card: ApprovalRequest = next;
+        try {
+          const pending = await api<{ confirmations?: ApprovalRequest[] }>("/api/confirmations/pending");
+          card = pending.confirmations?.find((item) => item.id === next.id) || next;
+        } catch { /* remote surface: fall back to the inline card, which will say it cannot decide */ }
+        setApprovals((items) => [...items.filter((item) => item.id !== approval.id), card]);
+        setResponse((current) => `${current}${current ? "\n\n" : ""}That step is done. The run stopped at another action that needs your approval.`);
+        return;
+      }
       setApprovals((items) => items.filter((item) => item.id !== approval.id));
+      if (decision === "approve" && result?.ok === false) {
+        setResponse((current) => `${current}${current ? "\n\n" : ""}${result?.error || `${approval.tool} did not complete.`}`);
+        setHasError(true);
+        return;
+      }
       const outcome = decision === "approve"
         ? result?.result ?? result?.message ?? `${approval.tool} completed.`
         : result?.message ?? `${approval.tool} denied.`;
@@ -622,17 +665,38 @@ export function JarvisUI() {
           {approvals.length > 0 ? (
             <div className="jr-approvals" aria-label="Actions awaiting owner approval">
               {approvals.map((approval) => {
-                const summary = Object.entries(approval.summary || {}).map(([key, value]) => `${key}: ${String(value)}`).join("\n");
+                const commit = approval.commit;
+                // Without a commit boundary (any other capability) there is nothing better to show
+                // than the arguments, so that stays as the fallback rather than being deleted.
+                const summary = commit ? "" : Object.entries(approval.summary || {}).map(([key, value]) => `${key}: ${String(value)}`).join("\n");
                 const ownerReady = Boolean(approval.ownerChallenge);
+                const busy = approvalBusy === approval.id;
                 return (
                   <div className="jr-approval" key={approval.id}>
                     <div className="jr-approval-head"><span>◆</span>{approval.risk || "execute"} · owner approval</div>
-                    <div className="jr-approval-tool">{approval.tool.replace(/_/g, " ")}</div>
-                    {summary ? <div className="jr-approval-summary">{summary}</div> : null}
+                    {commit ? (
+                      <>
+                        {/* Headline is the owner's own instruction — the thing actually being
+                            authorised, in their words, with nothing inferred. The mechanic sits
+                            below it: true and worth showing, but not the decision. */}
+                        <div className="jr-approval-intent">{commit.task || commit.intent}</div>
+                        <dl className="jr-approval-facts">
+                          {commit.task ? <div className="jr-approval-fact"><dt>Action</dt><dd>{commit.intent}</dd></div> : null}
+                          {commit.url || commit.surface ? <div className="jr-approval-fact"><dt>On</dt><dd>{commit.url || commit.surface}</dd></div> : null}
+                        </dl>
+                        {commit.unlabelled ? <div className="jr-approval-caveat">That control has no name on the page — it was identified by role and position.</div> : null}
+                      </>
+                    ) : (
+                      <>
+                        <div className="jr-approval-tool">{approval.tool.replace(/_/g, " ")}</div>
+                        {summary ? <div className="jr-approval-summary">{summary}</div> : null}
+                      </>
+                    )}
                     <div className="jr-approval-actions">
-                      <button className="jr-approve" disabled={!ownerReady || approvalBusy === approval.id} onClick={() => decideApproval(approval, "approve")}>Approve once</button>
-                      <button className="jr-deny" disabled={!ownerReady || approvalBusy === approval.id} onClick={() => decideApproval(approval, "deny")}>Deny</button>
+                      <button className="jr-approve" disabled={!ownerReady || busy} onClick={() => decideApproval(approval, "approve")}>{busy ? "Working…" : "Approve once"}</button>
+                      <button className="jr-deny" disabled={!ownerReady || busy} onClick={() => decideApproval(approval, "deny")}>Deny</button>
                     </div>
+                    {busy ? <div className="jr-approval-summary">Running the approved step. This takes a few seconds — the page is being driven now.</div> : null}
                     {!ownerReady ? <div className="jr-approval-summary">Open JARVIS directly on the owner computer to decide this action.</div> : null}
                   </div>
                 );
