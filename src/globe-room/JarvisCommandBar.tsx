@@ -157,6 +157,55 @@ const CSS = `
   pointer-events: auto; cursor: pointer;
 }
 .jcb-chip:hover { background: rgba(0,55,110,.9); }
+
+/* ── picker: the feel ──────────────────────────────────────────────────────
+   Codex and Claude Code both get this right by doing very little: the panel
+   arrives from where it was summoned, the selected option moves rather than
+   blinks, and pressing something answers immediately. Motion here is doing a
+   job — it says "this came from that chip" and "the selection moved there" —
+   which is the difference between polish and decoration. */
+.jcb-picker {
+  transform-origin: bottom right;
+  animation: jcb-pop .17s cubic-bezier(.2,.9,.3,1.1) both;
+}
+@keyframes jcb-pop {
+  from { opacity: 0; transform: translateY(7px) scale(.965); }
+  to   { opacity: 1; transform: translateY(0)   scale(1); }
+}
+
+/* The segmented control. The lit pill is one element that SLIDES between
+   options — the satisfying part — rather than a background that pops on and
+   off each button. */
+.jcb-seg { position: relative; display: flex; gap: 3px; padding: 2px; border-radius: 9px;
+  background: rgba(10,18,30,.5); border: 1px solid rgba(120,160,205,.13); }
+.jcb-seg-pill {
+  position: absolute; top: 2px; bottom: 2px; border-radius: 7px;
+  background: rgba(92,176,255,.16); box-shadow: inset 0 0 0 1px rgba(92,176,255,.42);
+  transition: left .22s cubic-bezier(.34,1.4,.5,1), width .22s cubic-bezier(.34,1.4,.5,1);
+  pointer-events: none;
+}
+.jcb-seg button {
+  position: relative; z-index: 1; flex: 1; min-width: 0; border: 0; background: none; border-radius: 7px;
+  color: rgba(176,196,216,.62); font-family: inherit; font-weight: 500; cursor: pointer; min-height: auto;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  transition: color .16s ease, transform .08s ease;
+}
+.jcb-seg button:hover { color: rgba(220,238,255,.9); }
+.jcb-seg button:active { transform: scale(.96); }          /* answers the press instantly */
+.jcb-seg button[data-on="true"] { color: #dceeff; font-weight: 600; }
+.jcb-seg button:focus-visible { outline: 2px solid rgba(92,176,255,.75); outline-offset: 1px; }
+
+/* The description swaps when the selection does; a cross-fade stops it looking
+   like a glitch when two lines differ in length. */
+.jcb-desc { font-size: 10.5px; line-height: 1.45; color: rgba(158,180,202,.62); margin-top: 5px;
+  animation: jcb-fade .2s ease both; }
+@keyframes jcb-fade { from { opacity: 0 } to { opacity: 1 } }
+
+@media (prefers-reduced-motion: reduce) {
+  .jcb-picker, .jcb-desc { animation: none; }
+  .jcb-seg-pill { transition: none; }
+  .jcb-seg button:active { transform: none; }
+}
 `;
 
 function MicRing() {
@@ -425,23 +474,6 @@ export function JarvisCommandBar({ onSubmit, onMicToggle, onModules, model, onSe
             <span style={{ fontSize: 11.5, fontWeight: 500, color: "#4da6ff" }}>{activeEffort.label}</span>
           </button>
           {pickerOpen && (() => {
-            const sub = submenu === "model"
-              ? { title: "Model", rows: MODELS, cur: model || "cortex", set: handleSetModel }
-              : submenu === "effort"
-                ? { title: "Effort", rows: EFFORTS, cur: strength || "cost-guarded", set: onSetStrength }
-                : submenu === "research"
-                  ? (isEclipse ? null : { title: "Research", rows: RESEARCH_ROWS, cur: research || "fast", set: onSetResearch })
-                  : submenu === "voice"
-                    ? { title: "Voice", rows: VOICE_ROWS, cur: voiceMode || "dictate", set: onSetVoiceMode }
-                  : null;
-            const L1 = [
-              { key: "model" as const, label: "Model", value: activeModel.label },
-              { key: "effort" as const, label: "Effort", value: activeEffort.label },
-              // Eclipse encodes research depth in its Effort tiers (Pulse/Deep/Totality), so the
-              // separate Research dial doesn't apply — hide it when Eclipse is the model.
-              ...(isEclipse ? [] : [{ key: "research" as const, label: "Research", value: activeResearch.label }]),
-              { key: "voice" as const, label: "Voice", value: activeVoice.label },
-            ];
             const ACCENT = "#5cb0ff";
             const HL = "rgba(90,140,200,0.16)";
             const panel: React.CSSProperties = {
@@ -453,49 +485,73 @@ export function JarvisCommandBar({ onSubmit, onMicToggle, onModules, model, onSe
               boxShadow: "0 16px 44px rgba(0,0,0,0.62), inset 0 1px 0 rgba(180,210,245,0.06)",
               fontFamily: 'Inter, "Segoe UI", sans-serif', color: "rgba(234,242,252,0.94)",
             };
-            return (
-              <>
-                {/* Level 1 — category list, right-aligned to the chip */}
-                <div style={{ ...panel, right: 0, width: 198, padding: "5px" }}
-                  onMouseEnter={openMenu} onMouseLeave={scheduleClose}>
-                  {L1.map((row) => {
-                    const open = submenu === row.key;
-                    return (
-                      <div key={row.key} role="button" tabIndex={0}
-                        onClick={() => setSubmenu((s) => (s === row.key ? null : row.key))}
-                        onMouseEnter={() => { if (hoverTimer.current) clearTimeout(hoverTimer.current); setSubmenu(row.key); }}
-                        style={{ display: "flex", alignItems: "center", gap: 7, padding: "7px 10px", borderRadius: 8, cursor: "pointer", background: open ? HL : "transparent" }}>
-                        <span style={{ fontSize: 12, fontWeight: 500 }}>{row.label}</span>
-                        <span style={{ marginLeft: "auto", fontSize: 11.5, color: open ? ACCENT : "rgba(176,196,216,0.55)" }}>{row.value}</span>
-                        <span style={{ fontSize: 11, color: open ? ACCENT : "rgba(176,196,216,0.4)" }}>›</span>
-                      </div>
-                    );
-                  })}
+            // One panel, everything on it.
+            //
+            // This was a two-level hover menu: hover the chip, hover a row, click a value — three
+            // interactions to change one setting, and the submenu could close if the pointer cut a
+            // corner. Worse, the descriptions that make the choice meaningful ("Flash · minimal
+            // thinking", "Durable multi-agent research mission") were already written in the code
+            // and only appeared at the second level, so the panel you actually looked at showed
+            // four grey words and told you nothing.
+            //
+            // Now: every dial is visible, the options are on screen, one click changes anything,
+            // and the ACTIVE option's description sits under the primary dials — so what "Eco"
+            // costs you is legible without hunting for it.
+            // The lit pill is ONE element positioned over the selected option, so changing the
+            // selection slides it there instead of blinking one background off and another on.
+            // Equal-width options mean its position is arithmetic — no measuring, no layout reads,
+            // and nothing to go stale when the panel resizes.
+            const Dial = ({ rows, cur, set, compact = false }: { rows: { id: string; label: string; desc: string }[]; cur: string; set?: (v: string) => void; compact?: boolean }) => {
+              const index = Math.max(0, rows.findIndex((r) => r.id === cur));
+              const pct = 100 / rows.length;
+              return (
+                <div className="jcb-seg" role="radiogroup">
+                  <span className="jcb-seg-pill" style={{ left: `calc(${index * pct}% + 2px)`, width: `calc(${pct}% - 4px)` }} />
+                  {rows.map((r) => (
+                    <button key={r.id} role="radio" aria-checked={cur === r.id} data-on={cur === r.id}
+                      onClick={() => set?.(r.id)} title={r.desc}
+                      style={{ padding: compact ? "4px 6px" : "6px 8px", fontSize: compact ? 11 : 12 }}>
+                      {r.label}
+                    </button>
+                  ))}
                 </div>
-                {/* Level 2 — flyout to the RIGHT: header + label/description + checkmark */}
-                {sub && (
-                  <div style={{ ...panel, left: "calc(100% + 8px)", width: 224, padding: "5px 5px 7px" }}
-                    onMouseEnter={openMenu} onMouseLeave={scheduleClose}>
-                    <div style={{ padding: "6px 10px 4px", fontSize: 9, fontWeight: 700, letterSpacing: "0.15em", textTransform: "uppercase", color: "rgba(150,175,205,0.5)" }}>{sub.title}</div>
-                    {sub.rows.map((r) => {
-                      const active = sub.cur === r.id;
-                      return (
-                        <div key={r.id} role="button" tabIndex={0}
-                          onClick={() => sub.set?.(r.id)}
-                          style={{ display: "flex", alignItems: "center", gap: 9, padding: "7px 10px", borderRadius: 8, cursor: "pointer", background: active ? HL : "transparent" }}
-                          onMouseEnter={(e) => { if (!active) (e.currentTarget as HTMLElement).style.background = "rgba(70,130,195,0.07)"; }}
-                          onMouseLeave={(e) => { if (!active) (e.currentTarget as HTMLElement).style.background = "transparent"; }}>
-                          <div style={{ flex: 1, minWidth: 0 }}>
-                            <div style={{ fontSize: 12.5, fontWeight: 500 }}>{r.label}</div>
-                            <div style={{ fontSize: 10, color: "rgba(158,180,202,0.58)", marginTop: 1 }}>{r.desc}</div>
-                          </div>
-                          {active ? <span style={{ color: ACCENT, fontSize: 12.5, fontWeight: 700 }}>✓</span> : null}
-                        </div>
-                      );
-                    })}
+              );
+            };
+            const Eyebrow = ({ children }: { children: React.ReactNode }) => (
+              <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: "0.15em", textTransform: "uppercase", color: "rgba(150,175,205,0.5)", marginBottom: 5 }}>{children}</div>
+            );
+            // keyed on the text so React remounts it and the fade replays when the choice changes
+            const Desc = ({ children }: { children: string }) => (
+              <div className="jcb-desc" key={children}>{children}</div>
+            );
+            return (
+              <div className="jcb-picker" style={{ ...panel, right: 0, width: 292, padding: "12px 12px 11px" }}
+                onMouseEnter={openMenu} onMouseLeave={scheduleClose}>
+                <Eyebrow>Model</Eyebrow>
+                <Dial rows={MODELS} cur={model || "cortex"} set={handleSetModel} />
+                <Desc>{activeModel.desc}</Desc>
+
+                <div style={{ marginTop: 12 }}>
+                  <Eyebrow>Effort</Eyebrow>
+                  <Dial rows={EFFORTS} cur={strength || (isEclipse ? "deep" : "cost-guarded")} set={onSetStrength} />
+                  <Desc>{activeEffort.desc}</Desc>
+                </div>
+
+                <div style={{ height: 1, background: "rgba(120,160,205,0.14)", margin: "12px 0 10px" }} />
+
+                {/* Secondary preferences: same controls, visually subordinate. Eclipse encodes
+                    research depth in its Effort tiers, so the Research dial does not apply there. */}
+                {!isEclipse && (
+                  <div style={{ display: "grid", gridTemplateColumns: "58px minmax(0,1fr)", alignItems: "center", gap: 8, marginBottom: 7 }}>
+                    <span style={{ fontSize: 11, color: "rgba(176,196,216,0.66)" }}>Research</span>
+                    <Dial rows={RESEARCH_ROWS} cur={research || "fast"} set={onSetResearch} compact />
                   </div>
                 )}
-              </>
+                <div style={{ display: "grid", gridTemplateColumns: "58px minmax(0,1fr)", alignItems: "center", gap: 8 }}>
+                  <span style={{ fontSize: 11, color: "rgba(176,196,216,0.66)" }}>Voice</span>
+                  <Dial rows={VOICE_ROWS} cur={voiceMode || "dictate"} set={onSetVoiceMode} compact />
+                </div>
+              </div>
             );
           })()}
         </div>
