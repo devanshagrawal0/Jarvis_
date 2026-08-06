@@ -157,83 +157,6 @@ const CSS = `
   pointer-events: auto; cursor: pointer;
 }
 .jcb-chip:hover { background: rgba(0,55,110,.9); }
-
-/* ── picker ────────────────────────────────────────────────────────────────
-   The first version was a flat slate settings panel bolted under a command bar
-   that glows bright cyan — it read as a preferences dialog from another app.
-   The bar's own language is rgba(0,207,255) with real luminosity, Orbitron for
-   labels, and hairlines that emit rather than sit there. The picker uses that.
-
-   The rule that decides everything here: the SELECTED option must look powered,
-   not merely tinted. At 16% opacity on navy it read as disabled — the exact
-   opposite of what a selection means. */
-.jcb-picker {
-  transform-origin: bottom right;
-  animation: jcb-pop .19s cubic-bezier(.2,.9,.3,1.15) both;
-}
-@keyframes jcb-pop {
-  from { opacity: 0; transform: translateY(8px) scale(.955); }
-  to   { opacity: 1; transform: translateY(0)   scale(1); }
-}
-
-/* Section labels in the app's display face, not body text pretending to be one. */
-.jcb-eyebrow {
-  font-family: Orbitron, Bahnschrift, "Segoe UI", sans-serif;
-  font-size: 8.5px; font-weight: 700; letter-spacing: .22em; text-transform: uppercase;
-  color: rgba(0,207,255,.62); margin-bottom: 7px;
-}
-
-/* Segmented control. Sharper corners than before — an instrument, not a toy. */
-.jcb-seg {
-  position: relative; display: flex; padding: 3px; border-radius: 7px;
-  background: rgba(2,10,20,.72);
-  border: 1px solid rgba(0,207,255,.16);
-  box-shadow: inset 0 1px 3px rgba(0,0,0,.5);
-}
-/* One pill that SLIDES, and that actually emits light. */
-.jcb-seg-pill {
-  position: absolute; top: 3px; bottom: 3px; border-radius: 5px;
-  background: linear-gradient(180deg, rgba(0,190,255,.26), rgba(0,120,210,.16));
-  border: 1px solid rgba(120,222,255,.75);
-  box-shadow: 0 0 14px rgba(0,190,255,.38), inset 0 1px 0 rgba(180,240,255,.3);
-  transition: left .24s cubic-bezier(.34,1.35,.5,1), width .24s cubic-bezier(.34,1.35,.5,1);
-  pointer-events: none;
-}
-.jcb-seg button {
-  position: relative; z-index: 1; flex: 1; min-width: 0; border: 0; background: none; border-radius: 5px;
-  font-family: Inter, "Segoe UI", sans-serif; letter-spacing: .01em;
-  color: rgba(150,180,205,.55); cursor: pointer; min-height: auto;
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-  transition: color .16s ease, transform .08s ease, text-shadow .16s ease;
-}
-.jcb-seg button:hover { color: rgba(200,235,255,.92); }
-.jcb-seg button:active { transform: scale(.955); }
-.jcb-seg button[data-on="true"] {
-  color: #eaf9ff; font-weight: 600;
-  text-shadow: 0 0 10px rgba(120,220,255,.55);
-}
-.jcb-seg button:focus-visible { outline: 1px solid rgba(0,207,255,.85); outline-offset: 2px; }
-
-.jcb-desc {
-  font-size: 10.5px; line-height: 1.4; color: rgba(126,186,220,.72); margin-top: 6px;
-  animation: jcb-fade .22s ease both;
-}
-@keyframes jcb-fade { from { opacity: 0; transform: translateY(-2px) } to { opacity: 1; transform: none } }
-
-/* Emitting hairline, same idea as the mic divider in the bar. */
-.jcb-rule {
-  height: 1px; margin: 13px 0 11px;
-  background: linear-gradient(90deg, rgba(0,207,255,.02), rgba(0,207,255,.32), rgba(0,207,255,.02));
-  box-shadow: 0 0 6px rgba(0,190,255,.22);
-}
-.jcb-minor { font-size: 10.5px; letter-spacing: .04em; color: rgba(140,180,208,.62); text-transform: uppercase;
-  font-family: Orbitron, Bahnschrift, "Segoe UI", sans-serif; font-weight: 600; }
-
-@media (prefers-reduced-motion: reduce) {
-  .jcb-picker, .jcb-desc { animation: none; }
-  .jcb-seg-pill { transition: none; }
-  .jcb-seg button:active { transform: none; }
-}
 `;
 
 function MicRing() {
@@ -502,85 +425,77 @@ export function JarvisCommandBar({ onSubmit, onMicToggle, onModules, model, onSe
             <span style={{ fontSize: 11.5, fontWeight: 500, color: "#4da6ff" }}>{activeEffort.label}</span>
           </button>
           {pickerOpen && (() => {
+            const sub = submenu === "model"
+              ? { title: "Model", rows: MODELS, cur: model || "cortex", set: handleSetModel }
+              : submenu === "effort"
+                ? { title: "Effort", rows: EFFORTS, cur: strength || "cost-guarded", set: onSetStrength }
+                : submenu === "research"
+                  ? (isEclipse ? null : { title: "Research", rows: RESEARCH_ROWS, cur: research || "fast", set: onSetResearch })
+                  : submenu === "voice"
+                    ? { title: "Voice", rows: VOICE_ROWS, cur: voiceMode || "dictate", set: onSetVoiceMode }
+                  : null;
+            const L1 = [
+              { key: "model" as const, label: "Model", value: activeModel.label },
+              { key: "effort" as const, label: "Effort", value: activeEffort.label },
+              // Eclipse encodes research depth in its Effort tiers (Pulse/Deep/Totality), so the
+              // separate Research dial doesn't apply — hide it when Eclipse is the model.
+              ...(isEclipse ? [] : [{ key: "research" as const, label: "Research", value: activeResearch.label }]),
+              { key: "voice" as const, label: "Voice", value: activeVoice.label },
+            ];
             const ACCENT = "#5cb0ff";
             const HL = "rgba(90,140,200,0.16)";
             const panel: React.CSSProperties = {
               position: "absolute", bottom: "calc(100% + 10px)",
               // Reference color: dark desaturated navy-charcoal (#1a2433), translucent +
               // heavy blur so the room glows through — holographic frosted glass, not pastel.
-              background: "linear-gradient(180deg, rgba(9,20,34,0.88), rgba(4,11,20,0.92))",
-              backdropFilter: "blur(38px)", WebkitBackdropFilter: "blur(38px)",
-              border: "1px solid rgba(0,207,255,0.28)", borderRadius: 12, zIndex: 61,
-              boxShadow: "0 18px 50px rgba(0,0,0,0.7), 0 0 26px rgba(0,150,240,0.16), inset 0 1px 0 rgba(150,225,255,0.14)",
+              background: "rgba(26,36,51,0.72)", backdropFilter: "blur(40px)", WebkitBackdropFilter: "blur(40px)",
+              border: "1px solid rgba(120,160,205,0.2)", borderRadius: 14, zIndex: 61,
+              boxShadow: "0 16px 44px rgba(0,0,0,0.62), inset 0 1px 0 rgba(180,210,245,0.06)",
               fontFamily: 'Inter, "Segoe UI", sans-serif', color: "rgba(234,242,252,0.94)",
             };
-            // One panel, everything on it.
-            //
-            // This was a two-level hover menu: hover the chip, hover a row, click a value — three
-            // interactions to change one setting, and the submenu could close if the pointer cut a
-            // corner. Worse, the descriptions that make the choice meaningful ("Flash · minimal
-            // thinking", "Durable multi-agent research mission") were already written in the code
-            // and only appeared at the second level, so the panel you actually looked at showed
-            // four grey words and told you nothing.
-            //
-            // Now: every dial is visible, the options are on screen, one click changes anything,
-            // and the ACTIVE option's description sits under the primary dials — so what "Eco"
-            // costs you is legible without hunting for it.
-            // The lit pill is ONE element positioned over the selected option, so changing the
-            // selection slides it there instead of blinking one background off and another on.
-            // Equal-width options mean its position is arithmetic — no measuring, no layout reads,
-            // and nothing to go stale when the panel resizes.
-            const Dial = ({ rows, cur, set, compact = false }: { rows: { id: string; label: string; desc: string }[]; cur: string; set?: (v: string) => void; compact?: boolean }) => {
-              const index = Math.max(0, rows.findIndex((r) => r.id === cur));
-              const pct = 100 / rows.length;
-              return (
-                <div className="jcb-seg" role="radiogroup">
-                  <span className="jcb-seg-pill" style={{ left: `calc(${index * pct}% + 2px)`, width: `calc(${pct}% - 4px)` }} />
-                  {rows.map((r) => (
-                    <button key={r.id} role="radio" aria-checked={cur === r.id} data-on={cur === r.id}
-                      onClick={() => set?.(r.id)} title={r.desc}
-                      style={{ padding: compact ? "4px 6px" : "6px 8px", fontSize: compact ? 11 : 12 }}>
-                      {r.label}
-                    </button>
-                  ))}
-                </div>
-              );
-            };
-            const Eyebrow = ({ children }: { children: React.ReactNode }) => (
-              <div className="jcb-eyebrow">{children}</div>
-            );
-            // keyed on the text so React remounts it and the fade replays when the choice changes
-            const Desc = ({ children }: { children: string }) => (
-              <div className="jcb-desc" key={children}>{children}</div>
-            );
             return (
-              <div className="jcb-picker" style={{ ...panel, right: 0, width: 292, padding: "12px 12px 11px" }}
-                onMouseEnter={openMenu} onMouseLeave={scheduleClose}>
-                <Eyebrow>Model</Eyebrow>
-                <Dial rows={MODELS} cur={model || "cortex"} set={handleSetModel} />
-                <Desc>{activeModel.desc}</Desc>
-
-                <div style={{ marginTop: 12 }}>
-                  <Eyebrow>Effort</Eyebrow>
-                  <Dial rows={EFFORTS} cur={strength || (isEclipse ? "deep" : "cost-guarded")} set={onSetStrength} />
-                  <Desc>{activeEffort.desc}</Desc>
+              <>
+                {/* Level 1 — category list, right-aligned to the chip */}
+                <div style={{ ...panel, right: 0, width: 198, padding: "5px" }}
+                  onMouseEnter={openMenu} onMouseLeave={scheduleClose}>
+                  {L1.map((row) => {
+                    const open = submenu === row.key;
+                    return (
+                      <div key={row.key} role="button" tabIndex={0}
+                        onClick={() => setSubmenu((s) => (s === row.key ? null : row.key))}
+                        onMouseEnter={() => { if (hoverTimer.current) clearTimeout(hoverTimer.current); setSubmenu(row.key); }}
+                        style={{ display: "flex", alignItems: "center", gap: 7, padding: "7px 10px", borderRadius: 8, cursor: "pointer", background: open ? HL : "transparent" }}>
+                        <span style={{ fontSize: 12, fontWeight: 500 }}>{row.label}</span>
+                        <span style={{ marginLeft: "auto", fontSize: 11.5, color: open ? ACCENT : "rgba(176,196,216,0.55)" }}>{row.value}</span>
+                        <span style={{ fontSize: 11, color: open ? ACCENT : "rgba(176,196,216,0.4)" }}>›</span>
+                      </div>
+                    );
+                  })}
                 </div>
-
-                <div className="jcb-rule" />
-
-                {/* Secondary preferences: same controls, visually subordinate. Eclipse encodes
-                    research depth in its Effort tiers, so the Research dial does not apply there. */}
-                {!isEclipse && (
-                  <div style={{ display: "grid", gridTemplateColumns: "58px minmax(0,1fr)", alignItems: "center", gap: 8, marginBottom: 7 }}>
-                    <span className="jcb-minor">Research</span>
-                    <Dial rows={RESEARCH_ROWS} cur={research || "fast"} set={onSetResearch} compact />
+                {/* Level 2 — flyout to the RIGHT: header + label/description + checkmark */}
+                {sub && (
+                  <div style={{ ...panel, left: "calc(100% + 8px)", width: 224, padding: "5px 5px 7px" }}
+                    onMouseEnter={openMenu} onMouseLeave={scheduleClose}>
+                    <div style={{ padding: "6px 10px 4px", fontSize: 9, fontWeight: 700, letterSpacing: "0.15em", textTransform: "uppercase", color: "rgba(150,175,205,0.5)" }}>{sub.title}</div>
+                    {sub.rows.map((r) => {
+                      const active = sub.cur === r.id;
+                      return (
+                        <div key={r.id} role="button" tabIndex={0}
+                          onClick={() => sub.set?.(r.id)}
+                          style={{ display: "flex", alignItems: "center", gap: 9, padding: "7px 10px", borderRadius: 8, cursor: "pointer", background: active ? HL : "transparent" }}
+                          onMouseEnter={(e) => { if (!active) (e.currentTarget as HTMLElement).style.background = "rgba(70,130,195,0.07)"; }}
+                          onMouseLeave={(e) => { if (!active) (e.currentTarget as HTMLElement).style.background = "transparent"; }}>
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            <div style={{ fontSize: 12.5, fontWeight: 500 }}>{r.label}</div>
+                            <div style={{ fontSize: 10, color: "rgba(158,180,202,0.58)", marginTop: 1 }}>{r.desc}</div>
+                          </div>
+                          {active ? <span style={{ color: ACCENT, fontSize: 12.5, fontWeight: 700 }}>✓</span> : null}
+                        </div>
+                      );
+                    })}
                   </div>
                 )}
-                <div style={{ display: "grid", gridTemplateColumns: "58px minmax(0,1fr)", alignItems: "center", gap: 8 }}>
-                  <span className="jcb-minor">Voice</span>
-                  <Dial rows={VOICE_ROWS} cur={voiceMode || "dictate"} set={onSetVoiceMode} compact />
-                </div>
-              </div>
+              </>
             );
           })()}
         </div>
