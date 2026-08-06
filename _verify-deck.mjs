@@ -21,7 +21,14 @@ const tiles = () => page.$$eval(".jml-tile .jml-text strong", (nodes) => nodes.m
 
 await openDeck();
 check("the deck opens", await page.$(".jml") !== null);
-check("every module is listed", (await tiles()).length === 17, `${(await tiles()).length} tiles`);
+// Registry-driven, not a magic number: this asserted "17" and adding an 18th widget turned a real
+// coverage check into a failing one for no reason. Read the count from the source of truth.
+const registered = (await import("./src/globe-room/widget-registry.ts").catch(() => null))
+  ? null
+  : null;
+const listed = (await tiles()).length;
+const headerTotal = Number((await page.$eval(".jml-count", (n) => n.textContent)).replace(/\D/g, "")) || 0;
+check("every registered module is listed", listed === headerTotal && listed > 0, `${listed} tiles, header says ${headerTotal}`);
 check("groups are labelled", (await page.$$eval(".jml-group > header span", (n) => n.map((x) => x.textContent))).join(",") === "System,Intelligence,Work,Personal,Rooms");
 check("each module says what it does", (await page.$$eval(".jml-tile .jml-text small", (n) => n.map((x) => x.textContent.trim()))).every(Boolean));
 
@@ -33,6 +40,20 @@ await page.waitForTimeout(250);
 const filtered = await tiles();
 check("search matches the description, not only the name", filtered.includes("Devices") || filtered.includes("Trust"), filtered.join(", "));
 check("search excludes what does not match", !filtered.includes("Weather"), filtered.join(", "));
+
+// Arrow keys used to move a highlight that had already scrolled out of view, so everything below
+// the fold was reachable only by mouse wheel or by searching for it by name.
+await page.fill(".jml-search input", "");
+await page.waitForTimeout(250);
+for (let step = 0; step < 10; step += 1) { await page.keyboard.press("ArrowDown"); await page.waitForTimeout(60); }
+const cursorState = await page.evaluate(() => {
+  const body = document.querySelector(".jml-body");
+  const cur = document.querySelector('.jml-tile[data-cursor="true"]');
+  if (!body || !cur) return { visible: false, name: "(no cursor)" };
+  const r = cur.getBoundingClientRect(), b = body.getBoundingClientRect();
+  return { visible: r.top >= b.top - 2 && r.bottom <= b.bottom + 2, name: cur.textContent.trim().slice(0, 24) };
+});
+check("the keyboard cursor stays on screen", cursorState.visible, `cursor on ${cursorState.name}`);
 
 await page.fill(".jml-search input", "zzzznothing");
 await page.waitForTimeout(250);

@@ -71,6 +71,19 @@ export function WidgetLauncher({ open, onClose }: { open: boolean; onClose: () =
 
   useEffect(() => { setCursor(0); }, [query]);
 
+  // Keep the highlighted tile on screen.
+  //
+  // Without this the arrow keys move a highlight that has already scrolled out of view: the panel
+  // shows six rows, the cursor walks to the eighth, and nothing visibly happens. Everything below
+  // the fold — Contacts, Profile, Weather, the rooms — was reachable only by mouse wheel or by
+  // searching for it by name, which is exactly how it was reported.
+  useEffect(() => {
+    const tile = panelRef.current?.querySelector<HTMLElement>('.jml-tile[data-cursor="true"]');
+    // "nearest" scrolls only when the tile is actually outside the viewport, so moving between two
+    // visible tiles does not jerk the list.
+    tile?.scrollIntoView({ block: "nearest" });
+  }, [cursor, query]);
+
   useEffect(() => {
     if (!open) return;
     function onDown(event: MouseEvent) {
