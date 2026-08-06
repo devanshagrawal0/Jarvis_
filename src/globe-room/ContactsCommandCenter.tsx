@@ -4,20 +4,24 @@ import "./ContactsCommandCenter.css";
 
 // The address book.
 //
-// Before this there was one component in the whole app that touched contacts: a picker card that
-// appeared when a name was ambiguous. Everything else — seeing who Jarvis knows, adding someone by
-// hand, correcting a handle, deleting a person, filling in a channel other than Instagram — had a
-// working API and no way to reach it.
+// Rewritten after the first attempt spent 400px of a 700px window on a hero restating the window
+// title, four metric tiles reading "1 / 0 / 1 / 0", and a coloured banner — with the list of people
+// scrolling in what was left. The window frame already reports the title and the count. Content
+// starts 34px in now.
 //
-// Two things it must not do, both of which the store already refuses and this surface must not undo:
-// invent a person, and hide a failure. A save that the backend rejects reports the backend's own
-// reason ("that is not an email address"), because that reason is the useful part.
+// Colour was doing work that hierarchy should do: a magenta panel accent plus a different neon per
+// channel. Channels are labelled in monospace instead; the single accent marks selection and
+// nothing else.
+//
+// Two things this surface must not do, both of which the store already refuses: invent a person,
+// and hide a failure. A rejected save reports the store's own sentence, because that sentence is
+// the useful part.
 
 interface ChannelMeta { key: string; label: string; kind: string; icon: string; color: string; placeholder: string }
 interface Contact {
   id: string; name: string; aliases?: string[]; notes?: string; tags?: string[]; pinned?: boolean;
-  hasAvatar?: boolean; channelCount?: number; createdAt?: string; updatedAt?: string; lastUsedAt?: string | null;
-  channels?: Record<string, { handle?: string; address?: string; link?: string; profileUrl?: string; threadUrl?: string; avatarUrl?: string }>;
+  hasAvatar?: boolean; createdAt?: string; updatedAt?: string; lastUsedAt?: string | null;
+  channels?: Record<string, { handle?: string; address?: string; link?: string; threadUrl?: string; avatarUrl?: string }>;
 }
 
 function ago(value?: string | null) {
@@ -30,33 +34,26 @@ function ago(value?: string | null) {
   return `${Math.floor(delta / 86_400_000)}d ago`;
 }
 
-// A colour that belongs to this person and no one else. Grey initials would repeat the exact
-// failure this whole feature exists to fix — two entries that look identical.
-function hueFor(name: string) {
-  let hash = 0;
-  for (let index = 0; index < name.length; index += 1) hash = (hash * 31 + name.charCodeAt(index)) % 360;
-  return hash;
-}
-
-function Face({ contact, size = 38 }: { contact: Contact; size?: number }) {
+// Derived from the name so two people are never identical, but desaturated to near-graphite — the
+// previous version's saturated hues turned a contact list into a colour chart.
+function Face({ contact, size }: { contact: Contact; size: number }) {
   const [broken, setBroken] = useState(false);
-  const hue = hueFor(contact.name || "?");
-  // Cache-busted on update so a refreshed photo is actually seen; without it the browser serves the
-  // old face and the refresh button looks like it does nothing.
+  let hash = 0;
+  const name = contact.name || "?";
+  for (let index = 0; index < name.length; index += 1) hash = (hash * 31 + name.charCodeAt(index)) % 360;
+  // Cache-busted on update, or a refreshed photo never appears and the button looks inert.
   const src = `/api/contacts/${contact.id}/avatar?v=${encodeURIComponent(contact.updatedAt || "")}`;
   const showImage = contact.hasAvatar && !broken;
   return (
     <span
       className="cc-face"
       style={{
-        width: size, height: size, fontSize: size * 0.4,
-        background: showImage ? undefined : `linear-gradient(150deg, hsl(${hue} 62% 30%), hsl(${(hue + 40) % 360} 58% 17%))`,
-        color: `hsl(${hue} 85% 78%)`,
+        width: size, height: size, fontSize: Math.round(size * 0.42),
+        background: showImage ? undefined : `hsl(${hash} 20% 24%)`,
+        color: `hsl(${hash} 30% 74%)`,
       }}
     >
-      {showImage
-        ? <img src={src} alt="" onError={() => setBroken(true)} />
-        : <b>{(contact.name || "?").trim().charAt(0).toUpperCase()}</b>}
+      {showImage ? <img src={src} alt="" onError={() => setBroken(true)} /> : <b>{name.trim().charAt(0).toUpperCase()}</b>}
     </span>
   );
 }
@@ -72,8 +69,8 @@ export function ContactsCommandCenter({ data, loading, onRefresh }: { data: any;
   const [form, setForm] = useState({ ...BLANK });
   const [values, setValues] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState(false);
-  const [message, setMessage] = useState<{ tone: "ok" | "error"; text: string } | null>(null);
-  const [confirmingDelete, setConfirmingDelete] = useState(false);
+  const [note, setNote] = useState<{ tone: "ok" | "error"; text: string } | null>(null);
+  const [confirming, setConfirming] = useState(false);
 
   useEffect(() => { if (data?.contacts) setContacts(data.contacts); }, [data?.contacts]);
   useEffect(() => { if (data?.channels?.length) setMeta(data.channels); }, [data?.channels]);
@@ -93,12 +90,11 @@ export function ContactsCommandCenter({ data, loading, onRefresh }: { data: any;
   }, [contacts, query]);
 
   const selected = visible.find((contact) => contact.id === selectedId) || visible[0] || null;
-  const withFaces = contacts.filter((contact) => contact.hasAvatar).length;
-  const links = contacts.reduce((total, contact) => total + Object.keys(contact.channels || {}).length, 0);
+  const metaFor = (key: string) => meta.find((channel) => channel.key === key);
 
   function openEditor(mode: "new" | "edit", contact?: Contact) {
-    setMessage(null);
-    setConfirmingDelete(false);
+    setNote(null);
+    setConfirming(false);
     setEditing(mode);
     if (mode === "new" || !contact) { setForm({ ...BLANK }); setValues({}); return; }
     setForm({
@@ -114,10 +110,10 @@ export function ContactsCommandCenter({ data, loading, onRefresh }: { data: any;
   }
 
   async function save() {
-    if (!form.name.trim()) { setMessage({ tone: "error", text: "A contact needs a name." }); return; }
-    setBusy(true); setMessage(null);
-    // Every channel is sent: a value to set it, an explicit null to remove one that was cleared.
-    // Omitting a cleared field would silently keep the old value — the edit would appear to work.
+    if (!form.name.trim()) { setNote({ tone: "error", text: "A contact needs a name." }); return; }
+    setBusy(true); setNote(null);
+    // Every channel is sent: a value to set it, an explicit null to clear one that was emptied.
+    // Omitting an emptied field would keep the old value and the edit would look like it worked.
     const channels: Record<string, unknown> = {};
     for (const channel of meta) {
       const value = (values[channel.key] || "").trim();
@@ -126,7 +122,7 @@ export function ContactsCommandCenter({ data, loading, onRefresh }: { data: any;
       else if (had) channels[channel.key] = null;
     }
     try {
-      const body = {
+      const result = await post<{ contact: Contact }>("/api/contacts", {
         id: editing === "edit" ? selected?.id : undefined,
         name: form.name,
         aliases: form.aliases.split(",").map((item) => item.trim()).filter(Boolean),
@@ -135,222 +131,175 @@ export function ContactsCommandCenter({ data, loading, onRefresh }: { data: any;
         tags: form.tags.split(",").map((item) => item.trim()).filter(Boolean),
         pinned: form.pinned,
         channels,
-      };
-      const result = await post<{ contact: Contact }>("/api/contacts", body);
+      });
       await reload();
       setSelectedId(result.contact.id);
       setEditing(null);
-      setMessage({ tone: "ok", text: `Saved ${result.contact.name}.` });
+      setNote({ tone: "ok", text: `Saved ${result.contact.name}.` });
     } catch (error) {
-      // The store's reason is the useful part — "that is not an email address" beats "save failed".
-      setMessage({ tone: "error", text: error instanceof Error ? error.message : String(error) });
+      setNote({ tone: "error", text: error instanceof Error ? error.message : String(error) });
     } finally { setBusy(false); }
   }
 
   async function remove() {
     if (!selected) return;
-    setBusy(true); setMessage(null);
+    setBusy(true); setNote(null);
     try {
       await api(`/api/contacts/${selected.id}`, { method: "DELETE" });
       await reload();
-      setSelectedId("");
-      setConfirmingDelete(false);
-      setMessage({ tone: "ok", text: `Removed ${selected.name}.` });
+      setSelectedId(""); setConfirming(false);
+      setNote({ tone: "ok", text: `Removed ${selected.name}.` });
     } catch (error) {
-      setMessage({ tone: "error", text: error instanceof Error ? error.message : String(error) });
+      setNote({ tone: "error", text: error instanceof Error ? error.message : String(error) });
     } finally { setBusy(false); }
   }
 
   async function fetchFace() {
     if (!selected) return;
-    setBusy(true); setMessage(null);
+    setBusy(true); setNote(null);
     try {
       await post(`/api/contacts/${selected.id}/avatar`, {});
       await reload();
-      setMessage({ tone: "ok", text: "Photo cached." });
+      setNote({ tone: "ok", text: "Photo cached." });
     } catch (error) {
-      setMessage({ tone: "error", text: error instanceof Error ? error.message : String(error) });
+      setNote({ tone: "error", text: error instanceof Error ? error.message : String(error) });
     } finally { setBusy(false); }
   }
 
-  const metaFor = (key: string) => meta.find((channel) => channel.key === key);
+  const channelEntries = Object.entries(selected?.channels || {});
 
-  return <div className="cc-center">
-    <section className="cc-hero">
-      <span className="cc-stack">
-        {contacts.slice(0, 5).map((contact) => <Face key={contact.id} contact={contact} size={40} />)}
-        {contacts.length === 0 ? <Face contact={{ id: "none", name: "?" }} size={40} /> : null}
-      </span>
-      <div>
-        <span>ADDRESS BOOK</span>
-        <h2>People Jarvis Knows</h2>
-        <p>Names, handles and conversations, stored once so “message them” never has to guess again.</p>
-      </div>
-    </section>
-
-    <div className="cc-metrics">
-      <article className="cc-metric"><span>People</span><strong>{contacts.length}</strong></article>
-      <article className="cc-metric"><span>With a face</span><strong>{withFaces}</strong></article>
-      <article className="cc-metric"><span>Channels linked</span><strong>{links}</strong></article>
-      <article className="cc-metric"><span>Pinned</span><strong>{contacts.filter((contact) => contact.pinned).length}</strong></article>
+  return <div className="cc">
+    <div className="cc-tools">
+      <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search name, alias, handle, tag" aria-label="Search contacts" />
+      <span className="cc-count">{loading && !contacts.length ? "loading" : `${visible.length}${query ? `/${contacts.length}` : ""}`}</span>
+      <button className="cc-act" onClick={() => openEditor("new")}>New</button>
     </div>
 
-    <div className="cc-bar">
-      <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search by name, alias, handle or tag…" aria-label="Search contacts" />
-      <button className="cc-btn" onClick={() => openEditor("new")}>+ New contact</button>
-    </div>
+    {note ? <div className="cc-note-bar" data-tone={note.tone}>{note.text}</div> : null}
 
-    {message ? <div className="cc-msg" data-tone={message.tone}>{message.text}</div> : null}
-
-    <div className="cc-split">
-      <section className="cc-panel">
-        <header><span>Contacts</span><small>{loading ? "loading" : `${visible.length} shown`}</small></header>
-        <div className="cc-list">
-          {visible.length === 0 ? (
-            <div className="cc-empty">
-              <b>{contacts.length ? "Nobody matches that" : "No contacts yet"}</b>
-              {contacts.length
-                ? "Try a handle or an alias."
-                : "Add someone, or let Jarvis ask next time it cannot tell two people apart."}
-            </div>
-          ) : visible.map((contact) => (
+    <div className="cc-panes">
+      <div className="cc-side">
+        {visible.length === 0 ? (
+          <div className="cc-blank">
+            <b>{contacts.length ? "No match" : "No contacts yet"}</b>
+            {contacts.length ? "Try a handle or an alias." : "Add someone, or let Jarvis ask next time it cannot tell two people apart."}
+          </div>
+        ) : visible.map((contact) => {
+          const count = Object.keys(contact.channels || {}).length;
+          return (
             <button
               key={contact.id}
               className="cc-row"
               data-selected={selected?.id === contact.id}
-              onClick={() => { setSelectedId(contact.id); setEditing(null); setConfirmingDelete(false); }}
+              onClick={() => { setSelectedId(contact.id); setEditing(null); setConfirming(false); }}
             >
-              <Face contact={contact} />
+              <Face contact={contact} size={22} />
               <span>
-                <strong>{contact.name}{contact.pinned ? <i className="cc-pin"> ★</i> : null}</strong>
-                <small>{(contact.aliases || []).join(", ") || Object.keys(contact.channels || {}).map((key) => metaFor(key)?.label || key).join(" · ") || "no channels yet"}</small>
+                <b>{contact.name}{contact.pinned ? <i className="cc-pin"> ●</i> : null}</b>
+                <s>{(contact.aliases || []).join(", ") || Object.keys(contact.channels || {}).map((key) => metaFor(key)?.label || key).join(", ") || "no channels"}</s>
               </span>
-              <span className="cc-dots">
-                {Object.keys(contact.channels || {}).slice(0, 6).map((key) => (
-                  <i key={key} style={{ background: metaFor(key)?.color || "#48D8FF" }} title={metaFor(key)?.label || key} />
-                ))}
-              </span>
+              <em>{count || ""}</em>
             </button>
-          ))}
-        </div>
-      </section>
+          );
+        })}
+      </div>
 
-      <section className="cc-panel">
-        <header>
-          <span>{editing === "new" ? "New contact" : editing === "edit" ? "Editing" : "Dossier"}</span>
-          <small>{editing ? "unsaved" : selected ? `used ${ago(selected.lastUsedAt)}` : "—"}</small>
-        </header>
-
+      <div className="cc-main">
         {editing ? (
-          <div className="cc-body">
-            <div className="cc-form">
-              <label className="cc-field"><span>Name</span>
-                <input value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} placeholder="Their name" autoFocus />
-              </label>
-              <div className="cc-two">
-                <label className="cc-field"><span>Also called</span>
-                  <input value={form.aliases} onChange={(event) => setForm({ ...form, aliases: event.target.value })} placeholder="tg, roomie" />
-                </label>
-                <label className="cc-field"><span>Tags</span>
-                  <input value={form.tags} onChange={(event) => setForm({ ...form, tags: event.target.value })} placeholder="family, work" />
-                </label>
+          <div className="cc-form">
+            <div className="cc-legend">Identity</div>
+            <div className="cc-in" data-filled={Boolean(form.name)}>
+              <label htmlFor="cc-name">Name</label>
+              <input id="cc-name" value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} placeholder="their name" autoFocus />
+            </div>
+            <div className="cc-in" data-filled={Boolean(form.aliases)}>
+              <label htmlFor="cc-alias">Also</label>
+              <input id="cc-alias" value={form.aliases} onChange={(event) => setForm({ ...form, aliases: event.target.value })} placeholder="tg, roomie" />
+            </div>
+            <div className="cc-in" data-filled={Boolean(form.tags)}>
+              <label htmlFor="cc-tags">Tags</label>
+              <input id="cc-tags" value={form.tags} onChange={(event) => setForm({ ...form, tags: event.target.value })} placeholder="family, work" />
+            </div>
+
+            <div className="cc-legend">Channels</div>
+            {meta.map((channel) => (
+              <div className="cc-in" key={channel.key} data-channel={channel.key} data-filled={Boolean(values[channel.key])}>
+                <label htmlFor={`cc-${channel.key}`}>{channel.label}</label>
+                <input
+                  id={`cc-${channel.key}`}
+                  value={values[channel.key] || ""}
+                  onChange={(event) => setValues({ ...values, [channel.key]: event.target.value })}
+                  placeholder={channel.placeholder}
+                />
               </div>
+            ))}
 
-              <div className="cc-field">
-                <span>Channels</span>
-                {meta.map((channel) => (
-                  <div className="cc-chan-edit" key={channel.key}>
-                    <label htmlFor={`cc-${channel.key}`}>
-                      <i style={{ color: channel.color }}>{channel.icon}</i>{channel.label}
-                    </label>
-                    <input
-                      id={`cc-${channel.key}`}
-                      value={values[channel.key] || ""}
-                      onChange={(event) => setValues({ ...values, [channel.key]: event.target.value })}
-                      placeholder={channel.placeholder}
-                    />
-                  </div>
-                ))}
-              </div>
+            <div className="cc-legend">Notes</div>
+            <div className="cc-in" data-filled={Boolean(form.notes)}>
+              <label htmlFor="cc-notes">Notes</label>
+              <textarea id="cc-notes" value={form.notes} onChange={(event) => setForm({ ...form, notes: event.target.value })} placeholder="anything worth remembering" />
+            </div>
 
-              <label className="cc-field"><span>Notes</span>
-                <textarea value={form.notes} onChange={(event) => setForm({ ...form, notes: event.target.value })} placeholder="Anything worth remembering about them." />
-              </label>
+            <label className="cc-check">
+              <input type="checkbox" checked={form.pinned} onChange={(event) => setForm({ ...form, pinned: event.target.checked })} />
+              Pin to top
+            </label>
 
-              <label className="cc-check">
-                <input type="checkbox" checked={form.pinned} onChange={(event) => setForm({ ...form, pinned: event.target.checked })} />
-                Pin to the top
-              </label>
-
-              <div className="cc-actions">
-                <button className="cc-btn" onClick={() => void save()} disabled={busy}>{busy ? "Saving…" : "Save contact"}</button>
-                <button className="cc-btn" data-quiet="true" onClick={() => { setEditing(null); setMessage(null); }} disabled={busy}>Cancel</button>
-              </div>
+            <div className="cc-save">
+              <button className="cc-act" onClick={() => void save()} disabled={busy}>{busy ? "Saving…" : "Save"}</button>
+              <button className="cc-act" onClick={() => { setEditing(null); setNote(null); }} disabled={busy}>Cancel</button>
             </div>
           </div>
         ) : selected ? (
-          <div className="cc-body">
-            <div className="cc-id">
-              <Face contact={selected} size={62} />
+          <>
+            <div className="cc-head">
+              <Face contact={selected} size={34} />
               <div>
                 <h3>{selected.name}</h3>
-                <p>{(selected.aliases || []).length ? `also “${(selected.aliases || []).join("”, “")}”` : "no other names recorded"}</p>
+                <p>{(selected.aliases || []).join(", ") || "no other names"}</p>
               </div>
+              <nav>
+                <button className="cc-act" onClick={() => openEditor("edit", selected)}>Edit</button>
+                <button className="cc-act" onClick={() => void fetchFace()} disabled={busy}>{selected.hasAvatar ? "Refresh photo" : "Photo"}</button>
+                {confirming ? (
+                  <>
+                    <button className="cc-act" data-danger="true" onClick={() => void remove()} disabled={busy}>Delete {selected.name}</button>
+                    <button className="cc-act" onClick={() => setConfirming(false)}>Keep</button>
+                  </>
+                ) : <button className="cc-act" data-danger="true" onClick={() => setConfirming(true)}>Delete</button>}
+              </nav>
             </div>
 
-            <div className="cc-chan">
-              {Object.keys(selected.channels || {}).length === 0 ? (
-                <div className="cc-empty"><b>No channels yet</b>Edit this contact to add a handle, number or address.</div>
-              ) : Object.entries(selected.channels || {}).map(([key, account]) => {
-                const channel = metaFor(key);
-                const value = account.handle || account.address || "";
-                return (
-                  <article key={key}>
-                    <i style={{ color: channel?.color, background: `${channel?.color || "#48D8FF"}18` }}>{channel?.icon || "•"}</i>
-                    <div>
-                      <span>{channel?.label || key}{account.threadUrl ? " · conversation known" : ""}</span>
+            <div className="cc-rows">
+              {channelEntries.length === 0
+                ? <div className="cc-blank"><b>No channels</b>Edit to add a handle, number or address.</div>
+                : channelEntries.map(([key, account]) => {
+                  const value = account.handle || account.address || "";
+                  return (
+                    <div className="cc-def" key={key}>
+                      <span>{metaFor(key)?.label || key}</span>
                       <code>{value || "—"}</code>
+                      <nav>
+                        {value ? <button className="cc-act" onClick={() => void navigator.clipboard?.writeText(value)}>Copy</button> : null}
+                        {account.link ? <a className="cc-act" href={account.link} target="_blank" rel="noreferrer noopener">Open</a> : null}
+                      </nav>
                     </div>
-                    <nav>
-                      {value ? <button onClick={() => void navigator.clipboard?.writeText(value)}>Copy</button> : null}
-                      {account.link ? <a href={account.link} target="_blank" rel="noreferrer noopener">Open</a> : null}
-                    </nav>
-                  </article>
-                );
-              })}
+                  );
+                })}
             </div>
 
-            {selected.notes ? <div className="cc-note"><span>Notes</span><p>{selected.notes}</p></div> : null}
-            {(selected.tags || []).length ? <div className="cc-tags">{(selected.tags || []).map((tag) => <code key={tag}>{tag}</code>)}</div> : null}
+            {selected.notes ? <div className="cc-sub"><span>Notes</span><p>{selected.notes}</p></div> : null}
+            {(selected.tags || []).length ? <div className="cc-sub"><span>Tags</span><div className="cc-tags">{(selected.tags || []).map((tag) => <code key={tag}>{tag}</code>)}</div></div> : null}
 
-            <div className="cc-meta">
-              <div><span>Added</span><strong>{ago(selected.createdAt)}</strong></div>
-              <div><span>Updated</span><strong>{ago(selected.updatedAt)}</strong></div>
-              <div><span>Last used</span><strong>{ago(selected.lastUsedAt)}</strong></div>
+            <div className="cc-foot">
+              added {ago(selected.createdAt)} · updated {ago(selected.updatedAt)} · used {ago(selected.lastUsedAt)}
+              {channelEntries.some(([, account]) => account.threadUrl) ? " · conversation known" : ""}
             </div>
-
-            <div className="cc-actions">
-              <button className="cc-btn" onClick={() => openEditor("edit", selected)}>Edit</button>
-              <button className="cc-btn" data-quiet="true" onClick={() => void fetchFace()} disabled={busy}>
-                {selected.hasAvatar ? "Refresh photo" : "Fetch photo"}
-              </button>
-              {confirmingDelete ? (
-                <>
-                  <button className="cc-btn" data-danger="true" onClick={() => void remove()} disabled={busy}>Delete {selected.name}</button>
-                  <button className="cc-btn" data-quiet="true" onClick={() => setConfirmingDelete(false)}>Keep</button>
-                </>
-              ) : (
-                <button className="cc-btn" data-danger="true" onClick={() => setConfirmingDelete(true)}>Delete</button>
-              )}
-            </div>
-          </div>
+          </>
         ) : (
-          <div className="cc-empty">
-            <b>Nobody selected</b>
-            Pick someone on the left, or add the first contact.
-          </div>
+          <div className="cc-blank"><b>Nobody selected</b>Pick someone on the left, or add the first contact.</div>
         )}
-      </section>
+      </div>
     </div>
   </div>;
 }
