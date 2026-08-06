@@ -8,7 +8,12 @@ const { id, nowIso, hashOf } = require("../contracts/validate");
 const MAX_DEPTH = 2;
 
 // Scope vocabulary (v1). Tools declare the scope they need; leases grant scopes.
-const SCOPES = ["web.search", "web.fetch", "memory.read", "memory.write", "code.exec", "fs.read", "fs.write", "artifact.write", "task_os.control", "spawn"];
+//
+// `jarvis.control` reaches the main assistant's capability engine — the same tools the rest of
+// JARVIS runs on. It is named a control scope deliberately: narrow() only lets /write|control/
+// scopes become sideEffecting, so this naming is what keeps a mission from acting on the world
+// without an approved lease. A scope called `jarvis.capability` could never have been granted.
+const SCOPES = ["web.search", "web.fetch", "memory.read", "memory.write", "code.exec", "fs.read", "fs.write", "artifact.write", "task_os.control", "jarvis.control", "spawn"];
 
 // A root lease derived from the mission's constraints — broad READ authority, no external writes.
 function issueRootLease(mission, sessionId, { scopes, ttlMs = 30 * 60 * 1000 } = {}) {

@@ -12,6 +12,7 @@ const { createAdapter } = require("../model/adapter");
 const { createLedger } = require("../model/cost-ledger");
 const { issueRootLease } = require("../capabilities/lease");
 const { createGateway } = require("../capabilities/tool-gateway");
+const { BRIDGE_SIDE_EFFECTING, BRIDGE_TOOL_SCOPE } = require("../capabilities/jarvis-bridge");
 const { createToolbox } = require("../tools");
 const { createEvidenceStore } = require("../evidence/store");
 const { validate, MissionSpec } = require("../contracts");
@@ -56,13 +57,26 @@ function makeRun(opts) {
   const conn = checkpointConn || path.join(dir, "eclipse-checkpoints.sqlite");
   const checkpointer = opts.checkpointer || SqliteSaver.fromConnString(conn);
   const graphRunId = mission.missionId;
-  const rootLease = opts.rootLease || issueRootLease(mission, "root");   // mission authority ceiling
-  const gateway = opts.gateway || createGateway({ store });              // enforces every tool call
+  // The mission's own knowledge of JARVIS — contacts, memory, the real capability engine — supplied
+  // by the integration. Merged into the toolbox below rather than replacing it, so web research and
+  // owner knowledge are available to the same run.
+  const jarvisTools = opts.jarvisTools || null;
+  const rootLease = opts.rootLease || issueRootLease(mission, "root", jarvisTools
+    // Grant the ceiling the bridge scopes only when the bridge is actually present. A lease that
+    // names authority the run cannot exercise is a lie in the audit trail.
+    ? { scopes: [...issueRootLease(mission, "root").scopes, "jarvis.control"] }
+    : undefined);
+  const gateway = opts.gateway || createGateway(jarvisTools
+    ? { store, extraScopes: BRIDGE_TOOL_SCOPE, extraSideEffecting: BRIDGE_SIDE_EFFECTING }
+    : { store });                                                        // enforces every tool call
   // W5: real tools + evidence store activate when fixtures/corpus/live are supplied. Absent →
   // W4 stub behavior (backward-compatible). evidenceStore is cheap; only used in W5 mode.
   const evidenceStore = createEvidenceStore(store.db);
-  const wantsTools = opts.toolbox || opts.fixtures || opts.corpus || opts.toolMode === "live" || opts.search || opts.webFetch;
-  const toolbox = opts.toolbox || (wantsTools ? createToolbox({ mode: opts.toolMode || "fixture", fixtures: opts.fixtures || {}, corpus: opts.corpus || [], webFetch: opts.webFetch, search: opts.search }) : null);
+  const wantsTools = opts.toolbox || opts.fixtures || opts.corpus || opts.toolMode === "live" || opts.search || opts.webFetch || jarvisTools;
+  const baseToolbox = opts.toolbox || (wantsTools ? createToolbox({ mode: opts.toolMode || "fixture", fixtures: opts.fixtures || {}, corpus: opts.corpus || [], webFetch: opts.webFetch, search: opts.search }) : null);
+  // Owner knowledge is added to the research tools, not swapped for them. Spread last so an
+  // explicitly injected toolbox (tests, fixtures) can still override a bridge tool by name.
+  const toolbox = jarvisTools ? { ...(baseToolbox || {}), ...jarvisTools, ...(opts.toolbox || {}) } : baseToolbox;
   const artifactsDir = opts.artifactsDir || path.join(dir, "eclipse-artifacts");
   return { store, ledger, adapter, checkpointer, graphRunId, conn, rootLease, gateway, evidenceStore, toolbox, artifactsDir, useFoundry: !!opts.useFoundry, reputation: opts.reputation || null };
 }

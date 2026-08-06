@@ -22,13 +22,18 @@ const TOOL_SCOPE = {
 };
 const SIDE_EFFECTING = new Set(["memory.promote", "fs.write", "artifact.write"]);
 
-function createGateway({ store = null, onDecision = null } = {}) {
+// Tools reachable through the Jarvis bridge are registered by the caller rather than hard-coded
+// here, so this gateway stays a generic enforcement point and does not have to know what the rest
+// of the assistant can do. Anything not registered stays default-denied.
+function createGateway({ store = null, onDecision = null, extraScopes = null, extraSideEffecting = null } = {}) {
   const counters = new Map(); // `${leaseId}:${tool}` → count
+  const scopes = extraScopes ? { ...TOOL_SCOPE, ...extraScopes } : TOOL_SCOPE;
+  const sideEffecting = extraSideEffecting ? new Set([...SIDE_EFFECTING, ...extraSideEffecting]) : SIDE_EFFECTING;
 
   // authorize(lease, {tool, resource}) → { allow, reason, scope }. Pure check; no side effect.
   function authorize(lease, { tool, resource = null } = {}) {
     try { verify(lease); } catch (e) { return deny(`lease invalid: ${e.leaseCode || e.message}`, tool); }
-    const scope = TOOL_SCOPE[tool];
+    const scope = scopes[tool];
     if (!scope) return deny(`unknown tool "${tool}" (default-deny)`, tool);
     if (!lease.scopes.includes(scope)) return deny(`lease lacks scope "${scope}" for tool "${tool}"`, tool, scope);
     if (resource != null && !(lease.resourceGlobs || []).some((g) => matches(g, resource))) {
@@ -39,7 +44,7 @@ function createGateway({ store = null, onDecision = null } = {}) {
       const used = counters.get(`${lease.leaseId}:${tool}`) || 0;
       if (used >= max) return deny(`call budget for "${tool}" exhausted (${used}/${max})`, tool, scope);
     }
-    if (SIDE_EFFECTING.has(tool) && !lease.sideEffecting) {
+    if (sideEffecting.has(tool) && !lease.sideEffecting) {
       return deny(`side-effecting tool "${tool}" requires an approved (sideEffecting) lease → HITL`, tool, scope);
     }
     return { allow: true, reason: "ok", scope };
@@ -69,7 +74,10 @@ function createGateway({ store = null, onDecision = null } = {}) {
 
   function callCount(leaseId, tool) { return counters.get(`${leaseId}:${tool}`) || 0; }
 
-  return { authorize, mediate, callCount, TOOL_SCOPE, SIDE_EFFECTING };
+  // Return the EFFECTIVE tables, not the module defaults: a caller that registered bridge tools
+  // must be able to see them, and a test asserting against the defaults while the gateway enforces
+  // something wider is a test that cannot fail.
+  return { authorize, mediate, callCount, TOOL_SCOPE: scopes, SIDE_EFFECTING: sideEffecting };
 }
 
 module.exports = { createGateway, TOOL_SCOPE, SIDE_EFFECTING };

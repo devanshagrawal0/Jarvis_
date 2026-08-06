@@ -52,6 +52,7 @@ const { loadEnvFile } = require("./server/providers/apex/env-loader");
 const { createVibeNativeEngine } = require("./server/apex/quant/vibe-native");
 const { createOracle } = require("./server/apex/predict");
 const { yahooChart: apexYahooChart, yahooChartPeriod: apexYahooChartPeriod } = require("./server/providers/apex/adapters");
+const apexKeyedAdapters = require("./server/providers/apex/keyed-adapters");
 // Brain turn-classification — single source of truth (grounding trigger + evidence gate share it).
 const { rawUserMessage, needsFreshInfo } = require("./server/brain-classify");
 const { createApexPaper } = require("./server/apex/apex-paper");
@@ -7037,13 +7038,58 @@ async function handleApi(req, res, pathname, url) {
       if (req.method === "GET" && pathname === "/api/apex/micro") { sendJson(res, 200, apexIngest.getMicro()); return; }
       const barsM = pathname.match(/^\/api\/apex\/bars\/([^/]+)$/);
       if (req.method === "GET" && barsM) {
-        const sym = decodeURIComponent(barsM[1]); const tf = url.searchParams.get("tf") || "1d";
+        const sym = decodeURIComponent(barsM[1]).toUpperCase(); const tf = url.searchParams.get("tf") || "1d";
+        const requestedRange = url.searchParams.get("range") || "6mo";
         const from = url.searchParams.get("from"), to = url.searchParams.get("to");
-        let data;
-        if (/USDT?$/i.test(sym)) data = await apexIngest.getKlines(sym, tf, 200);
-        else if (from && to) data = (await apexYahooChartPeriod(sym, Date.parse(from) / 1000, Date.parse(to) / 1000, tf)).bars; // explicit range → true daily (for stress crash windows)
-        else data = (await apexIngest.getChart(sym, url.searchParams.get("range") || "6mo", tf)).bars;
-        sendJson(res, 200, { ticker: sym, tf, bars: data }); return;
+        const limitForRange = (r) => r === "1d" ? 120 : r === "5d" ? 160 : r === "1mo" ? 40 : r === "3mo" ? 90 : r === "ytd" ? 260 : r === "1y" ? 270 : r === "5y" ? 280 : 220;
+        const tiingoStartForRange = (r) => {
+          if (from) return String(from).slice(0, 10);
+          const d = new Date();
+          const days = tf !== "1d" && (r === "1d" || r === "5d") ? 120 : r === "1d" ? 14 : r === "5d" ? 21 : r === "1mo" ? 45 : r === "3mo" ? 120 : r === "ytd" ? Math.max(14, Math.ceil((d - new Date(Date.UTC(d.getUTCFullYear(), 0, 1))) / 864e5) + 10) : r === "1y" ? 390 : r === "5y" ? 1900 : 260;
+          const start = r === "ytd" ? new Date(Date.UTC(d.getUTCFullYear(), 0, 1)) : new Date(Date.now() - days * 864e5);
+          return start.toISOString().slice(0, 10);
+        };
+        const cleanBars = (rows) => (Array.isArray(rows) ? rows : []).filter((b) => b && Number.isFinite(+b.c)).map((b) => ({ ...b, o: +b.o, h: +b.h, l: +b.l, c: +b.c, v: b.v == null ? null : +b.v }));
+        const putCache = (tfKey, rows) => { try { if (rows && rows.length) apexDb.insertBars(sym, tfKey, rows); } catch { /* cache optional */ } };
+        const getCache = (tfKey) => { try { return cleanBars(apexDb.getBars(sym, tfKey, limitForRange(requestedRange))); } catch { return []; } };
+        let data, source = "none", actualTf = tf, warning = null, primaryError = null;
+        if (/USDT?$/i.test(sym)) {
+          try { data = cleanBars(await apexIngest.getKlines(sym, tf, 200)); source = "crypto-public"; putCache(tf, data); }
+          catch (e) { primaryError = e && e.message; data = getCache(tf); source = data.length ? "cache" : "none"; }
+        }
+        else if (false && from && to) data = (await apexYahooChartPeriod(sym, Date.parse(from) / 1000, Date.parse(to) / 1000, tf)).bars; // explicit range -> true daily (for stress crash windows)
+        else {
+          try {
+            if (from && to) data = cleanBars((await apexYahooChartPeriod(sym, Date.parse(from) / 1000, Date.parse(to) / 1000, tf)).bars);
+            else data = cleanBars((await apexIngest.getChart(sym, requestedRange, tf)).bars);
+            source = "yahoo-chart"; actualTf = tf; putCache(tf, data);
+          } catch (e) {
+            primaryError = e && e.message;
+          }
+          if (!data || !data.length) {
+            data = getCache(tf);
+            if (data.length) source = "cache";
+          }
+          if ((!data || !data.length) && tf !== "1d") {
+            data = getCache("1d");
+            if (data.length >= 35) { source = "cache-daily"; actualTf = "1d"; warning = `${tf} unavailable; showing cached daily bars`; }
+            else data = [];
+          }
+          if ((!data || !data.length) && apexKeyedAdapters.keysPresent().tiingo) {
+            try {
+              const start = tiingoStartForRange(requestedRange);
+              data = cleanBars(await apexKeyedAdapters.tiingoDaily(sym, start));
+              if (to) data = data.filter((b) => Date.parse(b.t) <= Date.parse(to));
+              source = "tiingo-daily"; actualTf = "1d";
+              if (tf !== "1d") warning = `${tf} unavailable from current sources; showing real Tiingo daily bars`;
+              putCache("1d", data);
+            } catch (e) {
+              if (!warning) warning = e && e.message ? e.message : "chart data unavailable";
+            }
+          }
+        }
+        if ((!data || !data.length) && primaryError && !warning) warning = primaryError;
+        sendJson(res, 200, { ticker: sym, tf, actualTf, source, warning, bars: data || [] }); return;
       }
       // Health-bot APPLY step: config change → governor hot-reload (no restart).
       if (req.method === "POST" && pathname === "/api/apex/source/config") {
@@ -13230,7 +13276,14 @@ function ensureEclipseIntegration() {
   if (eclipseIntegration || eclipseIntegrationError) return eclipseIntegration;
   try {
     const { createEclipseIntegration } = require("./server/eclipse/integration");
-    eclipseIntegration = createEclipseIntegration({ runtimeDir: RUNTIME_DIR, secretStore, loadSettings });
+    // Eclipse is a mode of JARVIS, not a separate assistant. Handing it the same capability engine,
+    // contact store and vault the main loop uses is what makes that true — before this it launched
+    // with web search and page fetch only, so a mission could not name a contact, recall anything
+    // the owner had said, or use any of the capabilities everything else runs on.
+    eclipseIntegration = createEclipseIntegration({
+      runtimeDir: RUNTIME_DIR, secretStore, loadSettings,
+      capabilityEngine, contactStore, neuralVault,
+    });
     console.log("[eclipse] mounted → console at /eclipse, API at /api/eclipse/*");
   } catch (error) {
     eclipseIntegrationError = error;

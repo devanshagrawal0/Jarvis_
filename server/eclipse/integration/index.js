@@ -11,6 +11,7 @@ const { streamMission } = require("../orchestration/events");
 const { runMission } = require("../orchestration/run-graph");
 const { createInteractionsClient } = require("../model/interactions-client");
 const { createLiveWebTools } = require("../tools/web-live");
+const { bridgeSummary, createJarvisToolbox } = require("../capabilities/jarvis-bridge");
 const { createReputation } = require("../agents/reputation");
 const { renderConsole } = require("./console");
 
@@ -24,7 +25,16 @@ function readJsonBody(req, limit = 1_000_000) {
 }
 function json(res, code, obj) { res.writeHead(code, { "Content-Type": "application/json" }); res.end(JSON.stringify(obj)); }
 
-// deps: { runtimeDir, secretStore, loadSettings, maxCostUsd?, isEnabled? }
+// deps: { runtimeDir, secretStore, loadSettings, maxCostUsd?, isEnabled?,
+//         capabilityEngine?, contactStore?, neuralVault? }
+//
+// The last three are what make an Eclipse mission part of JARVIS rather than a stranger that
+// happens to share the text box. Without them a mission gets web search and page fetch only: it
+// cannot name a contact, cannot recall anything the owner has said, and cannot use any of the
+// capabilities the rest of the assistant runs on. They are optional so Eclipse still boots if the
+// main server has not finished constructing them — but the missing tools are reported rather than
+// silently absent, because "Eclipse could not find your contact" and "Eclipse was never given
+// contacts" are different problems with the same symptom.
 function createEclipseIntegration(deps) {
   const runtimeDir = deps.runtimeDir || "runtime";
   const maxCostUsd = deps.maxCostUsd ?? 0.5;
@@ -53,8 +63,20 @@ function createEclipseIntegration(deps) {
     const mission = { schemaVersion: "eclipse.mission.v1", missionId, userId: "dev", prompt: String(prompt || "").slice(0, 4000), effort, createdAt: new Date().toISOString(), constraints: { maxCostUsd, maxTokens: 250000, allowedPaths: [], privacy: "provider" } };
     const rec = { status: "running", result: null, error: null, startedAt: Date.now(), effort, prompt: mission.prompt };
     missions.set(missionId, rec);
+    // The mission's own knowledge of the owner: contacts, memory, and the real capability engine.
+    const jarvisTools = createJarvisToolbox({
+      capabilityEngine: deps.capabilityEngine || null,
+      contactStore: deps.contactStore || null,
+      neuralVault: deps.neuralVault || null,
+      sessionId: `eclipse:${missionId}`,
+      deviceId: "eclipse",
+    });
+    // Record what this mission was actually given. A run that failed for lack of a tool should be
+    // diagnosable from its own event log rather than by re-reading the server's wiring.
+    try { store.appendEvent(missionId, "mission.tools", bridgeSummary(jarvisTools)); } catch { /* logging must not fail a launch */ }
+
     // Fire-and-forget: the SSE stream carries progress; POST returns immediately.
-    runMission({ mission, store, dir: runtimeDir, mode: "live", liveCall, toolMode: "live", search: web.search, webFetch: web.fetchUrl, useFoundry: true, reputation, artifactsDir })
+    runMission({ mission, store, dir: runtimeDir, mode: "live", liveCall, toolMode: "live", search: web.search, webFetch: web.fetchUrl, useFoundry: true, reputation, artifactsDir, jarvisTools })
       .then((r) => { rec.status = r.status; rec.result = summarize(r); })
       .catch((e) => { rec.status = "failed"; rec.error = String(e.message); try { store.appendEvent(missionId, "mission.failed", { error: rec.error }); } catch {} });
     return { missionId };
