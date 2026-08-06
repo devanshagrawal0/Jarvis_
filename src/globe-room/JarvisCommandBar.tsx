@@ -158,48 +158,76 @@ const CSS = `
 }
 .jcb-chip:hover { background: rgba(0,55,110,.9); }
 
-/* ── picker: the feel ──────────────────────────────────────────────────────
-   Codex and Claude Code both get this right by doing very little: the panel
-   arrives from where it was summoned, the selected option moves rather than
-   blinks, and pressing something answers immediately. Motion here is doing a
-   job — it says "this came from that chip" and "the selection moved there" —
-   which is the difference between polish and decoration. */
+/* ── picker ────────────────────────────────────────────────────────────────
+   The first version was a flat slate settings panel bolted under a command bar
+   that glows bright cyan — it read as a preferences dialog from another app.
+   The bar's own language is rgba(0,207,255) with real luminosity, Orbitron for
+   labels, and hairlines that emit rather than sit there. The picker uses that.
+
+   The rule that decides everything here: the SELECTED option must look powered,
+   not merely tinted. At 16% opacity on navy it read as disabled — the exact
+   opposite of what a selection means. */
 .jcb-picker {
   transform-origin: bottom right;
-  animation: jcb-pop .17s cubic-bezier(.2,.9,.3,1.1) both;
+  animation: jcb-pop .19s cubic-bezier(.2,.9,.3,1.15) both;
 }
 @keyframes jcb-pop {
-  from { opacity: 0; transform: translateY(7px) scale(.965); }
+  from { opacity: 0; transform: translateY(8px) scale(.955); }
   to   { opacity: 1; transform: translateY(0)   scale(1); }
 }
 
-/* The segmented control. The lit pill is one element that SLIDES between
-   options — the satisfying part — rather than a background that pops on and
-   off each button. */
-.jcb-seg { position: relative; display: flex; gap: 3px; padding: 2px; border-radius: 9px;
-  background: rgba(10,18,30,.5); border: 1px solid rgba(120,160,205,.13); }
+/* Section labels in the app's display face, not body text pretending to be one. */
+.jcb-eyebrow {
+  font-family: Orbitron, Bahnschrift, "Segoe UI", sans-serif;
+  font-size: 8.5px; font-weight: 700; letter-spacing: .22em; text-transform: uppercase;
+  color: rgba(0,207,255,.62); margin-bottom: 7px;
+}
+
+/* Segmented control. Sharper corners than before — an instrument, not a toy. */
+.jcb-seg {
+  position: relative; display: flex; padding: 3px; border-radius: 7px;
+  background: rgba(2,10,20,.72);
+  border: 1px solid rgba(0,207,255,.16);
+  box-shadow: inset 0 1px 3px rgba(0,0,0,.5);
+}
+/* One pill that SLIDES, and that actually emits light. */
 .jcb-seg-pill {
-  position: absolute; top: 2px; bottom: 2px; border-radius: 7px;
-  background: rgba(92,176,255,.16); box-shadow: inset 0 0 0 1px rgba(92,176,255,.42);
-  transition: left .22s cubic-bezier(.34,1.4,.5,1), width .22s cubic-bezier(.34,1.4,.5,1);
+  position: absolute; top: 3px; bottom: 3px; border-radius: 5px;
+  background: linear-gradient(180deg, rgba(0,190,255,.26), rgba(0,120,210,.16));
+  border: 1px solid rgba(120,222,255,.75);
+  box-shadow: 0 0 14px rgba(0,190,255,.38), inset 0 1px 0 rgba(180,240,255,.3);
+  transition: left .24s cubic-bezier(.34,1.35,.5,1), width .24s cubic-bezier(.34,1.35,.5,1);
   pointer-events: none;
 }
 .jcb-seg button {
-  position: relative; z-index: 1; flex: 1; min-width: 0; border: 0; background: none; border-radius: 7px;
-  color: rgba(176,196,216,.62); font-family: inherit; font-weight: 500; cursor: pointer; min-height: auto;
+  position: relative; z-index: 1; flex: 1; min-width: 0; border: 0; background: none; border-radius: 5px;
+  font-family: Inter, "Segoe UI", sans-serif; letter-spacing: .01em;
+  color: rgba(150,180,205,.55); cursor: pointer; min-height: auto;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-  transition: color .16s ease, transform .08s ease;
+  transition: color .16s ease, transform .08s ease, text-shadow .16s ease;
 }
-.jcb-seg button:hover { color: rgba(220,238,255,.9); }
-.jcb-seg button:active { transform: scale(.96); }          /* answers the press instantly */
-.jcb-seg button[data-on="true"] { color: #dceeff; font-weight: 600; }
-.jcb-seg button:focus-visible { outline: 2px solid rgba(92,176,255,.75); outline-offset: 1px; }
+.jcb-seg button:hover { color: rgba(200,235,255,.92); }
+.jcb-seg button:active { transform: scale(.955); }
+.jcb-seg button[data-on="true"] {
+  color: #eaf9ff; font-weight: 600;
+  text-shadow: 0 0 10px rgba(120,220,255,.55);
+}
+.jcb-seg button:focus-visible { outline: 1px solid rgba(0,207,255,.85); outline-offset: 2px; }
 
-/* The description swaps when the selection does; a cross-fade stops it looking
-   like a glitch when two lines differ in length. */
-.jcb-desc { font-size: 10.5px; line-height: 1.45; color: rgba(158,180,202,.62); margin-top: 5px;
-  animation: jcb-fade .2s ease both; }
-@keyframes jcb-fade { from { opacity: 0 } to { opacity: 1 } }
+.jcb-desc {
+  font-size: 10.5px; line-height: 1.4; color: rgba(126,186,220,.72); margin-top: 6px;
+  animation: jcb-fade .22s ease both;
+}
+@keyframes jcb-fade { from { opacity: 0; transform: translateY(-2px) } to { opacity: 1; transform: none } }
+
+/* Emitting hairline, same idea as the mic divider in the bar. */
+.jcb-rule {
+  height: 1px; margin: 13px 0 11px;
+  background: linear-gradient(90deg, rgba(0,207,255,.02), rgba(0,207,255,.32), rgba(0,207,255,.02));
+  box-shadow: 0 0 6px rgba(0,190,255,.22);
+}
+.jcb-minor { font-size: 10.5px; letter-spacing: .04em; color: rgba(140,180,208,.62); text-transform: uppercase;
+  font-family: Orbitron, Bahnschrift, "Segoe UI", sans-serif; font-weight: 600; }
 
 @media (prefers-reduced-motion: reduce) {
   .jcb-picker, .jcb-desc { animation: none; }
@@ -480,9 +508,10 @@ export function JarvisCommandBar({ onSubmit, onMicToggle, onModules, model, onSe
               position: "absolute", bottom: "calc(100% + 10px)",
               // Reference color: dark desaturated navy-charcoal (#1a2433), translucent +
               // heavy blur so the room glows through — holographic frosted glass, not pastel.
-              background: "rgba(26,36,51,0.72)", backdropFilter: "blur(40px)", WebkitBackdropFilter: "blur(40px)",
-              border: "1px solid rgba(120,160,205,0.2)", borderRadius: 14, zIndex: 61,
-              boxShadow: "0 16px 44px rgba(0,0,0,0.62), inset 0 1px 0 rgba(180,210,245,0.06)",
+              background: "linear-gradient(180deg, rgba(9,20,34,0.88), rgba(4,11,20,0.92))",
+              backdropFilter: "blur(38px)", WebkitBackdropFilter: "blur(38px)",
+              border: "1px solid rgba(0,207,255,0.28)", borderRadius: 12, zIndex: 61,
+              boxShadow: "0 18px 50px rgba(0,0,0,0.7), 0 0 26px rgba(0,150,240,0.16), inset 0 1px 0 rgba(150,225,255,0.14)",
               fontFamily: 'Inter, "Segoe UI", sans-serif', color: "rgba(234,242,252,0.94)",
             };
             // One panel, everything on it.
@@ -518,7 +547,7 @@ export function JarvisCommandBar({ onSubmit, onMicToggle, onModules, model, onSe
               );
             };
             const Eyebrow = ({ children }: { children: React.ReactNode }) => (
-              <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: "0.15em", textTransform: "uppercase", color: "rgba(150,175,205,0.5)", marginBottom: 5 }}>{children}</div>
+              <div className="jcb-eyebrow">{children}</div>
             );
             // keyed on the text so React remounts it and the fade replays when the choice changes
             const Desc = ({ children }: { children: string }) => (
@@ -537,18 +566,18 @@ export function JarvisCommandBar({ onSubmit, onMicToggle, onModules, model, onSe
                   <Desc>{activeEffort.desc}</Desc>
                 </div>
 
-                <div style={{ height: 1, background: "rgba(120,160,205,0.14)", margin: "12px 0 10px" }} />
+                <div className="jcb-rule" />
 
                 {/* Secondary preferences: same controls, visually subordinate. Eclipse encodes
                     research depth in its Effort tiers, so the Research dial does not apply there. */}
                 {!isEclipse && (
                   <div style={{ display: "grid", gridTemplateColumns: "58px minmax(0,1fr)", alignItems: "center", gap: 8, marginBottom: 7 }}>
-                    <span style={{ fontSize: 11, color: "rgba(176,196,216,0.66)" }}>Research</span>
+                    <span className="jcb-minor">Research</span>
                     <Dial rows={RESEARCH_ROWS} cur={research || "fast"} set={onSetResearch} compact />
                   </div>
                 )}
                 <div style={{ display: "grid", gridTemplateColumns: "58px minmax(0,1fr)", alignItems: "center", gap: 8 }}>
-                  <span style={{ fontSize: 11, color: "rgba(176,196,216,0.66)" }}>Voice</span>
+                  <span className="jcb-minor">Voice</span>
                   <Dial rows={VOICE_ROWS} cur={voiceMode || "dictate"} set={onSetVoiceMode} compact />
                 </div>
               </div>
