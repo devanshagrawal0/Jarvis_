@@ -13283,6 +13283,9 @@ function ensureEclipseIntegration() {
     eclipseIntegration = createEclipseIntegration({
       runtimeDir: RUNTIME_DIR, secretStore, loadSettings,
       capabilityEngine, contactStore, neuralVault,
+      // The same conversation record Cortex answers from, so switching mode mid-thread does not
+      // start the assistant over.
+      loadConversation,
     });
     console.log("[eclipse] mounted → console at /eclipse, API at /api/eclipse/*");
   } catch (error) {

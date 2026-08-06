@@ -145,3 +145,42 @@ test("a bridge tool the gateway was not told about stays denied", async () => {
   const wired = createGateway({ extraScopes: BRIDGE_TOOL_SCOPE, extraSideEffecting: BRIDGE_SIDE_EFFECTING });
   assert.equal(wired.TOOL_SCOPE["contacts.lookup"], "memory.read", "the gateway must report the scopes it actually enforces");
 });
+
+// ── continuity across the mode switch ─────────────────────────────────────────
+
+
+test("a mission started mid-conversation carries what was said", () => {
+  // Switching the picker from Cortex to Eclipse sent only a prompt and an effort level, so a
+  // follow-up like "go deeper on that" arrived with no referent and the owner had to restate it.
+  const { priorTurns } = require("../../server/eclipse/orchestration/nodes");
+  const preamble = priorTurns({ conversation: [
+    { role: "user", text: "What is the failure rate on my automation?" },
+    { role: "model", text: "26 of 67 tasks failed." },
+  ] });
+  assert.match(preamble, /Owner: What is the failure rate/);
+  assert.match(preamble, /JARVIS: 26 of 67 tasks failed/);
+  assert.match(preamble, /context only/, "the prior turns must be labelled as context, not as the task");
+});
+
+test("no conversation yields no heading at all", () => {
+  // A heading with nothing under it invites the model to fill the gap — inventing a discussion
+  // that never happened is worse than having no context.
+  const { priorTurns } = require("../../server/eclipse/orchestration/nodes");
+  assert.equal(priorTurns({}), "");
+  assert.equal(priorTurns({ conversation: [] }), "");
+  assert.equal(priorTurns({ conversation: [{ role: "user", text: "   " }] }), "", "blank turns are not context");
+  assert.equal(priorTurns(null), "");
+});
+
+test("only the recent tail is carried, and each turn is bounded", () => {
+  // The record holds up to 500 turns. Sending all of them would blow the context budget and bury
+  // the actual mission under history.
+  const { priorTurns } = require("../../server/eclipse/orchestration/nodes");
+  const many = Array.from({ length: 40 }, (_, i) => ({ role: "user", text: `turn ${i}` }));
+  const out = priorTurns({ conversation: many }, 8);
+  assert.equal(out.split("\n").filter((l) => l.startsWith("Owner:")).length, 8);
+  assert.match(out, /turn 39/, "the most recent turns are the ones kept");
+  assert.doesNotMatch(out, /turn 31\b/, "older turns are dropped");
+  const long = priorTurns({ conversation: [{ role: "user", text: "x".repeat(1000) }] });
+  assert.ok(long.length < 500, `a single turn must not be unbounded (got ${long.length})`);
+});

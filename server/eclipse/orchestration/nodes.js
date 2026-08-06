@@ -18,6 +18,32 @@ const PlanSchema = z.object({ subtasks: z.array(z.object({ goal: z.string() })).
 
 const MAX_WIDTH = 5; // ≤5 workers per wave (deep-design §4 width cap)
 
+// What was said before the mission started.
+//
+// Switching the mode picker from Cortex to Eclipse sent the backend a prompt and an effort level
+// and nothing else, so a mission began with no idea what the conversation had been about. Ask
+// Cortex about something, switch to Eclipse, and follow up with "go deeper on that" — and "that"
+// referred to nothing. The owner had to restate the whole thing.
+//
+// The turns are the assistant's own conversation record, not model output, so they are quoted as
+// context and clearly labelled as prior dialogue. Two places need it: planning (so a follow-up
+// resolves to the right subject) and synthesis (so the answer continues rather than restarts).
+// Empty history yields an empty string — never a heading with nothing under it, which would invite
+// the model to invent what was discussed.
+function priorTurns(mission, max = 8) {
+  const turns = Array.isArray(mission?.conversation) ? mission.conversation.slice(-max) : [];
+  if (!turns.length) return "";
+  const lines = turns
+    .map((turn) => {
+      const text = String(turn?.text || "").replace(/\s+/g, " ").trim().slice(0, 400);
+      if (!text) return "";
+      return `${turn?.role === "model" ? "JARVIS" : "Owner"}: ${text}`;
+    })
+    .filter(Boolean);
+  if (!lines.length) return "";
+  return `Conversation before this mission (context only — the mission below is the task):\n${lines.join("\n")}\n\n`;
+}
+
 // Map the mission's task family → a Worker persona.
 function personaFor(genome) {
   const fam = genome && genome.taskFamily;
@@ -96,7 +122,7 @@ function createNodes(deps) {
         try {
           const r = await adapter.run({ node: "plan", effort: s.effort, schema: PlanSchema,
             system: getBlueprint("architect").systemInstructionTemplate,
-            input: `Mission: ${s.mission?.prompt || ""}\n\nReturn exactly ${n} independent sub-questions that together answer the mission. JSON: {"subtasks":[{"goal":"..."}]}` });
+            input: `${priorTurns(s.mission)}Mission: ${s.mission?.prompt || ""}\n\nReturn exactly ${n} independent sub-questions that together answer the mission. JSON: {"subtasks":[{"goal":"..."}]}` });
           goals = (r.json?.subtasks || []).map((x) => x.goal).filter(Boolean).slice(0, n);
         } catch (e) { store.appendEvent(missionId, "plan.fallback", { error: String(e.message).slice(0, 120) }); }
       } else {
@@ -205,7 +231,7 @@ function createNodes(deps) {
         const brief = findings.map((p, i) => `Finding ${i + 1}${p.evidence && p.evidence.length ? " (evidence-backed)" : ""}: ${p.claim}`).join("\n\n");
         const r = await adapter.run({ node: "synthesize", effort: s.effort,
           system: getBlueprint("director").systemInstructionTemplate,
-          input: `Mission: ${s.mission?.prompt || ""}\n\nAgent findings:\n${brief}\n\nWrite the final answer: a clear recommendation with reasoning. Note where external verification was not available.` });
+          input: `${priorTurns(s.mission)}Mission: ${s.mission?.prompt || ""}\n\nAgent findings:\n${brief}\n\nWrite the final answer: a clear recommendation with reasoning. Note where external verification was not available.` });
         return { result: { draft: r.text, fromValidated: (s.validated || []).length, verified: !!(s.validated && s.validated.length) } };
       }
       const r = await runAgent({ blueprint: getBlueprint("director"), subtask: { goal: "synthesize deliverable", tools: [] }, adapter, lease, gateway, missionId, effort: s.effort });
@@ -254,4 +280,4 @@ function createNodes(deps) {
   return nodes;
 }
 
-module.exports = { createNodes, MAX_WIDTH, personaFor };
+module.exports = { createNodes, MAX_WIDTH, personaFor, priorTurns };

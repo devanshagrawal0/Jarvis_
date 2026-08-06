@@ -60,7 +60,15 @@ function createEclipseIntegration(deps) {
     ensureStore();
     const { liveCall, web } = liveWiring();
     const missionId = `m_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
-    const mission = { schemaVersion: "eclipse.mission.v1", missionId, userId: "dev", prompt: String(prompt || "").slice(0, 4000), effort, createdAt: new Date().toISOString(), constraints: { maxCostUsd, maxTokens: 250000, allowedPaths: [], privacy: "provider" } };
+    // Continuity across the mode switch. Cortex keeps the conversation server-side, so the browser
+    // never had to send it — which is exactly why switching to Eclipse silently dropped it. Read
+    // the same record here so a mission started mid-conversation knows what "that" refers to.
+    let conversation = [];
+    try {
+      const turns = deps.loadConversation ? deps.loadConversation() : [];
+      conversation = (Array.isArray(turns) ? turns : []).slice(-12).map((turn) => ({ role: turn.role === "model" ? "model" : "user", text: String(turn.text || "").slice(0, 1200) }));
+    } catch { conversation = []; }
+    const mission = { schemaVersion: "eclipse.mission.v1", missionId, userId: "dev", prompt: String(prompt || "").slice(0, 4000), effort, conversation, createdAt: new Date().toISOString(), constraints: { maxCostUsd, maxTokens: 250000, allowedPaths: [], privacy: "provider" } };
     const rec = { status: "running", result: null, error: null, startedAt: Date.now(), effort, prompt: mission.prompt };
     missions.set(missionId, rec);
     // The mission's own knowledge of the owner: contacts, memory, and the real capability engine.
