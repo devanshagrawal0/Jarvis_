@@ -97,6 +97,14 @@ export function RuntimeWidget({mode,initialData,onRefresh}:{mode:SpatialWidgetMo
   const selectedWaiting=Boolean(selected&&(selected.state.startsWith("waiting")||selected.state==="paused"));
   const selectedHeadline=!selected?"Runtime ready":selectedFailed?"Task failed":selectedDone?"Task completed":selectedWaiting?"Action required":"Task in progress";
   const selectedTone=selectedFailed?"red":selectedWaiting?"amber":selectedDone?"green":"cyan";
+  // This bar used to repeat the selected task's state and title — the third place on screen saying
+  // it, after the widget frame's own header and the hero directly below. It now reports the fleet,
+  // which nothing else does: how many are running, how many are stuck waiting on the owner, and how
+  // many failed. Those counts are the reason to look at Runtime at all.
+  const awaiting=tasks.filter(task=>task.state.startsWith("waiting")||task.state==="paused").length;
+  const brokenCount=tasks.filter(task=>task.state==="failed"||task.state==="blocked").length;
+  const fleetLine=[running?`${running} running`:"",awaiting?`${awaiting} awaiting you`:"",brokenCount?`${brokenCount} failed`:""].filter(Boolean).join(" · ")||"Nothing queued";
+  const fleetTone=awaiting?"amber":brokenCount?"red":running?"cyan":"green";
 
   const runJarvis = async()=>{
     const instruction=prompt.trim();if(!instruction||busy)return;
@@ -113,7 +121,7 @@ export function RuntimeWidget({mode,initialData,onRefresh}:{mode:SpatialWidgetMo
 
   return <div className={`rt-console rt-v2 rt-${mode}`}>
     <header className="rt-v2-head">
-      <div className="rt-v2-brand"><span className={`rt-v2-activity-dot rt-${selectedTone}`}/><div><strong>{selectedHeadline}</strong><small>{selected?clip(selected.currentStep||selected.title,56):"No task selected"}</small></div></div>
+      <div className="rt-v2-brand"><span className={`rt-v2-activity-dot rt-${fleetTone}`}/><div><strong>{fleetLine}</strong><small>{tasks.length?`${tasks.length} tasks tracked`:"No tasks yet"}</small></div></div>
       <div className="rt-v2-head-actions">
         <button className="rt-v2-account" onClick={()=>setTab("BROWSER")}><i className={connectedSessions.length?"online":""}/>{connectedSessions.length?`${connectedSessions.length} connected`:"Connect accounts"}</button>
         {data.status?.emergencyStop?.stopped?<button className="rt-v2-release" onClick={()=>void act("release","/api/action/stop/release",{reason:"Owner resumed Runtime"})}>Resume Runtime</button>:running>0?<button className="rt-v2-stop" onClick={()=>void act("stop","/api/action/stop",{reason:"Owner stopped all Runtime work"})}>Stop all</button>:null}
@@ -162,12 +170,25 @@ function CurrentTask({selected,events,detail,duration,busy,onAct,onOpenLive,onOp
   const explanation=failed?eventCopy(latestFailure)||selected.currentStep||"The task stopped before completion.":selected.currentStep||eventCopy(events[0]);
   const receipts=detail?.receipts||[];
   const artifacts=detail?.artifacts||[];
+  const verifiedCount=receipts.filter((item:any)=>item.status==="verified").length;
+  // What the task IS goes in the headline; what happened to it is the subline.
+  //
+  // It used to be the other way round: the largest text on the panel read "Couldn't finish this
+  // task", which the FAILED badge beside it and the widget's own header above it had already said —
+  // the same fact three times — while the only line identifying which task this was sat in a
+  // separate "Your request" panel underneath. And that panel is redundant whenever the title is
+  // just the prompt, which is the normal case.
+  const asked=(selected.prompt||"").trim();
+  const title=(selected.title||"").trim();
+  // `title` arrives already truncated with an ellipsis, so no amount of CSS clamping can reveal the
+  // rest of it — the missing words are not in the DOM. `prompt` is the full text; the headline uses
+  // it and lets the two-line clamp do the shortening, which at least breaks on a word boundary.
+  const headlineText=asked||title||headline;
   return <div className={`rt-v2-current rt-v2-current--${stateTone(selected.state)}`}>
-    <section className="rt-v2-hero"><div className="rt-v2-status-icon"><i/></div><div className="rt-v2-hero-copy"><div><State value={selected.state}/><span className="rt-v2-elapsed">{duration?`${Math.max(1,Math.round(duration/1000))}s elapsed`:age(selected.createdAt)}</span></div><h2>{headline}</h2><p>{explanation}</p></div></section>
-    <section className="rt-v2-request"><span>Your request</span><p>{selected.prompt}</p></section>
-    <div className="rt-v2-current-grid">
+    <section className="rt-v2-hero"><div className="rt-v2-status-icon"><i/></div><div className="rt-v2-hero-copy"><div><State value={selected.state}/><span className="rt-v2-elapsed">{duration?`${Math.max(1,Math.round(duration/1000))}s elapsed`:age(selected.createdAt)}</span></div><h2>{headlineText}</h2><p>{explanation===headline?explanation:`${headline} — ${explanation}`}</p></div></section>
+        <div className="rt-v2-current-grid">
       <section className="rt-v2-progress"><header><div><span>Latest activity</span><strong>{events.length?`${events.length} updates`:done?"Run completed":failed?"No action log":"Waiting to start"}</strong></div>{events.length>0&&<button onClick={onOpenLive}>Open live view</button>}</header><div>{events.slice(0,5).map(event=><article key={event.id}><i className={`rt-dot rt-${stateTone(event.type.split(".").at(-1))}`}/><div><strong>{eventCopy(event)}</strong><small>{time(event.createdAt)}</small></div></article>)}{!events.length&&<p className="rt-v2-muted">{done?"This completed run did not retain a detailed action log.":failed?"No detailed failure events were retained.":"No execution activity yet."}</p>}</div></section>
-      <aside className="rt-v2-proof"><span>Output</span><div><strong>{receipts.filter((item:any)=>item.status==="verified").length}</strong><small>verified actions</small></div><div><strong>{artifacts.length}</strong><small>files and captures</small></div>{(receipts.length>0||artifacts.length>0)&&<button onClick={onOpenResults}>View results</button>}</aside>
+      <aside className="rt-v2-proof"><span>Output</span><div><strong data-zero={verifiedCount===0}>{verifiedCount}</strong><small>verified actions</small></div><div><strong data-zero={artifacts.length===0}>{artifacts.length}</strong><small>files and captures</small></div>{(receipts.length>0||artifacts.length>0)&&<button onClick={onOpenResults}>View results</button>}</aside>
     </div>
     <footer className="rt-v2-task-actions">{!TERMINAL.has(selected.state)&&selected.state!=="paused"&&<button onClick={()=>void onAct("pause",`/api/action/tasks/${selected.id}/pause`,{reason:"Owner paused in Runtime"})}>Pause</button>}{selected.state==="paused"&&<button className="primary" onClick={()=>void onAct("resume",`/api/action/tasks/${selected.id}/resume`)}>Resume</button>}{failed&&<button className="primary" onClick={onOpenAccounts}>Check account login</button>}{!TERMINAL.has(selected.state)&&<button className="danger" disabled={Boolean(busy)} onClick={()=>void onAct("cancel",`/api/action/tasks/${selected.id}/cancel`,{reason:"Owner cancelled in Runtime"})}>Cancel task</button>}</footer>
   </div>;

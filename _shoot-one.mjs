@@ -1,0 +1,13 @@
+import { chromium } from "playwright";
+const OUT = process.argv[2], ID = process.argv[3] || "runtime";
+const b = await chromium.launch({ args: ["--use-gl=swiftshader", "--enable-webgl", "--ignore-gpu-blocklist"] });
+const p = await b.newPage({ viewport: { width: 1500, height: 940 }, deviceScaleFactor: 2 });
+p.on("pageerror", (e) => console.log("PAGEERR:", e.message.slice(0, 200)));
+await p.goto("http://localhost:5173", { waitUntil: "networkidle", timeout: 60000 }).catch(() => {});
+await p.waitForTimeout(5500);
+await p.evaluate((id) => document.dispatchEvent(new CustomEvent("jarvis:open-widget", { detail: { id, focus: true } })), ID);
+await p.waitForTimeout(4500);
+const frame = await p.$("[class*='spatial-widget'], [class*='SpatialWidget'], .spatial-frame") || await p.$(".spatial-workspace");
+await (frame || p).screenshot({ path: OUT });
+console.log("saved", OUT);
+await b.close();
