@@ -81,6 +81,13 @@ function createJarvisActionSession(options = {}) {
   let successes = 0;
   let failures = 0;
   let waitingApproval = false;
+  // Why the steps failed, kept so the TASK can say it.
+  //
+  // The reason was already being recorded twice — once in a `step.failed` event and once on the
+  // receipt — and then discarded at the task level, which was hard-coded to "Execution failed".
+  // That is what every one of 26 failed tasks reported, so a run could be seen to fail and never
+  // explained. Events are capped and age out; the task record is not.
+  const failureReasons = [];
 
   const emitUi = (event) => { try { onEvent?.(event); } catch {} };
   const event = (type, payload = {}) => {
@@ -222,7 +229,11 @@ function createJarvisActionSession(options = {}) {
       error: verified ? null : { message: execution.error || "Capability did not return verified success", status: execution.status },
       idempotencyKey: `${task.id}:${stepId}`,
     });
-    if (verified) successes += 1; else failures += 1;
+    if (verified) successes += 1;
+    else {
+      failures += 1;
+      failureReasons.push({ tool, stepId, status: execution.status || "failed", reason: short(execution.error || "Capability did not return verified success", 400) });
+    }
 
     const files = collectFiles(execution.result);
     files.forEach((file) => attachFile(file, tool, stepId, file.label.includes("afterCapture") ? "after" : file.label.includes("beforeCapture") ? "before" : "result"));
@@ -245,7 +256,29 @@ function createJarvisActionSession(options = {}) {
     }
     if (failures > 0) {
       const state = successes > 0 ? "partial" : "failed";
-      transition(state, { currentStep: state === "partial" ? "Completed with unverified or failed steps" : "Execution failed", reason: completed.error || "One or more real capability steps failed" });
+      // Say what went wrong, on the task, in the field the UI already shows.
+      //
+      // `currentStep` was a constant here, so every failed task read "Execution failed" and the
+      // only real diagnosis lived in events that are capped and age out. The last failing step is
+      // the one that ended the run, so its reason leads; the rest are kept in metadata because a
+      // run that fails four different ways is a different problem from one that fails once.
+      const last = failureReasons.at(-1);
+      const summary = last ? `${last.tool.replaceAll("_", " ")}: ${last.reason}` : "";
+      transition(state, {
+        currentStep: short(summary || (state === "partial" ? "Completed with unverified or failed steps" : "Execution failed"), 180),
+        reason: completed.error || summary || "One or more real capability steps failed",
+        metadata: {
+          failure: {
+            at: new Date().toISOString(),
+            failedSteps: failures,
+            verifiedSteps: successes,
+            // Keep every distinct reason, not just the last: repeated identical failures and four
+            // different ones look the same in a count and are not the same defect.
+            reasons: failureReasons.slice(-6),
+          },
+        },
+      });
+      event("task.failure_explained", { detail: summary || "No capability reported a reason", failedSteps: failures, reasons: failureReasons.slice(-6) });
       return fabric.kernel.get(task.id);
     }
     if (successes > 0) {

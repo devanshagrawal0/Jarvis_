@@ -184,10 +184,22 @@ function CurrentTask({selected,events,detail,duration,busy,onAct,onOpenLive,onOp
   // rest of it — the missing words are not in the DOM. `prompt` is the full text; the headline uses
   // it and lets the two-line clamp do the shortening, which at least breaks on a word boundary.
   const headlineText=asked||title||headline;
+  // "No detailed failure events were retained" was not true. Events are capped and age out, but the
+  // reason is also written to the failing step's RECEIPT, which is durable, and (now) onto the task
+  // itself. Read those before claiming nothing was kept — a UI that says the evidence is gone while
+  // holding it is worse than one that says nothing.
+  const failureNotes=(()=>{
+    const stored=(selected.metadata as any)?.failure?.reasons;
+    if(Array.isArray(stored)&&stored.length)return stored.map((item:any)=>({reason:String(item?.reason||"Unexplained failure"),tool:String(item?.tool||"capability").replaceAll("_"," ")})).slice(0,5);
+    return receipts
+      .filter((item:any)=>item?.status!=="verified"&&item?.error?.message)
+      .map((item:any)=>({reason:String(item.error.message),tool:String(item.driver||"capability").replace(/^capability:/,"").replaceAll("_"," ")}))
+      .slice(0,5);
+  })();
   return <div className={`rt-v2-current rt-v2-current--${stateTone(selected.state)}`}>
     <section className="rt-v2-hero"><div className="rt-v2-status-icon"><i/></div><div className="rt-v2-hero-copy"><div><State value={selected.state}/><span className="rt-v2-elapsed">{duration?`${Math.max(1,Math.round(duration/1000))}s elapsed`:age(selected.createdAt)}</span></div><h2>{headlineText}</h2><p>{explanation===headline?explanation:`${headline} — ${explanation}`}</p></div></section>
         <div className="rt-v2-current-grid">
-      <section className="rt-v2-progress"><header><div><span>Latest activity</span><strong>{events.length?`${events.length} updates`:done?"Run completed":failed?"No action log":"Waiting to start"}</strong></div>{events.length>0&&<button onClick={onOpenLive}>Open live view</button>}</header><div>{events.slice(0,5).map(event=><article key={event.id}><i className={`rt-dot rt-${stateTone(event.type.split(".").at(-1))}`}/><div><strong>{eventCopy(event)}</strong><small>{time(event.createdAt)}</small></div></article>)}{!events.length&&<p className="rt-v2-muted">{done?"This completed run did not retain a detailed action log.":failed?"No detailed failure events were retained.":"No execution activity yet."}</p>}</div></section>
+      <section className="rt-v2-progress"><header><div><span>Latest activity</span><strong>{events.length?`${events.length} updates`:done?"Run completed":failed?"No action log":"Waiting to start"}</strong></div>{events.length>0&&<button onClick={onOpenLive}>Open live view</button>}</header><div>{events.slice(0,5).map(event=><article key={event.id}><i className={`rt-dot rt-${stateTone(event.type.split(".").at(-1))}`}/><div><strong>{eventCopy(event)}</strong><small>{time(event.createdAt)}</small></div></article>)}{!events.length&&failureNotes.map((note,index)=><article key={`fail-${index}`}><i className="rt-dot rt-red"/><div><strong>{note.reason}</strong><small>{note.tool}</small></div></article>)}{!events.length&&!failureNotes.length&&<p className="rt-v2-muted">{done?"This completed run did not retain a detailed action log.":failed?"No capability reported a reason for this failure.":"No execution activity yet."}</p>}</div></section>
       <aside className="rt-v2-proof"><span>Output</span><div><strong data-zero={verifiedCount===0}>{verifiedCount}</strong><small>verified actions</small></div><div><strong data-zero={artifacts.length===0}>{artifacts.length}</strong><small>files and captures</small></div>{(receipts.length>0||artifacts.length>0)&&<button onClick={onOpenResults}>View results</button>}</aside>
     </div>
     <footer className="rt-v2-task-actions">{!TERMINAL.has(selected.state)&&selected.state!=="paused"&&<button onClick={()=>void onAct("pause",`/api/action/tasks/${selected.id}/pause`,{reason:"Owner paused in Runtime"})}>Pause</button>}{selected.state==="paused"&&<button className="primary" onClick={()=>void onAct("resume",`/api/action/tasks/${selected.id}/resume`)}>Resume</button>}{failed&&<button className="primary" onClick={onOpenAccounts}>Check account login</button>}{!TERMINAL.has(selected.state)&&<button className="danger" disabled={Boolean(busy)} onClick={()=>void onAct("cancel",`/api/action/tasks/${selected.id}/cancel`,{reason:"Owner cancelled in Runtime"})}>Cancel task</button>}</footer>
