@@ -96,6 +96,8 @@ const PANEL_CSS = `
 .jr-approval-fact > dt { color:rgba(var(--jr-tx),.45); font-size:10.5px; letter-spacing:.07em; text-transform:uppercase; }
 .jr-approval-fact > dd { margin:0; color:rgba(var(--jr-tx),.8); min-width:0; overflow-wrap:anywhere; }
 .jr-approval-caveat { color:#ffc16b; font-size:11.5px; margin:-2px 0 10px; }
+/* An unconfirmed or mismatched recipient is the one fact worth interrupting the eye for. */
+.jr-approval-fact-warn dd { color:#ffc16b; font-weight:600; }
 .jr-approval-hint { margin-top:8px; color:rgba(var(--jr-tx),.42); font-size:11.5px; }
 .jr-approval-actions { display:flex; gap:8px; }
 .jr-approval-actions button { min-height:32px; border-radius:6px; padding:6px 12px; cursor:pointer; font-weight:650; }
@@ -158,6 +160,8 @@ type ApprovalRequest = {
     action?: string;
     key?: string;
     unlabelled?: boolean;
+    /** Who receives this, read off the page. `confirmed: false` means the page did not say. */
+    recipient?: { text: string; confirmed: boolean; kind?: string } | null;
   } | null;
   expiresAt?: string;
   ownerChallenge?: string;
@@ -715,6 +719,14 @@ export function JarvisUI() {
                             below it: true and worth showing, but not the decision. */}
                         <div className="jr-approval-intent">{commit.task || commit.intent}</div>
                         <dl className="jr-approval-facts">
+                          {/* WHO comes first and cannot be scrolled past. Four messages went to a
+                              group chat while this card described only the action, so the recipient
+                              is the first fact, and an unconfirmed one says so instead of hiding. */}
+                          {commit.recipient ? (
+                            <div className={`jr-approval-fact${commit.recipient.confirmed ? "" : " jr-approval-fact-warn"}`}>
+                              <dt>To</dt><dd>{commit.recipient.text}</dd>
+                            </div>
+                          ) : null}
                           {commit.task ? <div className="jr-approval-fact"><dt>Action</dt><dd>{commit.intent}</dd></div> : null}
                           {commit.url || commit.surface ? <div className="jr-approval-fact"><dt>On</dt><dd>{commit.url || commit.surface}</dd></div> : null}
                         </dl>

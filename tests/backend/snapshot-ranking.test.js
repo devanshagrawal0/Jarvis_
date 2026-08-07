@@ -153,7 +153,9 @@ test("the agent's requested budget is no longer silently cut, and truncation is 
   const requested = Number((agent.match(/browserService\.snapshot\(\{ taskId, limit: (\d+) \}\)/) || [])[1]);
   assert.ok(requested > 0, "the agent should state a budget");
   assert.ok(requested <= 240, `the requested budget (${requested}) must fit under the cap, or it is silently clamped again`);
-  assert.match(source, /truncated: Boolean\(ranking && ranking\.total > limit\)/,
+  // The ranking now arrives as part of the single page read rather than its own round trip, so the
+  // variable is named for the read. The rule is unchanged: a partial view must say it is partial.
+  assert.match(source, /truncated: Boolean\(read && read\.total > limit\)/,
     "a partial view must announce itself, or the agent concludes the missing control does not exist");
   assert.match(source, /typableCandidates/, "how many typable controls existed is the diagnostic that mattered here");
 });
@@ -165,6 +167,9 @@ test("one selector serves the main frame, child frames and the ranker", () => {
   assert.equal((code.match(/"a, button, input, textarea, select, summary, \[role\], \[tabindex\], \[contenteditable[^"]*"/g) || []).length, 1,
     "the selector should be defined exactly once");
   assert.doesNotMatch(code, /\[contenteditable=true\]/, "the equality form misses plaintext-only composers");
-  assert.ok((code.match(/SNAPSHOT_SELECTOR/g) || []).length >= 4,
-    "the definition plus the ranker, main frame and child frames must all use it");
+  // Was 4 when the ranker took the selector as its own separate evaluate. The one-shot read now
+  // carries it, so the count dropped by one without any copy of the selector reappearing — which is
+  // what this test actually guards. The definition, the one-shot read and the child-frame walk.
+  assert.ok((code.match(/SNAPSHOT_SELECTOR/g) || []).length >= 3,
+    "the definition, the page read and the child frames must all use the one selector");
 });

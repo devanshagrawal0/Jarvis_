@@ -86,10 +86,54 @@ test("a contact created mid-run is still learned from", () => {
   // contacts had a conversation and were fast, a third did not and stayed slow, all three having
   // been messaged successfully.
   const engine = fs.readFileSync(path.join(__dirname, "..", "..", "server", "capability-engine.js"), "utf8");
-  assert.match(engine, /const learnFor = knownContact\?\.contactId\s*\n?\s*\? knownContact\s*\n?\s*: contacts\.routeFor\(namedPerson, surfaceChannel\);/,
+  // Property, not exact characters: the recipient is looked up again at learn time rather than
+  // taken solely from the lookup made before the run started.
+  assert.match(engine, /const learnFor = knownContact\?\.contactId[\s\S]{0,300}contacts\.routeFor\(namedPerson, surfaceChannel\)/,
     "learning must re-resolve the contact after the run, not rely on the lookup from before it");
   assert.match(engine, /if \(result\.success && surfaceChannel && namedPerson\) \{/,
     "still gated on a delivered send");
+});
+
+test("the conversation is taken from where it SENT, not where the run ended", () => {
+  // The miss that kept one contact slow forever. A send routed through someone's profile leaves the
+  // run sitting back on that profile, so the last page of the run is a profile URL and there is no
+  // conversation to save — while the message plainly went into a conversation a moment earlier.
+  // Two contacts whose runs ended inside the chat were learned and ran in 21s and 57s; the third
+  // was never learned and stayed at five minutes.
+  const engine = fs.readFileSync(path.join(__dirname, "..", "..", "server", "capability-engine.js"), "utf8");
+  assert.match(engine, /kind === "post-commit-observation" && item\.url/,
+    "the URL recorded at the moment of sending is what identifies the conversation");
+  assert.match(engine, /\[\.\.\.sentOn, result\.finalUrl \|\| ""\]/,
+    "where it sent comes first; the end of the run is only a fallback");
+});
+
+test("the recipient is still identifiable after the task stops saying their name", () => {
+  // The bug the diagnostic finally pinned, after three wrong fixes aimed at the saving itself.
+  //
+  // The handle-only route rewrites the task to "Open the Instagram Direct conversation with
+  // @someone…" — on purpose, because a name re-triggers the identity search. Approving re-runs THAT
+  // task, so no name remains to look the person up by, and the log read:
+  //
+  //   no conversation saved for unknown contact —
+  //   evidence urls: ["https://www.instagram.com/direct/t/<thread-id>"]
+  //
+  // The conversation URL was correct, present, and discarded for want of a recipient. A handle
+  // identifies someone at least as well as a name, and routeFor already matches handles.
+  const engine = fs.readFileSync(path.join(__dirname, "..", "..", "server", "capability-engine.js"), "utf8");
+  assert.match(engine, /const handleInTask = \/@\(\[A-Za-z0-9\._\]\{2,40\}\)\/\.exec\(String\(taskToRun \|\| ""\)\)\?\.\[1\] \|\| "";/,
+    "the handle in the rewritten task must be usable as the recipient");
+  assert.match(engine, /\|\| \(handleInTask \? contacts\.routeFor\(handleInTask, surfaceChannel\) : null\)/,
+    "and must be tried when the name lookup finds nobody");
+});
+
+test("a handle finds the same contact a name does", () => {
+  // routeFor matching on handles is what makes the fallback above work at all.
+  const runtimeDir = fs.mkdtempSync(path.join(os.tmpdir(), "jarvis-handle-route-"));
+  cleanups.push(() => fs.rmSync(runtimeDir, { recursive: true, force: true }));
+  const store = createContactStore({ runtimeDir });
+  const contact = store.save({ name: "Test Person", channels: { instagram: { handle: "test.person" } } });
+  assert.equal(store.routeFor("test.person", "instagram")?.contactId, contact.id,
+    "a handle must resolve to the same person their name does");
 });
 
 test("the engine only learns from a send that actually succeeded", () => {
@@ -98,6 +142,6 @@ test("the engine only learns from a send that actually succeeded", () => {
   const engine = fs.readFileSync(path.join(__dirname, "..", "..", "server", "capability-engine.js"), "utf8");
   // The property, not the exact wording: a run that FAILED may well have ended on the wrong page,
   // and caching that URL would make every future message to that person go to the wrong place.
-  const gate = /if \(result\.success && [^)]*\) \{[\s\S]{0,400}?rememberThread\(/.exec(engine);
+  const gate = /if \(result\.success && [^)]*\) \{[\s\S]{0,4000}?rememberThread\(/.exec(engine);
   assert.ok(gate, "thread learning must be gated on a verified success");
 });

@@ -95,6 +95,28 @@ function rankSnapshotCandidates(rootEl, options) {
 }
 const MAX_COMMIT_OPERATIONS = 8;
 
+// Every one of these is a round trip to the browser, and a page decides how many there are.
+//
+// Doing them one at a time cost 15-30 seconds per look at the page. Doing them ALL at once was
+// worse on a heavy page: a profile matches elements in the thousands, and firing thousands of
+// simultaneous calls at one browser turned a 475ms observation into 47,611ms — measured, on the
+// same code that runs a chat thread in half a second. Neither extreme survives contact with a real
+// site, so the work goes through in bounded batches.
+const BROWSER_CALL_CONCURRENCY = 24;
+async function mapWithLimit(items, worker, limit = BROWSER_CALL_CONCURRENCY) {
+  const results = new Array(items.length);
+  let next = 0;
+  const runners = Array.from({ length: Math.min(limit, items.length) }, async () => {
+    while (next < items.length) {
+      const index = next;
+      next += 1;
+      results[index] = await worker(items[index], index);
+    }
+  });
+  await Promise.all(runners);
+  return results;
+}
+
 function browserElementMetadata(element) {
   const labels = element.labels ? [...element.labels].map((label) => label.innerText.trim()).filter(Boolean) : [];
   const text = (element.innerText || element.textContent || "").trim().replace(/\s+/g, " ").slice(0, 400);
@@ -129,6 +151,72 @@ function browserElementMetadata(element) {
         : "",
   };
 }
+
+// Reading the page is ONE question, not one question per element.
+//
+// Looking at a conversation cost 71 seconds on a measured live send, and 27 on the next look — the
+// bulk of a four-minute message. The page itself was never slow; the code asked the browser about
+// every element separately. Ranking, then visibility, then metadata, then disposal, each a separate
+// round trip, hundreds of them, over a debugging channel that charges for every one. Batching them
+// only changed how many were in flight at a time.
+//
+// This runs the whole read inside the page: rank, filter to what is visible, read the metadata, and
+// return the visible text, in a single call. The chosen elements are stamped with an attribute so
+// their handles can be collected in one more call rather than materialising a handle per element
+// and throwing most of them away.
+//
+// The two in-page helpers are spliced in from their existing definitions rather than copied, so
+// there is exactly one description of what an element's metadata is. Playwright serialises the
+// function it is given, so a function assembled here arrives complete. (A plain source STRING does
+// not work: Playwright evaluates it as an expression and the arguments never arrive — it returns
+// undefined rather than throwing, so it reads as success.)
+// A page read must never outlive this. Generous next to the 179ms a 1500-row page measures at,
+// and short enough that a wedged tab surfaces as an error rather than a silent ten-minute stall.
+const PAGE_READ_TIMEOUT_MS = 15_000;
+const SNAPSHOT_MARK = "data-jarvis-snapshot-ref";
+const readPageInOneShot = new Function("rootEl", "options", `
+  const rankSnapshotCandidates = ${rankSnapshotCandidates.toString()};
+  const browserElementMetadata = ${browserElementMetadata.toString()};
+  const { selector, limit, mark } = options;
+  // Marks from the previous look are cleared here rather than after, which would cost another
+  // round trip purely for tidiness.
+  for (const stale of rootEl.querySelectorAll("[" + mark + "]")) stale.removeAttribute(mark);
+  const ranking = rankSnapshotCandidates(rootEl, { selector, limit });
+  const nodes = Array.from(rootEl.querySelectorAll(selector));
+  const elements = [];
+  for (const index of ranking.keep) {
+    const element = nodes[index];
+    if (!element) continue;
+    // The same test the per-element visibility check applied: a real box, and not hidden.
+    if (!element.getClientRects().length) continue;
+    const style = window.getComputedStyle(element);
+    if (style.visibility === "hidden" || style.display === "none") continue;
+    let metadata = null;
+    try { metadata = browserElementMetadata(element); } catch { continue; }
+    if (!metadata) continue;
+    element.setAttribute(mark, String(elements.length + 1));
+    elements.push(metadata);
+  }
+  // The conversation header, kept SEPARATE and uncapped.
+  //
+  // The page's text is capped, and on a long thread the cap is reached long before the end — so a
+  // header that sits late in the text is simply gone. The recipient check reads exactly this to
+  // decide whether the open conversation is a group, and it must not be able to lose that to a
+  // truncation. Costs nothing extra: it rides along in the same call.
+  let headerText = "";
+  for (const selector of ['[role="main"] header', "main header", '[role="main"] h1, [role="main"] h2', "header"]) {
+    const node = rootEl.querySelector ? rootEl.querySelector(selector) : null;
+    const value = node ? String(node.innerText || "").replace(/\\s+/g, " ").trim() : "";
+    if (value) { headerText = value.slice(0, 600); break; }
+  }
+  return {
+    elements,
+    total: ranking.total,
+    typable: ranking.typable,
+    headerText,
+    text: String(rootEl.innerText || "").slice(0, 40000),
+  };
+`);
 
 function boundedNumber(value, fallback, min, max) {
   const number = Number(value);
@@ -732,50 +820,51 @@ function createBrowserAutomationService({
       const activeState = stateForPage(activePage);
       const root = activePage.locator(selector).first();
       await root.waitFor({ state: "attached", timeout: boundedNumber(args.timeoutMs, timeoutMs, 500, 15_000) });
-      // Rank before materialising. The two calls read the same selector against the same settled
-      // root with no interleaved await, so the index alignment between them holds.
-      const ranking = await root.evaluate(rankSnapshotCandidates, { selector: SNAPSHOT_SELECTOR, limit })
-        .catch(() => null);
-      const handles = await root.locator(SNAPSHOT_SELECTOR).elementHandles();
-      const keepSet = ranking ? new Set(ranking.keep) : null;
-      const elements = [];
-      // This was a sequential walk over EVERY element the selector matched, awaiting a separate
-      // round trip to the browser for each one — including one purely to dispose the elements it had
-      // already decided to discard, then another for `isVisible` and a third for metadata on the
-      // ones it kept. A messaging thread matches elements in the thousands, so one observation cost
-      // 15-30 seconds of round trips taken strictly one at a time, and a single send performed three
-      // of them. That, not the language model, was the bulk of the wall clock.
+      // One call for the whole read: ranking, visibility, metadata and the page's text together.
       //
-      // Identical calls and identical results — issued concurrently rather than in series. Order is
-      // preserved by resolving positionally, so `e1..eN` still follow document order.
-      const kept = [];
-      const unused = [];
-      for (const [position, handle] of handles.entries()) {
-        if (keepSet && !keepSet.has(position)) unused.push(handle);
-        else kept.push(handle);
-      }
-      const visibility = await Promise.all(kept.map((handle) => handle.isVisible().catch(() => false)));
-      const visible = kept.filter((_, index) => visibility[index]);
-      unused.push(...kept.filter((_, index) => !visibility[index]));
-      const metadataList = await Promise.all(
-        visible.map((handle) => handle.evaluate(browserElementMetadata).catch(() => null)),
-      );
-      for (const [index, handle] of visible.entries()) {
-        const metadata = metadataList[index];
-        // `limit` is still applied in document order, so the elements kept are the same ones the
-        // sequential version kept — not merely the same count.
-        if (!metadata || elements.length >= limit || isBlockedTarget(JSON.stringify(metadata))) {
-          unused.push(handle);
-          continue;
+      // Bounded, because `evaluate` has NO timeout of its own and waits on the page's main thread.
+      // A live run hung here for ten minutes and produced not one line of output: no error, no
+      // failure, and the exclusive browser lock held the whole time, so nothing else could run
+      // either. Concentrating the read into a single call made that failure total where it used to
+      // be partial — worth it for the speed, but only if the call cannot hang.
+      //
+      // Failing loudly is the point. Returning nothing would tell the agent the page is empty, and
+      // it would go looking for another way to do something it had already half done.
+      const read = await Promise.race([
+        root.evaluate(readPageInOneShot, { selector: SNAPSHOT_SELECTOR, limit, mark: SNAPSHOT_MARK }).catch(() => null),
+        new Promise((_resolve, reject) => setTimeout(
+          () => reject(browserError(`Reading the page timed out after ${PAGE_READ_TIMEOUT_MS}ms — the tab is busy or blocked by a dialog.`)),
+          PAGE_READ_TIMEOUT_MS,
+        )),
+      ]);
+      const elements = [];
+      if (read) {
+        // One more call for the handles, and only for the elements that survived — the previous
+        // version created a handle for EVERY match on the page (thousands, on a messaging thread)
+        // and then spent a further round trip disposing of each one it did not want.
+        //
+        // Both arrays are in document order: the marks were stamped while walking the ranked keep
+        // list, which is sorted by document position, and `elementHandles` returns document order.
+        // So position N here is the element that produced metadata N, and `e1..eN` still read
+        // naturally down the page.
+        const handles = await root.locator(`[${SNAPSHOT_MARK}]`).elementHandles();
+        const unused = handles.slice(read.elements.length);
+        for (const [position, metadata] of read.elements.entries()) {
+          const handle = handles[position];
+          if (!handle) continue;
+          // `limit` is still applied in document order, so the elements kept are the same ones the
+          // per-element version kept — not merely the same count.
+          if (elements.length >= limit || isBlockedTarget(JSON.stringify(metadata))) {
+            unused.push(handle);
+            continue;
+          }
+          const ref = `e${elements.length + 1}`;
+          const pageId = pageIds.get(activePage);
+          activeState.refs.set(ref, { pageId, handle, metadata });
+          elements.push({ ref, ...metadata, sensitive: metadata.type === "password" || isSensitiveAction(sensitiveDescription(metadata)) });
         }
-        const ref = `e${elements.length + 1}`;
-        const pageId = pageIds.get(activePage);
-        activeState.refs.set(ref, { pageId, handle, metadata });
-        elements.push({ ref, ...metadata, sensitive: metadata.type === "password" || isSensitiveAction(sensitiveDescription(metadata)) });
+        await mapWithLimit(unused, (handle) => handle.dispose().catch(() => undefined));
       }
-      // Releasing the handles we did not adopt is bookkeeping, not a result anyone waits on, so it
-      // happens once and in parallel instead of blocking the walk thousands of times.
-      await Promise.all(unused.map((handle) => handle.dispose().catch(() => undefined)));
       const frameTexts = [];
       for (const frame of activePage.frames().filter((candidate) => candidate !== activePage.mainFrame()).slice(0, 8)) {
         if (elements.length >= limit) break;
@@ -803,16 +892,20 @@ function createBrowserAutomationService({
           elements.push({ ref, ...metadata, frameUrl: frame.url(), sensitive: metadata.type === "password" || isSensitiveAction(sensitiveDescription(metadata)) });
         }
       }
-      const visibleText = [await root.innerText().catch(() => ""), ...frameTexts].filter(Boolean).join("\n");
+      // The page's text came back with the elements in the same call, so this is no longer a
+      // separate round trip. Frames still contribute their own, and remain rare.
+      const visibleText = [read?.text || "", ...frameTexts].filter(Boolean).join("\n");
       const security = detectPromptInjection(visibleText.slice(0, 30_000));
       const result = {
         ...await currentPageSummary(activePage),
         selector,
         elements,
         elementBudget: limit,
-        elementCandidates: ranking ? ranking.total : elements.length,
-        typableCandidates: ranking ? ranking.typable : null,
-        truncated: Boolean(ranking && ranking.total > limit),
+        elementCandidates: read ? read.total : elements.length,
+        typableCandidates: read ? read.typable : null,
+        truncated: Boolean(read && read.total > limit),
+        // Who the open conversation is with, before any truncation can lose it.
+        headerText: read?.headerText || "",
         pageText: visibleText.replace(/\s+/g, " ").trim().slice(0, 8_000),
         securitySignals: security.detected ? [security] : [],
         dialogs: recentDialogs.slice(0, 5),

@@ -69,8 +69,15 @@ test("the fallback actually includes the model that was measured fast and health
 });
 
 test("the chain is ordered best-first and has no duplicates", () => {
+  // This asserted the CHEAP router model leads, which is the assumption a live send disproved.
+  // `MODELS.router` is `gemini-3.1-flash-lite`, and it failed six planner calls out of six with
+  // "returned no JSON object" — cut off mid-answer at 4.1-4.7s against a 4s window, because the
+  // prompt reaches 10-17KB once the page is in it. Nor was it cheaper in wall-clock: the alternative
+  // answered those same calls in 4.5-5.7s. Cheapest-first is only best-first while the cheap one
+  // answers, so the rule is measured reliability rather than the registry's label.
   const chain = plannerModelChain({});
-  assert.equal(chain[0], MODELS.router, "the cheap router model is tried first");
+  assert.equal(chain[0], "gemini-2.5-flash", "the model that answers must lead");
+  assert.notEqual(chain[0], MODELS.router, "leading with the router model is the bug this replaces");
   assert.equal(new Set(chain).size, chain.length, `duplicate models waste an attempt: ${chain.join(", ")}`);
 });
 

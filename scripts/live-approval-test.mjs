@@ -21,6 +21,9 @@ fs.mkdirSync(OUT, { recursive: true });
 
 const RECIPIENT = process.argv[2];
 const MESSAGE = process.argv[3] || `jarvis approval test ${new Date().toISOString().slice(11, 19)}`;
+// The handle to confirm if the run stops to ask which person was meant. Without it the run only
+// proceeds when there is exactly one candidate — it will not choose between people on its own.
+const CONFIRM_HANDLE = process.argv[4] || "";
 const UI = process.env.JARVIS_UI || "http://localhost:5173";
 const API = process.env.JARVIS_API || "http://127.0.0.1:8799";
 if (!RECIPIENT) { console.error('usage: node scripts/live-approval-test.mjs "<recipient>" ["<message>"]'); process.exit(1); }
@@ -128,20 +131,42 @@ log("submitted");
 // cannot tell two people apart and asks which one. Watching for only one of them is how a working
 // question got filed as a broken run.
 const settled = await waitFor(async () => (await cardState()) || (await choiceState()), 600000, "the approval card or an identity question");
-const choice = settled && settled.candidates ? settled : null;
+let choice = settled && settled.candidates ? settled : null;
+let cardAfterPick = null;
 if (choice) {
   await shot(page, "02-identity-question");
-  log(`IDENTITY QUESTION: ${choice.title}`);
-  log(`  ${choice.body}`);
+  log(`IDENTITY QUESTION at ${at()}: ${choice.title}`);
   choice.candidates.forEach((candidate, index) => {
     log(`  [${index + 1}] ${candidate.name} ${candidate.handle} ${candidate.detail}${candidate.hasAvatar ? "  (photo)" : ""}`);
   });
-  fs.writeFileSync(path.join(OUT, "transcript.json"), JSON.stringify({ request: REQUEST, choice, calls }, null, 2));
-  log("Nothing was sent — the run is waiting for the owner to pick.");
-  await browser.close();
-  process.exit(0);
+
+  // Answering it is the point of the flow: the owner recognises the person, picks, and the choice
+  // is remembered so the question is never asked again. Only ever picks a candidate the caller
+  // named, or the sole candidate — choosing for the owner among several is the one thing this card
+  // exists to prevent.
+  const wanted = CONFIRM_HANDLE.replace(/^@/, "").toLowerCase();
+  const index = wanted
+    ? choice.candidates.findIndex((candidate) => candidate.handle.replace(/^@/, "").toLowerCase() === wanted)
+    : (choice.candidates.length === 1 ? 0 : -1);
+  if (index < 0) {
+    log(wanted ? `No candidate matched ${CONFIRM_HANDLE} — nothing picked, nothing sent.` : "Several candidates and none named — nothing picked, nothing sent.");
+    fs.writeFileSync(path.join(OUT, "transcript.json"), JSON.stringify({ request: REQUEST, choice, calls }, null, 2));
+    await browser.close();
+    process.exit(0);
+  }
+  const pickedAt = Date.now();
+  log(`picking [${index + 1}] ${choice.candidates[index].handle} — this saves the contact and re-runs the send`);
+  await page.locator(".jr-contact-option").nth(index).click();
+  cardAfterPick = await waitFor(cardState, 600000, "the approval card after picking");
+  log(`after picking: ${cardAfterPick ? "approval card" : "TIMEOUT"} in ${((Date.now() - pickedAt) / 1000).toFixed(1)}s`);
+  if (!cardAfterPick) {
+    await shot(page, "03-no-card-after-pick");
+    fs.writeFileSync(path.join(OUT, "transcript.json"), JSON.stringify({ request: REQUEST, choice, calls }, null, 2));
+    await browser.close();
+    process.exit(1);
+  }
 }
-const card = settled;
+const card = cardAfterPick || settled;
 if (!card) {
   await shot(page, "02-no-card");
   log("RESULT: no approval card appeared. Transcript:");

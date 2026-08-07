@@ -3,12 +3,13 @@
 const crypto = require("crypto");
 const fs = require("fs");
 const path = require("path");
-const { MODELS, candidatesFor } = require("./gemini-models");
+const { MODELS, candidatesFor, noteModelFailure, noteModelSuccess } = require("./gemini-models");
 const { compileOutcome } = require("./automation/outcome-compiler");
 const { TaskWorldModel } = require("./automation/task-world-model");
 const { hintsForOutcome } = require("./automation/entity-resolver");
 const { createNavigationMemory } = require("./automation/navigation-memory");
 const { trace } = require("./automation/trace");
+const { readAudience, recipientSummary, refusalFor } = require("./automation/recipient-guard");
 
 const COMMIT_WORDS = /\b(send|like|unlike|post|publish|submit|follow|subscribe|delete|remove|purchase|buy|checkout|pay|transfer|confirm|create repository|create repo|book|reserve|apply)\b/i;
 const ACTIONS = new Set(["navigate", "click", "fill", "press", "select", "check", "uncheck", "hover", "scroll", "upload", "download", "find_file", "synthesize_report", "new_tab", "switch_tab", "go_back", "reload", "wait", "extract", "complete", "blocked"]);
@@ -46,7 +47,20 @@ const RECOVERY_WAIT_MS = [350, 900];
 // a planner decision that is one small JSON object against a fixed schema, every model here is
 // interchangeable in quality, so ordering by latency costs nothing and buys a working fallback.
 // Anything not measured sorts last rather than being excluded.
-const PLANNER_SPEED_ORDER = ["gemini-3.1-flash-lite", "gemini-2.5-flash", "gemini-3.6-flash"];
+//
+// `gemini-3.1-flash-lite` was first, and led on a measurement taken when it answered. Re-measured
+// on a live send it failed EVERY call — six in a row, "returned no JSON object", at 4126/4202/4740ms
+// against a 4000ms limit. It was not being outrun, it was being cut off mid-answer: the prompt grew
+// to 10-17KB as the page filled the context, and it could no longer finish inside the router
+// window. Each step therefore paid a guaranteed 4.2s for nothing before the model that works began,
+// and one step lost both attempts and failed the run outright.
+//
+// Ordering by measured latency is only sound while the measurement holds. `gemini-2.5-flash`
+// answered every one of those same calls in 4.5-5.7s, so it is not merely healthier, it is faster
+// end to end. It leads now. Flash-lite stays in the list as a fallback rather than being deleted:
+// it is genuinely quick on small prompts, and the failures below feed the health memory, so the
+// ladder now demotes whichever model is failing instead of waiting for someone to notice.
+const PLANNER_SPEED_ORDER = ["gemini-2.5-flash", "gemini-3.1-flash-lite", "gemini-3.6-flash"];
 const plannerRank = (model) => {
   const index = PLANNER_SPEED_ORDER.indexOf(model);
   return index === -1 ? PLANNER_SPEED_ORDER.length : index;
@@ -640,7 +654,24 @@ function commitBoundary(objective, action, snapshot, context = {}) {
   const label = fullDescription
     || (unlabelledCommit ? "an unlabelled control clicked after composing the message" : "")
     || "external account action";
+  // WHO is about to receive this, read off the page rather than out of our own contact store.
+  //
+  // Four messages went into the owner's group chat believing they were going to one person. The
+  // store was not merely unhelpful here, it was the thing that was wrong: a thread URL saved against
+  // the wrong conversation is indistinguishable from a right one until something reads the page.
+  //
+  // Only the page's own text is used, never the snapshot's links: the DM inbox list sits alongside
+  // the open thread, so every conversation in it contributes a profile link, and counting those
+  // would mark a perfectly ordinary one-to-one as a group and break the contacts that work today.
+  // The presence line describes the OPEN conversation and nothing else — "3 active today" is a
+  // group, "Active now" is one person.
+  const audience = readAudience({ headerText: snapshot?.headerText || "", pageText: snapshot?.pageText || "", title: snapshot?.title || "" });
+  const intendedHandle = /@([A-Za-z0-9._]{2,40})/.exec(String(objective || ""))?.[1] || "";
   return {
+    // A send addressed to one person, on a conversation the page says is a group, is not a prompt.
+    // It is the failure that already happened, so it stops here rather than asking.
+    refusal: refusalFor({ audience, intendedHandle }),
+    recipient: { ...recipientSummary({ audience, intendedHandle }), kind: audience.kind, title: audience.title, participantCount: audience.participantCount, evidence: audience.evidence },
     action: action.action,
     ref: action.ref || null,
     key: action.key || null,
@@ -777,6 +808,7 @@ Return ONLY JSON:
         const text = data.candidates?.[0]?.content?.parts?.map((part) => part.text || "").join("") || "";
         const parsed = parseJson(text);
         attempts.push({ model, ok: true, durationMs: Date.now() - attemptStarted, timeoutMs });
+        noteModelSuccess(model);
         trace("planner", "ok", { model, durationMs: Date.now() - attemptStarted, timeoutMs, promptBytes: prompt.length, attempt: attempts.length });
         return { ...parsed, model, usage: data.usageMetadata || null, plannerLatencyMs: Date.now() - plannerStarted, plannerAttempts: attempts };
       } catch (error) {
@@ -799,6 +831,10 @@ Return ONLY JSON:
         attempts.push({ model, ok: false, durationMs: Date.now() - attemptStarted, timeoutMs, timedOut: aborted, error: clip(lastError.message, 180) });
         // A timeout here is the single most common cause of a task dying with no useful
         // reason. `promptBytes` vs `timeoutMs` is exactly the comparison that diagnoses it.
+        // Remembered, so the ladder demotes a model that is failing NOW rather than trusting an
+        // ordering measured on a day when it worked. Six identical failures in one run went
+        // unrecorded because only the answer path fed this memory.
+        noteModelFailure(model);
         trace("planner", aborted ? "timeout" : "fail", { model, durationMs: Date.now() - attemptStarted, timeoutMs, promptBytes: prompt.length, attempt: attempts.length, error: clip(lastError.message, 180) });
       } finally {
         clearTimeout(timer);
@@ -980,6 +1016,24 @@ ${JSON.stringify(evidence).slice(0, 70_000)}`;
       // not, but only if it is unambiguous: exactly one element must match. Zero means the control
       // is gone and nothing should be clicked; more than one means we cannot tell them apart, and
       // guessing which to click is precisely what an approval gate exists to prevent.
+      // Re-read WHO before replaying. The recipient recorded on the card was true when the card was
+      // written; approval happens minutes later on a site that re-renders continuously, and this
+      // path replays a click directly with no further planning. Checking again here is what makes
+      // the guarantee hold at the moment of sending rather than at the moment of asking.
+      const beforeCommit = await browserService.snapshot({ taskId, limit: 60 }).catch(() => null);
+      if (beforeCommit) {
+        const recheck = refusalFor({
+          audience: readAudience({ headerText: beforeCommit.headerText || "", pageText: beforeCommit.pageText || "", title: beforeCommit.title || "" }),
+          intendedHandle: /@([A-Za-z0-9._]{2,40})/.exec(String(state.objective || ""))?.[1] || "",
+        });
+        if (recheck) {
+          state.status = "blocked";
+          state.error = recheck;
+          persist(state);
+          trace("recipient", "refused-at-replay", { url: beforeCommit.url || "" });
+          return { success: false, taskId, blocked: true, result: recheck, steps: state.history, history: state.history, evidence: state.evidence, stepsCompleted: state.history.length, finalUrl: beforeCommit.url || state.url, finalTitle: beforeCommit.title || state.title, mode: "playwright-universal-v2" };
+        }
+      }
       let committed;
       try {
         committed = await browserService.commit({ taskId, ...resume.pendingAction });
@@ -1012,7 +1066,45 @@ ${JSON.stringify(evidence).slice(0, 70_000)}`;
       if (sentText) {
         for (let attempt = 0; attempt < 6; attempt += 1) {
           const settled = await browserService.snapshot({ taskId, limit: 140 }).catch(() => null);
-          if (settled && visiblyContains(settled.pageText, sentText)) break;
+          if (settled && visiblyContains(settled.pageText, sentText)) {
+            // Done — and provably so, by the page's own text.
+            //
+            // Approving used to fall through into the full decision loop to "verify", which meant
+            // more snapshots and remote planner calls to establish something already proven right
+            // here: the message we just sent is on screen. That cost about 45 seconds on every
+            // approval and eventually blew past the request timeout entirely, so an approved send
+            // came back 502 and was recorded as failed while the browser was still working.
+            //
+            // Returning on the evidence is both faster and stricter than asking a model whether it
+            // worked. If the text never appears the loop below still runs, so a send that did not
+            // land is not waved through.
+            state.url = settled.url;
+            state.title = settled.title;
+            state.evidence.push({
+              kind: "post-commit-observation",
+              historyIndex: state.history.length - 1,
+              url: settled.url,
+              title: settled.title,
+              pageText: clip(settled.pageText, 4_000),
+              at: new Date().toISOString(),
+            });
+            const statePath = persist(state);
+            await onStep?.({ taskId, step: state.history.length + 1, phase: "done", mode: "playwright", action: "complete", reasoning: "The sent message is visible in the conversation" });
+            return {
+              success: true,
+              taskId,
+              result: `Sent ${JSON.stringify(sentText)} and verified it in the conversation`,
+              history: state.history,
+              evidence: state.evidence,
+              outcome,
+              world: world.toJSON(),
+              statePath,
+              stepsCompleted: state.history.length,
+              finalUrl: state.url,
+              finalTitle: state.title,
+              mode: "playwright-universal-v2",
+            };
+          }
           await new Promise((resolve) => setTimeout(resolve, 700));
         }
       }
@@ -1210,6 +1302,30 @@ ${JSON.stringify(evidence).slice(0, 70_000)}`;
         // dead code and the icon-only send button walks straight through, so the test suite
         // asserts on this call site by source, not only on the function.
         const pendingAction = commitBoundary(state.objective, action, snapshot, { outcome, history: state.history });
+        if (pendingAction?.refusal) {
+          // Not an approval prompt. A message addressed to one person, on a conversation the page
+          // itself says is a group, is the failure this guard exists for — asking would only invite
+          // the owner to approve it, which is exactly what happened four times.
+          state.status = "blocked";
+          state.error = pendingAction.refusal;
+          persist(state);
+          trace("recipient", "refused", { kind: pendingAction.recipient?.kind, participants: pendingAction.recipient?.participantCount || null, evidence: pendingAction.recipient?.evidence || "" });
+          await onStep?.({ taskId, step, phase: "blocked", mode: "playwright", ...action });
+          return {
+            success: false,
+            taskId,
+            blocked: true,
+            result: pendingAction.refusal,
+            recipient: pendingAction.recipient,
+            steps: state.history,
+            history: state.history,
+            evidence: state.evidence,
+            stepsCompleted: state.history.length,
+            finalUrl: state.url,
+            finalTitle: state.title,
+            mode: "playwright-universal-v2",
+          };
+        }
         if (pendingAction) {
           state.status = "waiting_approval";
           persist(state);

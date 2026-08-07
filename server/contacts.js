@@ -287,6 +287,23 @@ function createContactStore({ runtimeDir } = {}) {
   // surface whose URLs nobody should be caching.
   const THREAD_URL_HOSTS = { instagram: /^(www\.)?instagram\.com$/i };
 
+  // Is this URL an actual CONVERSATION, as opposed to a profile, an inbox, or something off-site?
+  //
+  // The distinction decides whether a send can start where it means to. `routeFor` returns
+  // `threadUrl || profileUrl`, and treating either as "the conversation" put runs on a profile page
+  // while telling them a chat was open — so they never entered one, never produced a conversation
+  // to remember, and re-searched that person forever. One rule, shared, so the check that gates
+  // WRITING a conversation and the check that gates STARTING from one can never disagree.
+  function isConversationUrl(channel, value) {
+    const allowedHost = THREAD_URL_HOSTS[channelKey(channel)];
+    if (!allowedHost) return false;
+    let parsed;
+    try { parsed = new URL(String(value || "")); } catch { return false; }
+    return parsed.protocol === "https:"
+      && allowedHost.test(parsed.hostname)
+      && /^\/direct\/t\/\d+/.test(parsed.pathname);
+  }
+
   // Learned from a send that actually worked, never typed by anyone.
   //
   // A saved conversation URL is the difference between a fast message and a slow one: with it the
@@ -307,12 +324,7 @@ function createContactStore({ runtimeDir } = {}) {
     // host, so a run that had been redirected somewhere hostile would have had that address written
     // into the contact and used for every later message to that person. Where the URL comes from —
     // a live page, mid-automation — is exactly the input that must not be trusted on shape alone.
-    const allowedHost = THREAD_URL_HOSTS[key];
-    if (!key || !allowedHost) return null;
-    let parsed;
-    try { parsed = new URL(url); } catch { return null; }
-    if (parsed.protocol !== "https:" || !allowedHost.test(parsed.hostname)) return null;
-    if (!/^\/direct\/t\/\d+/.test(parsed.pathname)) return null;
+    if (!key || !isConversationUrl(key, url)) return null;
     const contacts = load();
     const contact = contacts.find((item) => item.id === id);
     if (!contact) return null;
@@ -371,7 +383,7 @@ function createContactStore({ runtimeDir } = {}) {
 
   return {
     CHANNELS, CHANNEL_META, channelCatalogue, filePath, find, findAll, get, identitiesOf, linkForChannel,
-    list, normalize, remove, rememberThread, routeFor, save, setAvatarPath, touch, validateChannelValue,
+    isConversationUrl, list, normalize, remove, rememberThread, routeFor, save, setAvatarPath, touch, validateChannelValue,
   };
 }
 

@@ -803,6 +803,16 @@ function createCapabilityEngine({
       // Kept visible because "an unlabelled control" is a real caveat the owner should weigh, not
       // something to paper over with a confident-sounding label.
       unlabelled: !cleanString(boundary.targetName, 160),
+      // WHO receives this. The card used to describe only the action — "Type X into the message
+      // input, then send it" — and never named a recipient, so when four messages went into a group
+      // chat the owner had nothing on screen to catch it with. Read off the page at boundary time;
+      // `confirmed: false` means the page did not say, and is shown as unconfirmed rather than
+      // quietly omitted. The two lanes nest the boundary differently, hence both lookups.
+      recipient: (() => {
+        const found = boundary.recipient || boundary.pendingAction?.recipient || null;
+        if (!found) return null;
+        return { text: cleanString(found.text, 200), confirmed: found.confirmed === true, kind: cleanString(found.kind, 20) };
+      })(),
     };
   }
 
@@ -2677,8 +2687,75 @@ function createCapabilityEngine({
           : /\b(gmail|email|mail)\b/i.test(executableTask) ? "email" : "";
       const knownContact = namedPerson && surfaceChannel ? contacts.routeFor(namedPerson, surfaceChannel) : null;
       let taskToRun = executableTask;
-      if (knownContact?.url) {
-        startUrl = knownContact.url;
+      // A saved CONVERSATION is a shortcut. A saved PROFILE is a trap.
+      //
+      // `routeFor` returns threadUrl || profileUrl, and this branch took either as "the place to
+      // start" while telling the run "the correct conversation is already open on screen". On a
+      // profile that sentence is false: the run lands on a page with no conversation, works there,
+      // and never enters a chat — so no conversation URL ever exists to learn from, and that person
+      // is searched from scratch on every future message, forever. Measured: the two contacts with a
+      // stored conversation ran in 21s and 57s; the one holding only a profile stayed at five
+      // minutes across four separate successful sends and learned nothing from any of them.
+      //
+      // Judged by the SAME rule that decides whether a conversation may be saved. Two copies of
+      // "is this a conversation" would drift, and drift here means starting on a profile while
+      // believing it is a chat — which is the failure this whole branch exists to end.
+      const savedThread = contacts.isConversationUrl(surfaceChannel, knownContact?.url)
+        ? knownContact.url
+        : "";
+      if (knownContact?.handle && !savedThread && surfaceChannel === "instagram") {
+        // Their PROFILE, because a profile belongs to exactly one account.
+        //
+        // This route worked. Three consecutive messages reached the right person through it, each
+        // one navigating to the handle's profile, clicking Message, and typing into the chat that
+        // opened. It was then replaced with "search Direct for the handle" — and the very next
+        // message, and the two after it, landed in the owner's GROUP chat, because the message
+        // search matches conversations and a group ranked top for the name.
+        //
+        // The replacement was made for speed: a profile leaves no conversation URL to remember, so
+        // that contact never gets the fast path. That is a real cost and it was the wrong trade.
+        // Slow and right beats fast and wrong, and a route that can silently deliver to the wrong
+        // people is not an optimisation.
+        //
+        // What makes the profile safe is structural, not a matter of ranking well: instagram.com/
+        // <handle> IS that account. There is no candidate list, so there is nothing for a group to
+        // win. The composer that opens from it is a one-to-one chat by construction.
+        startUrl = `https://www.instagram.com/${knownContact.handle}/`;
+        contacts.touch(knownContact.contactId);
+        // The instruction MUST stay short, and quote ONLY the message.
+        //
+        // A verbose version of this — 'Click the "Message" button ... do not search for anyone, the
+        // search matches group conversations as well as people ...' — poisoned entity extraction:
+        // the compiler scraped "open", "anyone" and "matches" out of the prose as recipients, and
+        // "Message" (which was in quotes) as a SECOND message. Two message values means the
+        // deterministic "type the one message" step cannot tell which to send, so every step fell
+        // through to the remote planner, which then failed on the heavy DM page. Proven offline:
+        // this phrasing yields people:[] and exactly one message, which is what lets the whole
+        // type-and-send run with no model call at all on that page. The profile URL already fixes
+        // the recipient; the words do not need to re-explain it.
+        const openExactly = "Click the Message button on this profile";
+        const payload = outcomeIntent.entities?.messageValues?.[0] || "";
+        if (payload) {
+          taskToRun = `${openExactly}, then type ${JSON.stringify(payload)} into the message box${outcomeIntent.commit?.required ? ", then send it." : " and leave it unsent."}`;
+        } else if (namedPerson) {
+          // The rewrite CANNOT be optional, because the name is what causes the search.
+          //
+          // It used to happen only when the message text could be extracted, and extraction is
+          // skipped on the recovery path where the planner has demoted a send and the system
+          // restores it. On that path the owner's word — "aj" — stayed in the instruction, the agent
+          // searched for it by name, found two people, and refused with "Top match margin 0.000 is
+          // insufficient for a consequential action" — for a contact already saved, whose handle we
+          // were holding, that the owner had already picked once. The whole point of knowing someone
+          // is not having to ask again.
+          //
+          // Swapping their name for their handle keeps the rest of the instruction intact and leaves
+          // nothing ambiguous to search for.
+          const nameLike = new RegExp(namedPerson.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "gi");
+          taskToRun = `${executableTask.replace(nameLike, `@${knownContact.handle}`)} ${openExactly}`;
+        }
+        trace("contacts", "route-handle-only", { channel: knownContact.channel, rewroteTask: taskToRun !== executableTask, viaPayload: Boolean(payload) });
+      } else if (savedThread) {
+        startUrl = savedThread;
         contacts.touch(knownContact.contactId);
         // Navigating to the thread is only half of it. The planner's task still said "search for tg,
         // select tg's chat", so the run landed in the right conversation and then obediently typed
@@ -2836,10 +2913,51 @@ function createCapabilityEngine({
       // forever, despite all three having been messaged successfully.
       if (result.success && surfaceChannel && namedPerson) {
         try {
+          // Who this send was for, even after the task stopped saying their name.
+          //
+          // The handle-only route rewrites the task to "Open the Instagram Direct conversation with
+          // @someone…" — deliberately, because a name re-triggers the identity search. Approving
+          // re-runs THAT task, so there is no name left to look anyone up by, and the lookup came
+          // back empty: `no conversation saved for unknown contact — evidence urls:
+          // ["https://www.instagram.com/direct/t/…"]`. The conversation URL was correct and present
+          // and thrown away for want of a recipient, which is why this contact stayed slow through
+          // four successful sends.
+          //
+          // A handle identifies a person at least as well as a name, and `routeFor` already matches
+          // on handles, so the rewritten task is still perfectly able to say who it meant.
+          const handleInTask = /@([A-Za-z0-9._]{2,40})/.exec(String(taskToRun || ""))?.[1] || "";
           const learnFor = knownContact?.contactId
             ? knownContact
-            : contacts.routeFor(namedPerson, surfaceChannel);
-          if (learnFor?.contactId) contacts.rememberThread(learnFor.contactId, surfaceChannel, result.finalUrl || "");
+            : (contacts.routeFor(namedPerson, surfaceChannel)
+              || (handleInTask ? contacts.routeFor(handleInTask, surfaceChannel) : null));
+          // The page it was on WHEN IT SENT — not where the run happened to finish.
+          //
+          // `finalUrl` is the last page of the whole run, and a send that goes through someone's
+          // profile leaves it sitting back on that profile. So the conversation the message actually
+          // went into was never written down, and that person re-searched from scratch on every
+          // future message, forever. Observed: two contacts with a saved conversation ran in 21s and
+          // 57s; a third kept ending on a profile URL, learned nothing, and stayed at five minutes.
+          //
+          // Sending is precisely the moment the conversation is known, and the run already records
+          // where it was standing then. Newest first, with the end of the run as a last resort;
+          // `rememberThread` still rejects anything that is not a real conversation on a known host.
+          const sentOn = (result.evidence || [])
+            .filter((item) => item?.kind === "post-commit-observation" && item.url)
+            .map((item) => item.url)
+            .reverse();
+          const tried = [...sentOn, result.finalUrl || ""];
+          let learned = false;
+          for (const candidateUrl of tried) {
+            if (learnFor?.contactId && contacts.rememberThread(learnFor.contactId, surfaceChannel, candidateUrl)) { learned = true; break; }
+          }
+          // Three attempts at this have now failed on guesses about which URL is offered here.
+          // Printing the actual candidates ends the guessing: one run says whether the conversation
+          // URL is absent, is present but rejected, or was never reached at all.
+          if (!learned) {
+            console.log(`[contacts:learn] no conversation saved for ${learnFor?.contactId ? "known contact" : "unknown contact"}`
+              + ` — evidence urls: ${JSON.stringify(sentOn.slice(0, 4))}, finalUrl: ${JSON.stringify(result.finalUrl || "")}`
+              + `, evidence kinds: ${JSON.stringify((result.evidence || []).map((item) => item?.kind).slice(0, 8))}`);
+          }
         } catch { /* never fail a delivered send over a cache write */ }
       }
       return { ok: result.success, task, executedTask: executableTask, result: result.result, error: result.error || demotionNotice, blocked: result.blocked || false, candidates: result.candidates || null, card: identityCard, completed: restraintSurvivedStripping ? false : undefined, plannerDemotedTheSend, restraintStripped: plannerDemotedTheSend && !restraintSurvivedStripping, steps: stepLog.length ? stepLog : result.history || result.steps || [], evidence: result.evidence || [], statePath: result.statePath || null, taskId: result.taskId || automationOptions.taskId || null, stepsCompleted: result.stepsCompleted, mode: result.mode, finalUrl: result.finalUrl || null, finalTitle: result.finalTitle || null, reveal };
