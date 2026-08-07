@@ -4371,6 +4371,10 @@ async function callGemini({ prompt, imageData, attachments = [], mode, sessionId
         const wantsFresh = (prepared.route.fresh || needsFreshInfo(rawUserMessage(promptStr))) && !prepared.route.action && !prepared.route.workComposer;
         const useGrounding = !useCompute && !useMaps && Boolean(wantsFresh && !prepared.route.deepResearch);
         const sendFns = !useGrounding && !useCompute && !useMaps && functionDeclarations.length > 0;
+        // Set by the execution-lane router when the prompt names a commit verb and a surface. It is
+        // a deterministic classification, not the model's opinion, so it is the right thing to make
+        // the tool call mandatory on the opening turn.
+        const forceToolCall = Boolean(prepared.route?.executionLane) && prepared.route.executionLane.lane !== "none";
         const tools = [];
         if (useCompute) tools.push({ code_execution: {} });
         else if (useMaps) tools.push({ google_maps: {} });
@@ -4396,7 +4400,19 @@ async function callGemini({ prompt, imageData, attachments = [], mode, sessionId
               ...(cacheName ? { cachedContent: cacheName } : { systemInstruction: { parts: [{ text: systemText }] } }),
               contents,
               ...(tools.length ? { tools } : {}),
-              ...(sendFns ? { toolConfig: { functionCallingConfig: { mode: "AUTO" } } } : {}),
+              // An execution lane means the request was ALREADY classified, deterministically, as an
+              // action on a named surface — "send <text> to <person> on instagram" matches a commit
+              // verb and a site. AUTO then left it to the model whether to actually act, and it
+              // sometimes declined: the observed failure was a send whose entire event stream read
+              // `Reasoning -> Receipt recorded -> Response complete`, with no tool call, no browser,
+              // no runtime task and no approval card. The same request had worked minutes earlier.
+              // From the outside that is indistinguishable from the feature being broken at random.
+              //
+              // ANY forces one of the lane's own functions to be called, which is what classifying
+              // the turn as an action already meant. Strictly first turn only: ANY forces a call on
+              // EVERY turn, so leaving it on after the tool result comes back would make the model
+              // call another tool instead of answering, forever.
+              ...(sendFns ? { toolConfig: { functionCallingConfig: { mode: forceToolCall && turn === 0 ? "ANY" : "AUTO" } } } : {}),
               generationConfig: {
                 // Cortex Max (Pro) is a thinking model — reasoning tokens count against
                 // the output budget, so give it far more room or the answer comes back empty.

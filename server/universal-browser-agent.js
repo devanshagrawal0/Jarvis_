@@ -213,6 +213,16 @@ function fingerprint(snapshot = {}) {
   })).digest("hex").slice(0, 16);
 }
 
+// Every DOM-authored fact about an element, in a fixed order, so the same control can be recognised
+// across two snapshots. Excludes `ref` (a per-snapshot slot number) and anything a model wrote.
+const SIGNATURE_FIELDS = ["role", "tag", "type", "name", "text", "ariaLabel", "placeholder", "title", "fieldName", "href", "id"];
+function elementSignature(element) {
+  if (!element || typeof element !== "object") return "";
+  return SIGNATURE_FIELDS
+    .map((field) => `${field}=${String(element[field] ?? "").toLowerCase().replace(/\s+/g, " ").trim().slice(0, 120)}`)
+    .join("|");
+}
+
 function elementFor(snapshot, ref) {
   return (snapshot?.elements || []).find((item) => item.ref === ref) || null;
 }
@@ -614,6 +624,11 @@ function commitBoundary(objective, action, snapshot, context = {}) {
     path: action.path || null,
     paths: action.paths || null,
     label: clip(label, 300),
+    // Everything the PAGE says about the approved control, so it can be found again if its handle
+    // dies before the owner approves. A ref is a slot in one snapshot; a live site re-renders while
+    // the card is on screen, the element detaches, and the replay failed with "Element reference
+    // e17 is stale. Take a new browser snapshot." — after the owner had already approved.
+    targetSignature: elementSignature(element),
     // Say which rule caught it, so an approval prompt for an unnamed control is explicable rather
     // than mysterious.
     basis: terminalEnter ? "terminal-enter" : sensitiveControl ? "labelled-control" : "unlabelled-after-compose",
@@ -927,7 +942,30 @@ ${JSON.stringify(evidence).slice(0, 70_000)}`;
 
     if (resume?.pendingAction && options.approvedExternal === true) {
       await onStep?.({ taskId, step: state.history.length + 1, phase: "commit_started", mode: "playwright", ...resume.pendingAction });
-      const committed = await browserService.commit({ taskId, ...resume.pendingAction });
+      // The approved element's handle can die between the card appearing and the owner approving:
+      // a messaging site re-renders its thread list continuously, the element detaches, and the
+      // replay failed with "Element reference e17 is stale" AFTER approval — the owner had said yes
+      // and nothing was sent. The slower the path to the boundary, the likelier this is; the run
+      // that hit it had been on screen for 207 seconds.
+      //
+      // Re-finding it by the signature the page itself supplied is safe in a way that re-planning is
+      // not, but only if it is unambiguous: exactly one element must match. Zero means the control
+      // is gone and nothing should be clicked; more than one means we cannot tell them apart, and
+      // guessing which to click is precisely what an approval gate exists to prevent.
+      let committed;
+      try {
+        committed = await browserService.commit({ taskId, ...resume.pendingAction });
+      } catch (error) {
+        const signature = resume.pendingAction.targetSignature || "";
+        if (!/stale/i.test(String(error?.message || "")) || !signature) throw error;
+        const fresh = await browserService.snapshot({ taskId, limit: 140 });
+        const matches = (fresh.elements || []).filter((item) => elementSignature(item) === signature);
+        if (matches.length !== 1) {
+          throw new Error(`The approved control is no longer on the page (${matches.length} matches after it changed). Nothing was sent — ask again and approve the new one.`);
+        }
+        await onStep?.({ taskId, step: state.history.length + 1, phase: "commit_relocated", mode: "playwright", ref: matches[0].ref });
+        committed = await browserService.commit({ taskId, ...resume.pendingAction, ref: matches[0].ref });
+      }
       state.history.push({ ...resume.pendingAction, ok: true, committed: true, observed: clip(JSON.stringify(committed), 600) });
       state.evidence.push({ kind: "commit", at: new Date().toISOString(), result: committed });
       await onStep?.({ taskId, step: state.history.length, phase: "committed", mode: "playwright", ...resume.pendingAction });
@@ -1224,4 +1262,4 @@ ${JSON.stringify(evidence).slice(0, 70_000)}`;
   return { execute, stateDir, navigationMemory };
 }
 
-module.exports = { MAX_PLANNER_MODELS, MAX_STAGNANT_OBSERVATIONS, PLANNER_ACTION_TIMEOUT_MS, PLANNER_RESPONSE_SCHEMA, PLANNER_ROUTER_TIMEOUT_MS, canonicalVisibleText, completionProblems, createUniversalBrowserAgent, commitBoundary, deterministicDecision, findMessageComposer, fingerprint, inferredStepBudget, isComposerLabel, parseJson, plannerModelChain, visiblyContains };
+module.exports = { MAX_PLANNER_MODELS, MAX_STAGNANT_OBSERVATIONS, PLANNER_ACTION_TIMEOUT_MS, PLANNER_RESPONSE_SCHEMA, PLANNER_ROUTER_TIMEOUT_MS, canonicalVisibleText, completionProblems, createUniversalBrowserAgent, commitBoundary, deterministicDecision, elementSignature, findMessageComposer, fingerprint, inferredStepBudget, isComposerLabel, parseJson, plannerModelChain, visiblyContains };
