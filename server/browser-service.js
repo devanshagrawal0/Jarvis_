@@ -624,9 +624,37 @@ function createBrowserAutomationService({
 
   async function loginHandoff(args = {}) {
     let targetUrl = cleanBrowserString(args.url, 1000);
+    const previousUrl = page && !page.isClosed() ? page.url() : "";
+    if (!targetUrl && /^https?:/i.test(previousUrl)) targetUrl = previousUrl;
+
+    // LOOK BEFORE TAKING THE SCREEN.
+    //
+    // This used to relaunch the browser visibly and call bringToFront() FIRST, and only then check
+    // whether a login was actually required. So a run on an already-signed-in session — one that had
+    // just read the inbox and found the right person — threw a browser window in front of the owner
+    // mid-task, and then died with "browser login handoff: Capability did not return verified
+    // success", taking the send with it. Observed live: the window appeared, and the message never
+    // went out.
+    //
+    // Taking over someone's screen is the most intrusive thing this service does. It has to be
+    // earned by evidence — a password field or a login URL — not assumed because a model asked.
+    if (targetUrl && page && !page.isClosed() && page.url() !== targetUrl) {
+      await navigate({ url: targetUrl, timeoutMs: args.timeoutMs });
+    }
+    const probe = await snapshot({ selector: args.selector, limit: args.limit || 80, timeoutMs: args.timeoutMs });
+    const probeSignals = loginSignalsFromSnapshot(probe);
+    if (!probeSignals.loginLikelyRequired) {
+      return {
+        ...probe,
+        ...probeSignals,
+        handoffRequired: false,
+        headless: headlessMode,
+        alreadySignedIn: true,
+        instruction: "Already signed in — no login wall is present, so nothing was handed over and the browser stayed in the background. Continue with the task.",
+      };
+    }
+
     if (headlessMode && interactiveLogin) {
-      const previousUrl = page && !page.isClosed() ? page.url() : "";
-      if (!targetUrl && /^https?:/i.test(previousUrl)) targetUrl = previousUrl;
       if (context) await runExclusive(() => restartContext(false));
       else {
         headlessMode = false;
@@ -644,9 +672,7 @@ function createBrowserAutomationService({
       ...signals,
       handoffRequired: signals.loginLikelyRequired,
       headless: false,
-      instruction: signals.loginLikelyRequired
-        ? "Complete login manually in the opened JARVIS browser. JARVIS will not type passwords or bypass login challenges."
-        : "No obvious login wall was detected. Take a browser_snapshot next before acting.",
+      instruction: "Complete login manually in the opened JARVIS browser. JARVIS will not type passwords or bypass login challenges.",
     };
   }
 

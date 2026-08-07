@@ -100,7 +100,34 @@ function namesTheQuery(label = "", query = "") {
   const normalisedLabel = String(label || "").trim().toLowerCase();
   const normalisedQuery = String(query || "").trim().toLowerCase();
   if (!normalisedLabel || !normalisedQuery) return false;
-  return normalisedLabel.startsWith(normalisedQuery);
+  if (normalisedLabel.startsWith(normalisedQuery)) return true;
+  // Requiring the label to START with the query threw away most of the real matches. Measured live:
+  // the resolver found FOUR accounts, three tied at the top score, and the owner was shown exactly
+  // ONE — because only one label happened to begin with the typed name. "Vasquez, LR", "L.R.
+  // Vasquez", or a display name leading with something else all failed even when they were the
+  // person meant, and being shown a single stranger to confirm is worse than being shown four.
+  //
+  // Any WORD in the label may start the query instead. Still anchored at word starts, so a row that
+  // merely contains the letters somewhere does not qualify ("majid" is not "lr"), and every word of
+  // a multi-word query must be accounted for, so "lr vasquez" cannot match an unrelated "lr".
+  //
+  // Split on WHITESPACE and strip punctuation inside each word, rather than splitting on
+  // punctuation: "L.R. Vasquez" is one person whose first name is written as two initials, and
+  // splitting on the dots turns it into "l" and "r" and loses them. This way it reads as
+  // ["lr", "vasquez"], while a handle like "lr.vasquez88" reads as one word — both still anchored
+  // at the start of a word.
+  const asWords = (value) => value.split(/\s+/).map((word) => word.replace(/[^\p{L}\p{N}]+/gu, "")).filter(Boolean);
+  const words = asWords(normalisedLabel);
+  const queryWords = asWords(normalisedQuery);
+  if (!queryWords.length) return false;
+  // Only a SHORT label may match on a later word. A display name is a few words — "Vasquez, LR",
+  // "L.R. Vasquez" — while a search row that merely quotes the name in an old message is prose:
+  // "Casey i will tg not to · 1y" contains "tg" as a word too, and offering that as a candidate for
+  // who someone IS was the original reason this rule demanded a prefix. Both requirements are real,
+  // and length is what separates them.
+  const NAME_LIKE_WORDS = 4;
+  if (words.length > NAME_LIKE_WORDS) return false;
+  return queryWords.every((part) => words.some((word) => word.startsWith(part)));
 }
 
 function ownerHandleFrom(elements = []) {
@@ -141,8 +168,22 @@ async function enrichCandidates({ browserService, taskId, candidates = [], inbox
       entry.profileUrl = `https://www.instagram.com/${labelHandle}/`;
     }
     try {
-      await browserService.navigate({ url: inboxUrl, taskId });
-      await browserService.wait({ taskId, milliseconds: waitMs });
+      // Going back to the inbox costs a navigate, a fixed 2.2s wait and a full 240-element snapshot
+      // — about seven seconds — and it was paid once PER CANDIDATE. With four people to show, that
+      // is most of the 99 seconds an identity question took to appear. It is only actually needed
+      // when the previous candidate navigated away into a thread; when we are already looking at the
+      // inbox the whole trip is dead time.
+      // `.catch()` cannot save a method that does not exist — calling it throws synchronously, which
+      // took the whole candidate down the failure path and returned it with no handle at all. Not
+      // every caller supplies a full browser service, so the capability is checked, not assumed.
+      const current = typeof browserService.status === "function"
+        ? await browserService.status({ taskId }).catch(() => null)
+        : null;
+      const alreadyOnInbox = Boolean(current) && String(current?.activePage?.url || "").startsWith(inboxUrl);
+      if (!alreadyOnInbox) {
+        await browserService.navigate({ url: inboxUrl, taskId });
+        await browserService.wait({ taskId, milliseconds: waitMs });
+      }
       const inbox = await browserService.snapshot({ taskId, limit: 240 });
       if (!ownerHandle) ownerHandle = ownerHandleFrom(inbox.elements || []);
 

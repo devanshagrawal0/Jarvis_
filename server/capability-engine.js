@@ -2826,8 +2826,21 @@ function createCapabilityEngine({
       // Only on a verified success, and `rememberThread` refuses anything that is not a real
       // conversation URL and will not overwrite one that already works — a wrong thread URL would
       // quietly deliver to the wrong person, which is much worse than being slow.
-      if (result.success && knownContact?.contactId && surfaceChannel) {
-        try { contacts.rememberThread(knownContact.contactId, surfaceChannel, result.finalUrl || ""); } catch { /* never fail a delivered send over a cache write */ }
+      //
+      // Resolved again HERE rather than reusing the lookup from the start of the run, because the
+      // contact frequently does not exist yet at that point: the owner is asked "which one?", picks,
+      // the contact is created, and the send proceeds. `knownContact` was captured before any of
+      // that, so it was null for exactly the people who most needed to be learned — a newly picked
+      // contact ended up with a handle and no conversation, and searched from scratch on every
+      // future message. Observed: two contacts with a conversation and fast, one without and slow
+      // forever, despite all three having been messaged successfully.
+      if (result.success && surfaceChannel && namedPerson) {
+        try {
+          const learnFor = knownContact?.contactId
+            ? knownContact
+            : contacts.routeFor(namedPerson, surfaceChannel);
+          if (learnFor?.contactId) contacts.rememberThread(learnFor.contactId, surfaceChannel, result.finalUrl || "");
+        } catch { /* never fail a delivered send over a cache write */ }
       }
       return { ok: result.success, task, executedTask: executableTask, result: result.result, error: result.error || demotionNotice, blocked: result.blocked || false, candidates: result.candidates || null, card: identityCard, completed: restraintSurvivedStripping ? false : undefined, plannerDemotedTheSend, restraintStripped: plannerDemotedTheSend && !restraintSurvivedStripping, steps: stepLog.length ? stepLog : result.history || result.steps || [], evidence: result.evidence || [], statePath: result.statePath || null, taskId: result.taskId || automationOptions.taskId || null, stepsCompleted: result.stepsCompleted, mode: result.mode, finalUrl: result.finalUrl || null, finalTitle: result.finalTitle || null, reveal };
     },

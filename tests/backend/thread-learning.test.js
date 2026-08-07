@@ -78,10 +78,26 @@ test("an unknown contact or channel is a no-op, not a crash", () => {
   assert.equal(store.rememberThread(contact.id, "not-a-channel", THREAD), null);
 });
 
+test("a contact created mid-run is still learned from", () => {
+  // The case that was silently missed. When the owner is asked "which one?", the contact does not
+  // exist yet — it is created by picking. The lookup captured at the START of the run is therefore
+  // null for exactly the people who most need learning, so a newly picked contact kept its handle
+  // but never got a conversation, and re-searched on every future message. Observed live: two
+  // contacts had a conversation and were fast, a third did not and stayed slow, all three having
+  // been messaged successfully.
+  const engine = fs.readFileSync(path.join(__dirname, "..", "..", "server", "capability-engine.js"), "utf8");
+  assert.match(engine, /const learnFor = knownContact\?\.contactId\s*\n?\s*\? knownContact\s*\n?\s*: contacts\.routeFor\(namedPerson, surfaceChannel\);/,
+    "learning must re-resolve the contact after the run, not rely on the lookup from before it");
+  assert.match(engine, /if \(result\.success && surfaceChannel && namedPerson\) \{/,
+    "still gated on a delivered send");
+});
+
 test("the engine only learns from a send that actually succeeded", () => {
   // Guarding on `result.success` is the whole safety of this: a run that failed may well have ended
   // on the wrong page, and caching that URL would make every future message to that person wrong.
   const engine = fs.readFileSync(path.join(__dirname, "..", "..", "server", "capability-engine.js"), "utf8");
-  assert.match(engine, /if \(result\.success && knownContact\?\.contactId && surfaceChannel\) \{/,
-    "thread learning must be gated on a verified success");
+  // The property, not the exact wording: a run that FAILED may well have ended on the wrong page,
+  // and caching that URL would make every future message to that person go to the wrong place.
+  const gate = /if \(result\.success && [^)]*\) \{[\s\S]{0,400}?rememberThread\(/.exec(engine);
+  assert.ok(gate, "thread learning must be gated on a verified success");
 });
