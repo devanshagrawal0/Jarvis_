@@ -819,7 +819,14 @@ function createBrowserAutomationService({
       invalidateSnapshot(activePage);
       const activeState = stateForPage(activePage);
       const root = activePage.locator(selector).first();
+      // Sub-part timing, so the next slow real page NAMES its slow part instead of producing a
+      // fourth theory. Three synthetic reproductions (big DOM, busy main thread, same-origin
+      // iframes) all read in under two seconds, yet a real Instagram page took 48s — the difference
+      // is not reproducible offline, so it has to be measured where it happens. Logged only when the
+      // whole read is slow, so tests and light pages stay silent.
+      const _mark = { start: Date.now() };
       await root.waitFor({ state: "attached", timeout: boundedNumber(args.timeoutMs, timeoutMs, 500, 15_000) });
+      _mark.waited = Date.now();
       // One call for the whole read: ranking, visibility, metadata and the page's text together.
       //
       // Bounded, because `evaluate` has NO timeout of its own and waits on the page's main thread.
@@ -837,6 +844,7 @@ function createBrowserAutomationService({
           PAGE_READ_TIMEOUT_MS,
         )),
       ]);
+      _mark.read = Date.now();
       const elements = [];
       if (read) {
         // One more call for the handles, and only for the elements that survived — the previous
@@ -865,6 +873,7 @@ function createBrowserAutomationService({
         }
         await mapWithLimit(unused, (handle) => handle.dispose().catch(() => undefined));
       }
+      _mark.handles = Date.now();
       const frameTexts = [];
       for (const frame of activePage.frames().filter((candidate) => candidate !== activePage.mainFrame()).slice(0, 8)) {
         if (elements.length >= limit) break;
@@ -891,6 +900,22 @@ function createBrowserAutomationService({
           activeState.refs.set(ref, { pageId, handle, metadata: { ...metadata, frameUrl: frame.url() } });
           elements.push({ ref, ...metadata, frameUrl: frame.url(), sensitive: metadata.type === "password" || isSensitiveAction(sensitiveDescription(metadata)) });
         }
+      }
+      _mark.frames = Date.now();
+      // Name the slow sub-part on the next slow real page. Silent under 3s so tests and light pages
+      // do not log. wait = waiting for <body>; read = the one in-page evaluate; handles = adopting
+      // element handles in the main frame; frames = walking child iframes one element at a time.
+      const _total = _mark.frames - _mark.start;
+      if (_total > 3_000) {
+        trace("snapshot", "slow", {
+          totalMs: _total,
+          waitMs: _mark.waited - _mark.start,
+          readMs: _mark.read - _mark.waited,
+          handlesMs: _mark.handles - _mark.read,
+          framesMs: _mark.frames - _mark.handles,
+          frameCount: activePage.frames().length,
+          kept: elements.length,
+        });
       }
       // The page's text came back with the elements in the same call, so this is no longer a
       // separate round trip. Frames still contribute their own, and remain rare.
