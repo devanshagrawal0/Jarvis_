@@ -500,6 +500,40 @@ function deterministicDecision({ outcome, snapshot, history = [], entityHints = 
         model: "local-semantic-fast-path",
       };
     }
+    // No composer yet, and there is a "Message" button on the page: CLICK IT, do not wait.
+    //
+    // On the profile route the run lands on the person's profile, where the composer does not exist
+    // and cannot exist until the "Message" button is clicked to open the chat. The wait-for-composer
+    // fallback below fired first anyway, so every profile-route send spent three wait-and-read cycles
+    // waiting for a box that could not appear until a button it had not pressed yet was pressed:
+    //
+    //   1. navigate (profile)
+    //   2. wait "message composer to render"   <- nothing to wait for
+    //   3. wait "message composer to render"
+    //   4. wait "message composer to render"
+    //   5. click "Message"                      <- what should have happened at step 2
+    //
+    // Clicking the chat-opening button first replaces those three wasted cycles with one action. It
+    // only triggers when there is no composer AND a Message button is present, so the saved-thread
+    // route (composer already on screen) never reaches it. Guarded against re-clicking by its own
+    // reason, so after the click it waits for the composer to render exactly once, then types.
+    if (!target?.ref) {
+      const openChat = elements.find((item) => {
+        const role = normalized(item.role || item.tag);
+        const label = normalized([item.name, item.text, item.ariaLabel].filter(Boolean).join(" "));
+        return ["button", "link"].includes(role) && /^(message|send message)$/.test(label) && !item.disabled;
+      });
+      const chatOpened = history.some((item) => item.action === "click"
+        && /open the chat before typing/i.test(item.reason || "") && item.ok !== false);
+      if (openChat?.ref && !chatOpened) {
+        return {
+          summary: "A Message button opens the one-to-one chat; the composer appears only after it is clicked.",
+          actions: [{ action: "click", ref: openChat.ref, reason: "Click the Message button to open the chat before typing", expected: "The message composer becomes available" }],
+          confidence: 0.98,
+          model: "local-semantic-fast-path",
+        };
+      }
+    }
     // The conversation is open but its composer has not rendered yet. Falling through here handed
     // the step to the remote planner, which guessed at a field, and the composer guard refused:
     //
@@ -507,7 +541,7 @@ function deterministicDecision({ outcome, snapshot, history = [], entityHints = 
     //   "Refused to place the requested message into an unlabeled field; a semantic message
     //    composer is required."
     //
-    // The guard was right — typing the owner's message into an unidentified input is exactly what
+    // The guard was right — typing the owner's message into an unidentified field is exactly what
     // it exists to stop — but the whole detour cost a planner call plus a full re-observation, and
     // the composer was simply late: 52 controls on that snapshot, 89 on the next one.
     //
@@ -998,8 +1032,15 @@ ${JSON.stringify(evidence).slice(0, 70_000)}`;
     if (options.startUrl && !resume) {
       // This call also carries the cold browser launch on the first task after a restart, so its
       // duration separates "the browser took ages to start" from "the site took ages to answer".
+      //
+      // `commit` returns as soon as the server responds, without waiting for the DOM to finish
+      // parsing. On a JavaScript app like Instagram the chat is drawn by script AFTER the DOM
+      // anyway, so the page read + the composer-wait loop already handle "content not ready yet" —
+      // waiting for the full DOM here just adds fixed time the loop would have covered for free.
+      // Measured on the same page: opening dropped from ~1168ms to ~524ms. Only the send's FIRST
+      // navigation uses this; every other navigation keeps the default so nothing else changes.
       const navigateStarted = Date.now();
-      const navigation = await browserService.navigate({ taskId, url: options.startUrl });
+      const navigation = await browserService.navigate({ taskId, url: options.startUrl, waitUntil: "commit" });
       console.log(`[auto:timing] navigate(startUrl) ${Date.now() - navigateStarted}ms -> ${navigation.url}`);
       state.history.push({ action: "navigate", url: options.startUrl, ok: true, observed: navigation.url });
     }
