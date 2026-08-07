@@ -270,12 +270,19 @@ function createBrowserAutomationService({
       args: ["--disable-background-networking", "--no-first-run", "--no-default-browser-check"],
     };
 
+    // Timed because an unexplained ~85s gap between a task starting and its first look at the page
+    // showed up twice, both on the first browser use after a restart. Standalone the same launch
+    // measures ~8s, so either this is much slower inside the server or the time is going somewhere
+    // else entirely — and guessing which has already wasted an afternoon.
+    const launchStarted = Date.now();
     try {
       const launched = await browserType.launchPersistentContext(profileDir, channel ? { ...options, channel } : options);
       launchedAt = new Date().toISOString();
       lastLaunchError = "";
+      console.log(`[browser] launched in ${Date.now() - launchStarted}ms (profile ${profileDir})`);
       return launched;
     } catch (error) {
+      console.log(`[browser] launch attempt failed after ${Date.now() - launchStarted}ms: ${String(error?.message || error).slice(0, 120)}`);
       if (!channel) {
         lastLaunchError = String(error?.message || error).slice(0, 1_000);
         throw error;
@@ -284,6 +291,7 @@ function createBrowserAutomationService({
         const launched = await browserType.launchPersistentContext(profileDir, options);
         launchedAt = new Date().toISOString();
         lastLaunchError = "";
+        console.log(`[browser] launched on fallback in ${Date.now() - launchStarted}ms`);
         return launched;
       } catch (fallbackError) {
         lastLaunchError = String(fallbackError?.message || fallbackError).slice(0, 1_000);

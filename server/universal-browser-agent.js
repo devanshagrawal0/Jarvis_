@@ -960,7 +960,11 @@ ${JSON.stringify(evidence).slice(0, 70_000)}`;
     if (cancelledBeforeStart) return cancelledBeforeStart;
 
     if (options.startUrl && !resume) {
+      // This call also carries the cold browser launch on the first task after a restart, so its
+      // duration separates "the browser took ages to start" from "the site took ages to answer".
+      const navigateStarted = Date.now();
       const navigation = await browserService.navigate({ taskId, url: options.startUrl });
+      console.log(`[auto:timing] navigate(startUrl) ${Date.now() - navigateStarted}ms -> ${navigation.url}`);
       state.history.push({ action: "navigate", url: options.startUrl, ok: true, observed: navigation.url });
     }
 
@@ -1017,8 +1021,17 @@ ${JSON.stringify(evidence).slice(0, 70_000)}`;
     for (let iteration = 0; iteration < maxSteps; iteration += 1) {
       const controlled = await controlCheckpoint();
       if (controlled) return controlled;
+      // Timed for the same reason as the browser launch: the gap between a task starting and its
+      // first "observed N controls" hit 85s twice, and every part measured on its own is fast. One
+      // of these numbers will name the cause instead of producing another theory.
+      const snapshotStarted = Date.now();
       const snapshot = await browserService.snapshot({ taskId, limit: 140 });
+      const snapshotMs = Date.now() - snapshotStarted;
+      const statusStarted = Date.now();
       const status = await browserService.status({ taskId });
+      if (iteration === 0 || snapshotMs > 3_000) {
+        console.log(`[auto:timing] step ${iteration + 1}: snapshot ${snapshotMs}ms, status ${Date.now() - statusStarted}ms`);
+      }
       state.url = snapshot.url;
       state.title = snapshot.title;
       const lastCommittedIndex = state.history.findLastIndex((item) => item.committed === true && item.ok !== false);

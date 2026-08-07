@@ -67,6 +67,25 @@ const cardState = () => page.evaluate(() => {
     approveDisabled: el.querySelector(".jr-approve")?.disabled ?? null,
   };
 });
+// A run that cannot tell two people apart does not fail — it asks. That question renders as a
+// contact-choice card, NOT an approval card, and this harness only ever watched for the approval
+// card. So every "which one did you mean?" looked identical to "nothing happened", and at least one
+// run was recorded as a failure when it had actually asked a perfectly good question.
+const choiceState = () => page.evaluate(() => {
+  const el = document.querySelector(".jr-contact-choice");
+  if (!el) return null;
+  return {
+    title: el.querySelector(".jr-card-title")?.textContent?.trim() || "",
+    body: el.querySelector(".jr-card-body")?.textContent?.trim() || "",
+    candidates: [...el.querySelectorAll(".jr-contact-option")].map((option) => ({
+      name: option.querySelector(".jr-contact-name")?.textContent?.trim() || "",
+      handle: option.querySelector(".jr-contact-handle")?.textContent?.trim() || "",
+      detail: option.querySelector(".jr-contact-detail")?.textContent?.trim() || "",
+      hasAvatar: Boolean(option.querySelector("img.jr-contact-avatar")),
+    })),
+  };
+});
+
 const waitFor = async (fn, ms, label) => {
   const until = Date.now() + ms;
   while (Date.now() < until) {
@@ -105,7 +124,24 @@ log("submitted");
 // ── 1. the card ─────────────────────────────────────────────────────────────
 // A real run is a chain of DOM snapshots and planner calls against a live site; the first attempt
 // gave up at 4 minutes while the agent was still working through the inbox.
-const card = await waitFor(cardState, 600000, "the approval card");
+// Either outcome is a real answer: the run either reaches the send and asks for approval, or it
+// cannot tell two people apart and asks which one. Watching for only one of them is how a working
+// question got filed as a broken run.
+const settled = await waitFor(async () => (await cardState()) || (await choiceState()), 600000, "the approval card or an identity question");
+const choice = settled && settled.candidates ? settled : null;
+if (choice) {
+  await shot(page, "02-identity-question");
+  log(`IDENTITY QUESTION: ${choice.title}`);
+  log(`  ${choice.body}`);
+  choice.candidates.forEach((candidate, index) => {
+    log(`  [${index + 1}] ${candidate.name} ${candidate.handle} ${candidate.detail}${candidate.hasAvatar ? "  (photo)" : ""}`);
+  });
+  fs.writeFileSync(path.join(OUT, "transcript.json"), JSON.stringify({ request: REQUEST, choice, calls }, null, 2));
+  log("Nothing was sent — the run is waiting for the owner to pick.");
+  await browser.close();
+  process.exit(0);
+}
+const card = settled;
 if (!card) {
   await shot(page, "02-no-card");
   log("RESULT: no approval card appeared. Transcript:");
