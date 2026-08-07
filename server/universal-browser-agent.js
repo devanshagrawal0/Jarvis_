@@ -15,11 +15,55 @@ const ACTIONS = new Set(["navigate", "click", "fill", "press", "select", "check"
 const MUTATING = new Set(["click", "fill", "press", "select", "check", "uncheck", "upload", "download"]);
 const MAX_HISTORY = 40;
 const MAX_FACT_LEDGER = 28;
-const MAX_PLANNER_MODELS = 2;
+// Measured against the live endpoint (scripts/measure-planner-budget.mjs, 8 samples at 17.7 KB —
+// the size real runs actually produce, not the 4.4 KB the previous budgets were set from):
+//
+//   gemini-3.1-flash-lite   median 1608ms   max 2152ms
+//   gemini-3.6-flash        median 5068ms   max 5839ms
+//   gemini-2.5-flash        median 3692ms   max 5119ms
+//   gemini-flash-latest     HTTP 503 "currently experiencing high demand"
+//
+// Prompt size is not the problem: 17.7 KB behaves like 12 KB. What defeats a budget is transient
+// API degradation — the 503 above was observed live, mid-measurement.
+//
+// These were briefly raised to 8s/15s with a 3-model chain to ride out such a spike. That was the
+// wrong trade and it is reverted. Raising them does not make a send succeed; it makes a doomed step
+// burn 38s instead of 12s, and the owner experiences that as the whole feature hanging. Now that a
+// saved-contact send reaches the composer and the send control with NO planner call at all (see
+// deterministicDecision), the planner is a rarely-used fallback — and the right behaviour for a
+// rarely-used fallback against a degraded API is to fail fast, not to wait longer.
+//
+// The 12s ceiling (4s + 8s) is deliberate and load-bearing. Do not raise it to chase a flaky API.
 const PLANNER_ROUTER_TIMEOUT_MS = 4_000;
 const PLANNER_ACTION_TIMEOUT_MS = 8_000;
+// Two attempts, so the worst case stays inside the 12s ceiling above.
+const MAX_PLANNER_MODELS = 2;
 const MAX_STAGNANT_OBSERVATIONS = 5;
 const RECOVERY_WAIT_MS = [350, 900];
+// Fastest-first, from the measurement in the budget comment above. The registry's own order is by
+// general capability, which put `gemini-flash-latest` — the model observed returning 503 "high
+// demand" — ahead of `gemini-2.5-flash`, which was both healthy and faster than the main model. For
+// a planner decision that is one small JSON object against a fixed schema, every model here is
+// interchangeable in quality, so ordering by latency costs nothing and buys a working fallback.
+// Anything not measured sorts last rather than being excluded.
+const PLANNER_SPEED_ORDER = ["gemini-3.1-flash-lite", "gemini-2.5-flash", "gemini-3.6-flash"];
+const plannerRank = (model) => {
+  const index = PLANNER_SPEED_ORDER.indexOf(model);
+  return index === -1 ? PLANNER_SPEED_ORDER.length : index;
+};
+
+// The ordered list of models a single planner decision may try, deduplicated. Pulled out of the
+// request loop so fallback depth and order are testable properties rather than a slice buried forty
+// lines inside a try/catch.
+function plannerModelChain(settings = {}) {
+  // An explicit override is the owner's configuration and leads regardless of measurement.
+  const pinned = [settings.geminiRouterModel, settings.geminiActionModel || settings.geminiFastModel].filter(Boolean);
+  const rest = [...new Set([MODELS.router, MODELS.main, ...candidatesFor(settings.geminiActionModel || MODELS.main)].filter(Boolean))]
+    .filter((model) => !pinned.includes(model))
+    .sort((a, b) => plannerRank(a) - plannerRank(b));
+  return [...new Set([...pinned, ...rest])].slice(0, MAX_PLANNER_MODELS);
+}
+
 const PLANNER_RESPONSE_SCHEMA = Object.freeze({
   type: "OBJECT",
   properties: {
@@ -447,6 +491,42 @@ function deterministicDecision({ outcome, snapshot, history = [], entityHints = 
         model: "local-semantic-fast-path",
       };
     }
+    // Nothing above matches Instagram, and this was the last planner call standing between a saved
+    // contact and a sent message. Its send control is an unlabelled `div[role=button]` that only
+    // exists once text has been typed, so the label lookup finds nothing, `deterministicDecision`
+    // returns null, and the step falls through to the remote planner — several seconds when it
+    // answers and a dead task when it does not. Measured runs died here repeatedly.
+    //
+    // Enter in the composer is Instagram's actual send and needs no model to locate. The composer is
+    // identified structurally by `findMessageComposer`, which is the same evidence already trusted
+    // to type the message into it a step earlier.
+    //
+    // Deliberately NOT keyed on the composer's ref matching the earlier fill's ref: a ref is a slot
+    // in one snapshot, and typing is precisely what makes the send control appear, so the DOM shifts
+    // between those two snapshots. That guard would fail in exactly the case it exists for.
+    const composer = findMessageComposer(elements)?.element;
+    const alreadyPressedEnter = history.some((item) => item.action === "press"
+      && /^(enter|return)$/i.test(String(item.key || "")) && item.ok !== false);
+    if (composer?.ref && !alreadyPressedEnter) {
+      return {
+        summary: "The message is prepared in the composer and this surface exposes no labelled Send control.",
+        actions: [{
+          action: "press",
+          ref: composer.ref,
+          key: "Enter",
+          // On this path the approval gate is guaranteed by `commitBoundary`'s `unlabelledCommit`
+          // rule — commit intent plus text already composed — which reads the run's own state, not
+          // this string. Verified by mutation: stripping every commit word from the wording still
+          // gates. "Send" is kept because it ALSO satisfies the independent `terminalEnter` rule,
+          // so the gate survives either rule being narrowed later. Belt-and-braces, not the
+          // guarantee — a prompt whose safety depended on the model's phrasing would not be one.
+          reason: `Send the exact prepared message to ${person || "the resolved recipient"}`,
+          expected: `The conversation visibly contains the exact sent message ${JSON.stringify(message)}`,
+        }],
+        confidence: 0.97,
+        model: "local-semantic-fast-path",
+      };
+    }
   }
   return null;
 }
@@ -637,11 +717,7 @@ Return ONLY JSON:
     // first, then fall back to the stronger action model only when it cannot produce a
     // valid decision. This removes most of the 10-20s-per-click latency without reducing
     // the observe/verify loop or the commit gate.
-    const models = [...new Set([
-      settings.geminiRouterModel || MODELS.router,
-      settings.geminiActionModel || settings.geminiFastModel || MODELS.main,
-      ...candidatesFor(settings.geminiActionModel || MODELS.main),
-    ].filter(Boolean))].slice(0, MAX_PLANNER_MODELS);
+    const models = plannerModelChain(settings);
     let lastError = null;
     const attempts = [];
     const plannerStarted = Date.now();
@@ -855,6 +931,25 @@ ${JSON.stringify(evidence).slice(0, 70_000)}`;
       state.history.push({ ...resume.pendingAction, ok: true, committed: true, observed: clip(JSON.stringify(committed), 600) });
       state.evidence.push({ kind: "commit", at: new Date().toISOString(), result: committed });
       await onStep?.({ taskId, step: state.history.length, phase: "committed", mode: "playwright", ...resume.pendingAction });
+
+      // A messaging site renders the sent bubble a beat AFTER the commit call returns, and both the
+      // deterministic "done" branch and the completion contract require the message to be visibly
+      // present. The first post-commit snapshot therefore often missed it, the fast path could not
+      // fire, and the run fell through to the remote planner to ask whether it had worked — which is
+      // where the 43 seconds between pressing Approve and finishing went, and why a send the owner
+      // could see in the conversation was still recorded as "Approved action failed".
+      //
+      // Waiting a moment for the thing we just asked for is both quicker and more honest than paying
+      // a model to guess at it. Bounded and evidence-based: it stops the instant the message appears,
+      // and a send that genuinely did not land still runs out of attempts and fails.
+      const sentText = outcome?.entities?.messageValues?.[0] || "";
+      if (sentText) {
+        for (let attempt = 0; attempt < 6; attempt += 1) {
+          const settled = await browserService.snapshot({ taskId, limit: 140 }).catch(() => null);
+          if (settled && visiblyContains(settled.pageText, sentText)) break;
+          await new Promise((resolve) => setTimeout(resolve, 700));
+        }
+      }
     }
 
     for (let iteration = 0; iteration < maxSteps; iteration += 1) {
@@ -1129,4 +1224,4 @@ ${JSON.stringify(evidence).slice(0, 70_000)}`;
   return { execute, stateDir, navigationMemory };
 }
 
-module.exports = { MAX_PLANNER_MODELS, MAX_STAGNANT_OBSERVATIONS, PLANNER_ACTION_TIMEOUT_MS, PLANNER_RESPONSE_SCHEMA, PLANNER_ROUTER_TIMEOUT_MS, canonicalVisibleText, completionProblems, createUniversalBrowserAgent, commitBoundary, deterministicDecision, findMessageComposer, fingerprint, inferredStepBudget, isComposerLabel, parseJson, visiblyContains };
+module.exports = { MAX_PLANNER_MODELS, MAX_STAGNANT_OBSERVATIONS, PLANNER_ACTION_TIMEOUT_MS, PLANNER_RESPONSE_SCHEMA, PLANNER_ROUTER_TIMEOUT_MS, canonicalVisibleText, completionProblems, createUniversalBrowserAgent, commitBoundary, deterministicDecision, findMessageComposer, fingerprint, inferredStepBudget, isComposerLabel, parseJson, plannerModelChain, visiblyContains };

@@ -96,6 +96,7 @@ const PANEL_CSS = `
 .jr-approval-fact > dt { color:rgba(var(--jr-tx),.45); font-size:10.5px; letter-spacing:.07em; text-transform:uppercase; }
 .jr-approval-fact > dd { margin:0; color:rgba(var(--jr-tx),.8); min-width:0; overflow-wrap:anywhere; }
 .jr-approval-caveat { color:#ffc16b; font-size:11.5px; margin:-2px 0 10px; }
+.jr-approval-hint { margin-top:8px; color:rgba(var(--jr-tx),.42); font-size:11.5px; }
 .jr-approval-actions { display:flex; gap:8px; }
 .jr-approval-actions button { min-height:32px; border-radius:6px; padding:6px 12px; cursor:pointer; font-weight:650; }
 .jr-approve { color:#07170f; background:#20f7a4; border:1px solid #20f7a4; }
@@ -330,10 +331,39 @@ export function JarvisUI() {
 
   useEffect(() => () => { void liveVoiceRef.current?.stop(); }, []);
 
+  // `decideApproval` is what the card's buttons call and is declared further down, after the
+  // callbacks it depends on. handleSubmit needs it too, so that answering the prompt out loud lands
+  // on exactly the same path as clicking; a latest-ref avoids an ordering where one const would
+  // reference the other before initialisation.
+  const decideApprovalRef = useRef<((approval: ApprovalRequest, decision: "approve" | "deny") => Promise<void>) | null>(null);
+
   const handleSubmit = useCallback(async (text: string, files: File[] = []) => {
     // Forgiving room-entry matcher — tolerates casing, trailing punctuation
     // (voice input adds "."), and prefixes like "open/enter/go to … room".
     const norm = text.trim().toLowerCase().replace(/[.!?,]+$/g, "").replace(/\s+/g, " ").trim();
+
+    // Answering the approval prompt in words, typed or spoken. JARVIS asks "approve this?" and the
+    // only way to say yes was to click — and saying it did harm: `setApprovals([])` below clears the
+    // card on every submit, so typing "confirm" dismissed the pending action AND sent the word to
+    // the model as a fresh request. The action was abandoned silently.
+    //
+    // The match is deliberately whole-utterance. A test that fired on "yes" appearing ANYWHERE in a
+    // sentence would let an ordinary message commit someone's pending send, and the entire purpose
+    // of this gate is deliberate consent — so the utterance has to be nothing but the decision.
+    if (approvals.length) {
+      const spokenApproval = /^(confirm|confirmed|approve|approved|yes|yep|yeah|ok|okay|do it|send it|go ahead|proceed)$/.test(norm);
+      const spokenDenial = /^(deny|denied|cancel|no|nope|stop|abort)$/.test(norm);
+      if (spokenApproval || spokenDenial) {
+        // With several pending, a bare "confirm" does not say which — and picking one for the owner
+        // is exactly the guess this gate exists to prevent.
+        if (approvals.length > 1) {
+          setResponse(`${approvals.length} actions are waiting. Use the buttons so it is unambiguous which one you mean.`);
+          return;
+        }
+        await decideApprovalRef.current?.(approvals[0], spokenApproval ? "approve" : "deny");
+        return;
+      }
+    }
     if (/^(?:(?:go to|open|launch|enter|show|take me to)\s+)?helix(?:\s+room)?$/.test(norm)) {
       setHelixOpen(true);
       return;
@@ -457,7 +487,9 @@ export function JarvisUI() {
       setStreaming(false);
       setActivity("");
     }
-  }, [model, strength, research]);
+    // `approvals` is a dependency now: without it this closes over the list as it was when the
+    // callback was created — empty — and a spoken "confirm" would never see anything pending.
+  }, [model, strength, research, approvals]);
 
   useEffect(() => {
     function handleWidgetCommand(event: Event) {
@@ -537,6 +569,8 @@ export function JarvisUI() {
       setApprovalBusy(null);
     }
   }, []);
+  // Kept current so a spoken "confirm" in handleSubmit runs this exact function, not a copy of it.
+  decideApprovalRef.current = decideApproval;
 
   const dismiss = useCallback(() => {
     abortRef.current?.abort();
@@ -697,6 +731,10 @@ export function JarvisUI() {
                       <button className="jr-deny" disabled={!ownerReady || busy} onClick={() => decideApproval(approval, "deny")}>Deny</button>
                     </div>
                     {busy ? <div className="jr-approval-summary">Running the approved step. This takes a few seconds — the page is being driven now.</div> : null}
+                    {/* An affordance nobody is told about is not an affordance. */}
+                    {!busy && ownerReady && approvals.length === 1
+                      ? <div className="jr-approval-hint">or type or say “confirm”</div>
+                      : null}
                     {!ownerReady ? <div className="jr-approval-summary">Open JARVIS directly on the owner computer to decide this action.</div> : null}
                   </div>
                 );

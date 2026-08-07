@@ -2815,6 +2815,20 @@ function createCapabilityEngine({
             candidates: identityChoices,
           }
         : null;
+      // Learn the conversation, so the SECOND message to anyone is as fast as the first message to
+      // the one contact that happened to have a stored thread URL.
+      //
+      // That single stored URL is the entire reason one recipient was fast: with it the agent opens
+      // the chat directly and needs no model to find the composer or the send control. Everyone else
+      // paid for a search and a disambiguation on every single message, forever. Recording the URL
+      // once a send has actually succeeded closes that gap without anyone editing a contact.
+      //
+      // Only on a verified success, and `rememberThread` refuses anything that is not a real
+      // conversation URL and will not overwrite one that already works — a wrong thread URL would
+      // quietly deliver to the wrong person, which is much worse than being slow.
+      if (result.success && knownContact?.contactId && surfaceChannel) {
+        try { contacts.rememberThread(knownContact.contactId, surfaceChannel, result.finalUrl || ""); } catch { /* never fail a delivered send over a cache write */ }
+      }
       return { ok: result.success, task, executedTask: executableTask, result: result.result, error: result.error || demotionNotice, blocked: result.blocked || false, candidates: result.candidates || null, card: identityCard, completed: restraintSurvivedStripping ? false : undefined, plannerDemotedTheSend, restraintStripped: plannerDemotedTheSend && !restraintSurvivedStripping, steps: stepLog.length ? stepLog : result.history || result.steps || [], evidence: result.evidence || [], statePath: result.statePath || null, taskId: result.taskId || automationOptions.taskId || null, stepsCompleted: result.stepsCompleted, mode: result.mode, finalUrl: result.finalUrl || null, finalTitle: result.finalTitle || null, reveal };
     },
     screen_locate: async (args) => {

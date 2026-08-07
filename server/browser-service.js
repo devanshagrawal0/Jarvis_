@@ -705,23 +705,33 @@ function createBrowserAutomationService({
       const handles = await root.locator(SNAPSHOT_SELECTOR).elementHandles();
       const keepSet = ranking ? new Set(ranking.keep) : null;
       const elements = [];
+      // This was a sequential walk over EVERY element the selector matched, awaiting a separate
+      // round trip to the browser for each one — including one purely to dispose the elements it had
+      // already decided to discard, then another for `isVisible` and a third for metadata on the
+      // ones it kept. A messaging thread matches elements in the thousands, so one observation cost
+      // 15-30 seconds of round trips taken strictly one at a time, and a single send performed three
+      // of them. That, not the language model, was the bulk of the wall clock.
+      //
+      // Identical calls and identical results — issued concurrently rather than in series. Order is
+      // preserved by resolving positionally, so `e1..eN` still follow document order.
+      const kept = [];
+      const unused = [];
       for (const [position, handle] of handles.entries()) {
-        if (keepSet && !keepSet.has(position)) {
-          await handle.dispose().catch(() => undefined);
-          continue;
-        }
-        if (elements.length >= limit) {
-          await handle.dispose().catch(() => undefined);
-          continue;
-        }
-        const visible = await handle.isVisible().catch(() => false);
-        if (!visible) {
-          await handle.dispose().catch(() => undefined);
-          continue;
-        }
-        const metadata = await handle.evaluate(browserElementMetadata);
-        if (isBlockedTarget(JSON.stringify(metadata))) {
-          await handle.dispose().catch(() => undefined);
+        if (keepSet && !keepSet.has(position)) unused.push(handle);
+        else kept.push(handle);
+      }
+      const visibility = await Promise.all(kept.map((handle) => handle.isVisible().catch(() => false)));
+      const visible = kept.filter((_, index) => visibility[index]);
+      unused.push(...kept.filter((_, index) => !visibility[index]));
+      const metadataList = await Promise.all(
+        visible.map((handle) => handle.evaluate(browserElementMetadata).catch(() => null)),
+      );
+      for (const [index, handle] of visible.entries()) {
+        const metadata = metadataList[index];
+        // `limit` is still applied in document order, so the elements kept are the same ones the
+        // sequential version kept — not merely the same count.
+        if (!metadata || elements.length >= limit || isBlockedTarget(JSON.stringify(metadata))) {
+          unused.push(handle);
           continue;
         }
         const ref = `e${elements.length + 1}`;
@@ -729,6 +739,9 @@ function createBrowserAutomationService({
         activeState.refs.set(ref, { pageId, handle, metadata });
         elements.push({ ref, ...metadata, sensitive: metadata.type === "password" || isSensitiveAction(sensitiveDescription(metadata)) });
       }
+      // Releasing the handles we did not adopt is bookkeeping, not a result anyone waits on, so it
+      // happens once and in parallel instead of blocking the walk thousands of times.
+      await Promise.all(unused.map((handle) => handle.dispose().catch(() => undefined)));
       const frameTexts = [];
       for (const frame of activePage.frames().filter((candidate) => candidate !== activePage.mainFrame()).slice(0, 8)) {
         if (elements.length >= limit) break;

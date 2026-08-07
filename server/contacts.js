@@ -282,6 +282,49 @@ function createContactStore({ runtimeDir } = {}) {
     return contact;
   }
 
+  // Which hosts may own a learned conversation URL, per channel. A channel absent here cannot learn
+  // one at all, which is the safe default: a surface whose real host nobody has written down is a
+  // surface whose URLs nobody should be caching.
+  const THREAD_URL_HOSTS = { instagram: /^(www\.)?instagram\.com$/i };
+
+  // Learned from a send that actually worked, never typed by anyone.
+  //
+  // A saved conversation URL is the difference between a fast message and a slow one: with it the
+  // agent opens the thread directly, and both the composer and the send control are found without a
+  // single model call. Without it the same send has to search for the person, disambiguate them, and
+  // open the chat first — which is slower and is where identity mistakes live.
+  //
+  // Only one contact had that URL, so exactly one contact was fast. Recording it the first time a
+  // message is delivered means every recipient becomes the fast path after one successful send,
+  // instead of one recipient being fast forever and everyone else staying slow.
+  //
+  // Deliberately only accepts a real conversation URL, and never overwrites one that already works:
+  // a wrong thread URL would silently send to the wrong person, which is far worse than being slow.
+  function rememberThread(id, channel, threadUrl) {
+    const key = channelKey(channel);
+    const url = clean(threadUrl, 500);
+    // The host is checked, not just the path shape. A first attempt matched `/direct/t/<id>` on ANY
+    // host, so a run that had been redirected somewhere hostile would have had that address written
+    // into the contact and used for every later message to that person. Where the URL comes from —
+    // a live page, mid-automation — is exactly the input that must not be trusted on shape alone.
+    const allowedHost = THREAD_URL_HOSTS[key];
+    if (!key || !allowedHost) return null;
+    let parsed;
+    try { parsed = new URL(url); } catch { return null; }
+    if (parsed.protocol !== "https:" || !allowedHost.test(parsed.hostname)) return null;
+    if (!/^\/direct\/t\/\d+/.test(parsed.pathname)) return null;
+    const contacts = load();
+    const contact = contacts.find((item) => item.id === id);
+    if (!contact) return null;
+    const account = contact.channels?.[key];
+    if (!account || account.threadUrl) return null;
+    account.threadUrl = url;
+    account.updatedAt = new Date().toISOString();
+    contact.updatedAt = account.updatedAt;
+    persist(contacts);
+    return contact;
+  }
+
   // Recorded on every successful use, so the most recently used wins when a name is genuinely shared.
   function touch(id) {
     const contacts = load();
@@ -328,7 +371,7 @@ function createContactStore({ runtimeDir } = {}) {
 
   return {
     CHANNELS, CHANNEL_META, channelCatalogue, filePath, find, findAll, get, identitiesOf, linkForChannel,
-    list, normalize, remove, routeFor, save, setAvatarPath, touch, validateChannelValue,
+    list, normalize, remove, rememberThread, routeFor, save, setAvatarPath, touch, validateChannelValue,
   };
 }
 

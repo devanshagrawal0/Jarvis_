@@ -43,11 +43,18 @@ test("planner JSON repair tolerates literal control characters without changing 
   assert.match(parsed.summary, /line one line two/);
 });
 
-test("remote planner fallback has a bounded two-model latency budget", () => {
-  assert.equal(MAX_PLANNER_MODELS, 2);
-  assert.equal(PLANNER_ROUTER_TIMEOUT_MS, 4_000);
-  assert.equal(PLANNER_ACTION_TIMEOUT_MS, 8_000);
-  assert.ok(PLANNER_ROUTER_TIMEOUT_MS + PLANNER_ACTION_TIMEOUT_MS <= 12_000);
+test("remote planner fallback stays bounded", () => {
+  // This used to pin the literal 2 / 4000ms / 8000ms. Those numbers came from a measurement taken
+  // when the planner prompt was ~4.4 KB, and live runs at 12-18 KB failed with every model in the
+  // chain timing out — so pinning them froze a budget that no longer matched reality, and the test
+  // could only ever say "the constants are still the constants".
+  //
+  // The property worth keeping is that the fallback is bounded at all: a stuck step must give up
+  // rather than hang the run. The budgets themselves are justified against measured latency in
+  // tests/backend/planner-budget.test.js, which is where a change to them should have to argue.
+  const worstStepMs = PLANNER_ROUTER_TIMEOUT_MS + (PLANNER_ACTION_TIMEOUT_MS * (MAX_PLANNER_MODELS - 1));
+  assert.ok(MAX_PLANNER_MODELS >= 2 && MAX_PLANNER_MODELS <= 4, `chain depth ${MAX_PLANNER_MODELS} is outside the sane range`);
+  assert.ok(worstStepMs <= 12_000, `a fully stuck step would burn ${worstStepMs}ms before giving up`);
 });
 
 test("browser decision budget expands only for genuinely complex workflows", () => {
