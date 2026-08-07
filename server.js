@@ -13,7 +13,7 @@ const { createContactStore } = require("./server/contacts");
 const { createAvatarCache } = require("./server/contact-avatars");
 const { createRequestTrust } = require("./server/request-trust");
 // Cortex v4 — single Gemini model registry (verified available on this key).
-const { MODELS: GEMINI_MODELS, strengthProfile: geminiStrengthProfile, resolveCortexExecution } = require("./server/gemini-models");
+const { MODELS: GEMINI_MODELS, strengthProfile: geminiStrengthProfile, noteModelFailure, noteModelSuccess, resolveCortexExecution } = require("./server/gemini-models");
 const { createCostMeter } = require("./server/cost-meter");
 const { createMemoryStore } = require("./server/memory-store");
 const { createMemoryExtractor } = require("./server/memory-extractor");
@@ -4435,13 +4435,21 @@ async function callGemini({ prompt, imageData, attachments = [], mode, sessionId
           lastModelError = error.name === "AbortError"
             ? `Gemini exceeded the ${responseBudgetMs}ms response budget`
             : error.message;
+          // Remember it briefly, so the NEXT request does not pay for this model again. Without
+          // this the ladder is walked from the top every time: a live send spent 6.7s on one model
+          // and 12.3s on the next, both failing, before the third answered in about a second — and
+          // the request after it repeated all nineteen wasted seconds.
+          noteModelFailure(candidateModel);
           if (candidateModel === candidates.at(-1)) throw new Error(lastModelError);
           continue;
         } finally {
           clearTimeout(timer);
         }
-        if (response.ok) break;
+        if (response.ok) { noteModelSuccess(candidateModel); break; }
         lastModelError = data?.error?.message || `Gemini request failed with ${response.status}`;
+        // A 503 "high demand" is exactly the case worth remembering — it lasts minutes, and it was
+        // observed live on one of these models during measurement.
+        noteModelFailure(candidateModel);
       }
       if (!response?.ok) throw new Error(lastModelError || "Gemini request failed");
 

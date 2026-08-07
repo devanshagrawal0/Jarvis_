@@ -46,10 +46,49 @@ function fallbacksFor(model) {
   return FALLBACKS.main;
 }
 
-// The full ordered candidate list for a model: itself first, then its ladder,
-// deduped. This is the one place the brain should build its failover order from.
-function candidatesFor(model) {
-  return [...new Set([model, ...fallbacksFor(model)].filter(Boolean))];
+// Short-lived memory of which models are currently letting us down.
+//
+// The ladder is walked from the top on EVERY request, so a model that is timing out or returning
+// 503 gets re-tried, at full cost, every single time. Measured on a live send: `gemini-3.6-flash`
+// burned 6.7s and failed, `gemini-flash-latest` burned 12.3s and failed, and `gemini-2.5-flash`
+// then answered in about a second. Nineteen of those twenty seconds bought nothing — and the next
+// request paid them again, because the outage lasts minutes and the ladder's memory was zero.
+//
+// Remembering a failure briefly means the next request starts where the last one succeeded. The
+// window is deliberately short: these outages pass, and a demoted model has to be able to earn its
+// place back on its own.
+const MODEL_FAILURE_TTL_MS = 3 * 60_000;
+const unhealthyUntil = new Map();
+
+function noteModelFailure(model, atMs = Date.now()) {
+  const name = String(model || "").trim();
+  if (name) unhealthyUntil.set(name, atMs + MODEL_FAILURE_TTL_MS);
+}
+
+function noteModelSuccess(model) {
+  // Recovery is observed, not assumed to arrive on a timer.
+  unhealthyUntil.delete(String(model || "").trim());
+}
+
+function isModelUnhealthy(model, atMs = Date.now()) {
+  const name = String(model || "").trim();
+  const until = unhealthyUntil.get(name);
+  if (!until) return false;
+  if (until <= atMs) { unhealthyUntil.delete(name); return false; }
+  return true;
+}
+
+// The full ordered candidate list for a model: itself first, then its ladder, deduped — with
+// recently-failing models moved to the BACK rather than dropped.
+//
+// Demoted, never removed: if every candidate has failed recently the original order is returned
+// unchanged, so the request still gets its full ladder. "Everything looks broken" must not quietly
+// become "try nothing".
+function candidatesFor(model, atMs = Date.now()) {
+  const ordered = [...new Set([model, ...fallbacksFor(model)].filter(Boolean))];
+  const healthy = ordered.filter((name) => !isModelUnhealthy(name, atMs));
+  if (!healthy.length || healthy.length === ordered.length) return ordered;
+  return [...healthy, ...ordered.filter((name) => isModelUnhealthy(name, atMs))];
 }
 
 // The Strength dial governs ONLY the premium tier. Cheap models (router/main/
@@ -82,4 +121,4 @@ function resolveCortexExecution({ model, strength } = {}) {
   };
 }
 
-module.exports = { MODELS, FALLBACKS, STRENGTH, DEFAULT_STRENGTH, modelFor, strengthProfile, fallbacksFor, candidatesFor, resolveCortexExecution };
+module.exports = { MODELS, FALLBACKS, MODEL_FAILURE_TTL_MS, STRENGTH, DEFAULT_STRENGTH, modelFor, strengthProfile, fallbacksFor, candidatesFor, isModelUnhealthy, noteModelFailure, noteModelSuccess, resolveCortexExecution };

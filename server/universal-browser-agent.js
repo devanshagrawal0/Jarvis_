@@ -486,6 +486,30 @@ function deterministicDecision({ outcome, snapshot, history = [], entityHints = 
         model: "local-semantic-fast-path",
       };
     }
+    // The conversation is open but its composer has not rendered yet. Falling through here handed
+    // the step to the remote planner, which guessed at a field, and the composer guard refused:
+    //
+    //   fill  ref=undefined  ok=false
+    //   "Refused to place the requested message into an unlabeled field; a semantic message
+    //    composer is required."
+    //
+    // The guard was right — typing the owner's message into an unidentified input is exactly what
+    // it exists to stop — but the whole detour cost a planner call plus a full re-observation, and
+    // the composer was simply late: 52 controls on that snapshot, 89 on the next one.
+    //
+    // Waiting for a composer that is on its way is cheaper than paying a model to guess at one, and
+    // it cannot pick the wrong field. Bounded, so a page that never produces a composer still falls
+    // through to the planner rather than waiting forever.
+    const composerWaits = history.filter((item) => item.action === "wait"
+      && /message composer to render/i.test(item.reason || "") && item.ok !== false).length;
+    if (identityOpened && composerWaits < 3) {
+      return {
+        summary: "The conversation is open and the message composer has not rendered yet.",
+        actions: [{ action: "wait", milliseconds: 900, reason: "Wait for the message composer to render before typing", expected: "A semantic message composer becomes available" }],
+        confidence: 0.98,
+        model: "local-semantic-fast-path",
+      };
+    }
   }
   if (messagePrepared && identityOpened && outcome?.commit?.required && !committed) {
     const sendControl = elements.find((item) => {
