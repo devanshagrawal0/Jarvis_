@@ -37,9 +37,9 @@ test("looking at a page is not sending a message", () => {
   }];
 
   const prefix = summarize(results);
-  assert.doesNotMatch(prefix, /^Done, sir/,
+  assert.doesNotMatch(prefix, /^Done/,
     "a status read must never be reported as the requested action having happened");
-  assert.match(prefix, /did not complete/i, "and the owner must be told plainly that it did not happen");
+  assert.match(prefix, /didn'?t complete/i, "and the owner must be told plainly that it did not happen");
 });
 
 test("several observations are still no observations", () => {
@@ -49,7 +49,7 @@ test("several observations are still no observations", () => {
     { tool: "browser_snapshot", ok: true, result: { elements: 240 } },
     { tool: "screen_capture", ok: true, result: { dimensions: "1920x1080" } },
   ]);
-  assert.doesNotMatch(prefix, /^Done, sir/);
+  assert.doesNotMatch(prefix, /^Done/);
 });
 
 test("a real action still reports as done", () => {
@@ -58,7 +58,7 @@ test("a real action still reports as done", () => {
     { tool: "browser_status", ok: true, result: {} },
     { tool: "computer_use", ok: true, result: { completed: true, result: "The message is visible in the conversation" } },
   ]);
-  assert.match(prefix, /^Done, sir/);
+  assert.match(prefix, /^Done/);
 });
 
 test("an action that paused for approval is not done", () => {
@@ -67,7 +67,7 @@ test("an action that paused for approval is not done", () => {
   const prefix = summarize([
     { tool: "computer_use", ok: true, result: { requiresConfirmation: true, result: "Prepared up to the external commit" } },
   ]);
-  assert.doesNotMatch(prefix, /^Done, sir/);
+  assert.doesNotMatch(prefix, /^Done/);
 });
 
 test("an action that stopped at a login wall or a block is not done", () => {
@@ -81,7 +81,7 @@ test("a confirmation still reads as ready, not done", () => {
   const prefix = summarize([
     { tool: "computer_use", status: "confirmation_required", ok: false, confirmation: { summary: { reason: "Send the message" } } },
   ]);
-  assert.match(prefix, /^Ready, sir/);
+  assert.match(prefix, /^Ready/);
 });
 
 test("nothing succeeding reads as a failure", () => {
