@@ -3048,7 +3048,7 @@ function instantConversationResponse(prompt) {
       liveScreen: { active: false, paused: true, stoppedAt: isoNow() },
       controlBaton: { status: "revoked", holderDeviceId: "", holderDeviceName: "", expiresAt: "" },
     });
-    return "Device Mesh emergency stop is active, sir. Live screen is paused, control baton is revoked, and future control events will be rejected until you restart/approve the mesh.";
+    return "Device Mesh emergency stop is active. Live screen is paused, control baton is revoked, and future control events will be rejected until you restart/approve the mesh.";
   }
   if (/^show what will be saved before saving this$/i.test(text)) {
     return "Before saving, I will store a raw event, a durable memory only if it is useful, continuity hints if it changes the active topic, and metadata without secrets. I will not store raw API keys, passwords, cookies, private keys, or OAuth refresh tokens.";
@@ -3093,8 +3093,8 @@ function instantConversationResponse(prompt) {
       timeZoneName: "short",
     })}.`;
   }
-  if (/^(thanks|thank you|cheers)$/.test(lower)) return "You are welcome, sir.";
-  if (/^(how are you|how are things)$/.test(lower)) return "Fully operational, sir. What shall we work on?";
+  if (/^(thanks|thank you|cheers)$/.test(lower)) return "Anytime, Dev.";
+  if (/^(how are you|how are things)$/.test(lower)) return "All good here, Dev. What are we working on?";
   if (/^(what can you do(?: now)?|what are your capabilities(?: now)?|help)$/.test(lower)) {
     const ready = loadModuleRegistry().filter((module) => module.ready).slice(0, 8).map((module) => module.title);
     return `I can operate your approved apps and browser, inspect this computer, work with your projects, manage agents, use connected services, analyze images, and retain useful context. Ready modules include ${ready.join(", ")}. Ask naturally; I will select the required capability.`;
@@ -10798,7 +10798,7 @@ ${entryText}`;
     };
     const prompt = [
       "Give me today's concise JARVIS briefing.",
-      "Start with a time-appropriate greeting and address me as sir.",
+      "Start with a greeting that matches the actual local time, and address me as Dev (never 'sir').",
       "Use the supplied local state, mention active agents or important connection blockers, and add only the most useful current external developments.",
       "End with one recommended next action and ask how you can assist.",
       `Local state: ${JSON.stringify(localContext)}`,
