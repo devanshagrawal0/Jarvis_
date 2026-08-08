@@ -143,59 +143,79 @@ const PANEL_CSS = `
 .jr-toast { position:fixed; right:26px; bottom:122px; z-index:80; width:min(360px,calc(100vw - 32px)); padding:13px; border-radius:12px; background:rgba(5,22,37,.96); border:1px solid rgba(80,235,170,.42); box-shadow:0 12px 40px rgba(0,0,0,.55); color:#d7fbe7; font-family:Inter,"Segoe UI",sans-serif; }
 .jr-toast a { display:inline-block; margin-top:8px; color:#8ff0b8; font-size:12px; font-weight:700; text-decoration:none; }
 
-/* Floating approval dock — fixed above the command bar, cannot be scrolled past. */
+/* Floating approval dock — fixed above the command bar, cannot be scrolled past.
+   Premium dark-glass card: purple/blue/cyan gradient accents, tight hierarchy. */
 .jr-approval-dock {
   position: fixed; left: 50%; bottom: calc(4.5vh + 107px);
   transform: translateX(-50%);
-  width: min(440px, calc(100vw - 28px)); z-index: 1200;
-  display: grid; gap: 10px;
-  animation: jr-appr-in .28s cubic-bezier(.2,.9,.3,1.15);
+  width: min(560px, calc(100vw - 28px)); z-index: 1200;
+  display: grid; gap: 12px;
+  animation: jr-appr-in .3s cubic-bezier(.2,.9,.3,1.12);
 }
-@keyframes jr-appr-in { from { opacity:0; transform:translateX(-50%) translateY(16px) scale(.97); } to { opacity:1; transform:translateX(-50%) translateY(0) scale(1); } }
+@keyframes jr-appr-in { from { opacity:0; transform:translateX(-50%) translateY(18px) scale(.98); } to { opacity:1; transform:translateX(-50%) translateY(0) scale(1); } }
 .jr-approval {
-  border:1px solid rgba(255,190,90,.55);
-  background:linear-gradient(165deg, rgba(28,20,6,.98), rgba(15,11,4,.99));
-  border-radius:16px; padding:15px 17px 14px;
-  box-shadow:0 0 0 1px rgba(255,190,90,.10), 0 18px 50px rgba(0,0,0,.62), 0 0 42px rgba(255,170,60,.16);
-  font-family:Inter,"Segoe UI",sans-serif;
+  position:relative; border-radius:24px; padding:22px 24px 18px; font-family:Inter,"Segoe UI",sans-serif;
+  background:linear-gradient(180deg, rgba(20,24,34,.93), rgba(11,13,20,.96));
+  border:1px solid rgba(150,165,210,.16);
+  box-shadow:0 30px 80px rgba(0,0,0,.6), 0 0 0 1px rgba(120,140,200,.05), inset 0 1px 0 rgba(200,215,255,.06);
+  backdrop-filter:blur(24px); -webkit-backdrop-filter:blur(24px);
 }
-.jr-approval-head { display:flex; align-items:center; gap:8px; color:#ffcf8a; font-size:11.5px; font-weight:700; letter-spacing:.1em; text-transform:uppercase; }
-.jr-approval-pulse { width:8px; height:8px; border-radius:50%; background:#ffb43c; animation:jr-pulse 1.6s ease-out infinite; }
-@keyframes jr-pulse { 0%{box-shadow:0 0 0 0 rgba(255,180,60,.55);} 70%{box-shadow:0 0 0 7px rgba(255,180,60,0);} 100%{box-shadow:0 0 0 0 rgba(255,180,60,0);} }
-.jr-approval-to { display:flex; align-items:center; flex-wrap:wrap; gap:8px; margin:12px 0 2px; }
-.jr-approval-to-label { color:rgba(255,255,255,.4); font-size:10.5px; text-transform:uppercase; letter-spacing:.07em; }
-.jr-approval-chip { padding:3px 11px; border-radius:20px; background:rgba(255,190,90,.14); border:1px solid rgba(255,190,90,.4); color:#ffe0b0; font-size:13px; font-weight:650; }
-.jr-approval-to.unconfirmed .jr-approval-chip { background:rgba(255,120,60,.16); border-color:rgba(255,140,60,.55); color:#ffcaa0; }
-.jr-approval-unconf { color:#ff9d5c; font-size:11px; font-weight:600; flex-basis:100%; }
-.jr-approval-bubble { margin:9px 0 13px; padding:11px 14px; border-radius:14px 14px 14px 4px; background:rgba(60,140,255,.15); border:1px solid rgba(90,160,255,.32); color:#eaf3ff; font-size:15px; line-height:1.4; overflow-wrap:anywhere; }
-.jr-approval-intent { margin:11px 0 12px; color:rgba(255,255,255,.94); font-size:15px; font-weight:600; line-height:1.35; overflow-wrap:anywhere; }
-.jr-approval-on { margin:-5px 0 12px; color:rgba(255,255,255,.4); font-size:11.5px; overflow-wrap:anywhere; }
-.jr-approval-caveat { color:#ffc16b; font-size:11.5px; margin:0 0 10px; }
-.jr-approval-summary { margin:8px 0; color:rgba(255,255,255,.72); font-size:12.5px; line-height:1.45; white-space:pre-wrap; }
-.jr-approval-actions { display:flex; gap:9px; margin-top:4px; }
-.jr-approval-actions button { min-height:44px; border-radius:11px; padding:0 14px; cursor:pointer; font-weight:700; font-size:14.5px; transition:filter .12s, transform .06s; }
-.jr-approval-actions button:active:not(:disabled) { transform:translateY(1px); }
-.jr-approve { flex:1; color:#06180f; background:linear-gradient(180deg,#3dffb0,#16e39a); border:1px solid #16e39a; box-shadow:0 4px 18px rgba(20,230,150,.32); }
-.jr-approve:hover:not(:disabled) { filter:brightness(1.08); }
-.jr-deny { flex:0 0 34%; color:#ffd0d0; background:rgba(120,26,26,.28); border:1px solid rgba(255,110,110,.4); }
-.jr-approval-actions button:disabled { opacity:.5; cursor:not-allowed; }
-.jr-approval-note { margin-top:9px; color:rgba(255,255,255,.55); font-size:11.5px; }
-.jr-approval-hint { margin-top:8px; text-align:center; color:rgba(255,255,255,.4); font-size:11px; }
+.jr-appr-header { display:flex; align-items:center; gap:14px; }
+.jr-appr-badge { flex:0 0 auto; width:46px; height:46px; border-radius:50%; display:grid; place-items:center; color:#9fd4ff;
+  background:linear-gradient(rgba(16,20,30,1),rgba(16,20,30,1)) padding-box, linear-gradient(135deg,#a970ff,#4a9cf7,#22d3ee) border-box;
+  border:2px solid transparent; box-shadow:0 0 18px rgba(90,140,255,.26); }
+.jr-appr-titles { flex:1; min-width:0; }
+.jr-appr-title { color:#eaf0fb; font-size:16px; font-weight:750; letter-spacing:.22em; text-transform:uppercase; }
+.jr-appr-sub { margin-top:3px; color:rgba(175,190,220,.6); font-size:12.5px; }
+.jr-appr-close { flex:0 0 auto; width:30px; height:30px; border:none; background:transparent; color:rgba(180,195,225,.5); cursor:pointer; border-radius:8px; display:grid; place-items:center; }
+.jr-appr-close:hover:not(:disabled) { color:#eaf0fb; background:rgba(180,200,255,.08); }
+.jr-appr-divider { height:1px; margin:16px -4px 2px; background:linear-gradient(90deg, transparent, rgba(150,170,220,.16) 12%, rgba(150,170,220,.16) 88%, transparent); }
+.jr-appr-label { margin:15px 2px 8px; color:rgba(130,155,205,.75); font-size:11px; font-weight:700; letter-spacing:.14em; text-transform:uppercase; }
+.jr-appr-field { background:rgba(255,255,255,.028); border:1px solid rgba(150,165,210,.14); border-radius:14px; }
+.jr-appr-to { display:flex; align-items:center; gap:13px; padding:11px 14px; }
+.jr-appr-ig { flex:0 0 auto; width:38px; height:38px; border-radius:11px; display:grid; place-items:center; color:#fff;
+  background:linear-gradient(135deg,#feda75,#fa7e1e 25%,#d62976 55%,#962fbf 80%,#4f5bd5); box-shadow:0 3px 12px rgba(214,41,118,.3); }
+.jr-appr-globe { flex:0 0 auto; width:38px; height:38px; border-radius:11px; display:grid; place-items:center; color:#9fd4ff; background:rgba(90,140,255,.14); }
+.jr-appr-to-text { flex:1; min-width:0; }
+.jr-appr-handle { color:#f0f4fc; font-size:16px; font-weight:650; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.jr-appr-platform { color:rgba(170,185,215,.55); font-size:12.5px; margin-top:1px; }
+.jr-appr-unconf { color:#ff9d5c; font-weight:600; }
+.jr-appr-chevron { flex:0 0 auto; color:rgba(180,195,225,.4); display:grid; place-items:center; }
+.jr-appr-msg { position:relative; padding:14px 16px 30px; min-height:64px; }
+.jr-appr-msg-text { color:#eef3fc; font-size:15.5px; line-height:1.5; overflow-wrap:anywhere; white-space:pre-wrap; }
+.jr-appr-msg-meta { position:absolute; right:14px; bottom:10px; display:flex; align-items:center; gap:9px; color:rgba(165,180,210,.5); font-size:12px; }
+.jr-appr-url { display:flex; align-items:center; gap:11px; padding:11px 14px; margin-top:10px; }
+.jr-appr-url-text { flex:1; min-width:0; color:rgba(190,200,225,.72); font-size:13px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.jr-appr-ic { color:#a78bfa; flex:0 0 auto; display:grid; place-items:center; }
+.jr-appr-intent { color:#eef3fc; font-size:16px; font-weight:600; line-height:1.4; padding:2px; overflow-wrap:anywhere; }
+.jr-appr-caveat { color:#ffc16b; font-size:12px; margin:10px 2px 0; }
+.jr-appr-actions { display:flex; gap:12px; margin-top:20px; }
+.jr-appr-btn { flex:1; min-height:54px; border-radius:15px; display:flex; align-items:center; justify-content:center; gap:10px; cursor:pointer; font-size:14.5px; font-weight:750; letter-spacing:.12em; text-transform:uppercase; transition:filter .14s, transform .06s; }
+.jr-appr-btn:active:not(:disabled){ transform:translateY(1px); }
+.jr-appr-btn:disabled{ opacity:.5; cursor:not-allowed; }
+.jr-appr-send { color:#eaf0ff; border:1px solid rgba(130,120,255,.7); background:linear-gradient(135deg, rgba(74,108,247,.34), rgba(139,92,246,.34)); box-shadow:0 6px 24px rgba(90,90,240,.26), inset 0 1px 0 rgba(255,255,255,.12); }
+.jr-appr-send:hover:not(:disabled){ filter:brightness(1.12); }
+.jr-appr-cancel { color:#ff7d8f; border:1px solid rgba(255,90,110,.5); background:linear-gradient(135deg, rgba(255,70,90,.14), rgba(200,40,70,.14)); }
+.jr-appr-cancel:hover:not(:disabled){ filter:brightness(1.12); }
+.jr-appr-footer { margin-top:14px; text-align:center; color:rgba(165,180,210,.5); font-size:12.5px; }
+.jr-appr-footer kbd { display:inline-block; padding:2px 9px; margin:0 3px; border-radius:7px; border:1px solid rgba(150,165,210,.28); background:rgba(255,255,255,.04); color:#c7d2ea; font-family:inherit; font-size:12px; font-weight:600; }
+.jr-appr-note { margin-top:12px; text-align:center; color:rgba(175,190,220,.55); font-size:12px; }
 
-/* "Sent ✓" success confirmation — top-center so it never sits under the response panel. */
+/* "Sent ✓" success confirmation — top-center, matched to the card's dark-glass look. */
 .jr-sent-toast {
   position:fixed; left:50%; transform:translateX(-50%); top:26px; z-index:1250;
-  display:flex; align-items:center; gap:11px; padding:12px 18px; border-radius:14px;
-  background:linear-gradient(165deg, rgba(6,32,22,.98), rgba(4,20,14,.98));
-  border:1px solid rgba(40,235,160,.5); box-shadow:0 14px 44px rgba(0,0,0,.5), 0 0 30px rgba(30,220,150,.22);
-  color:#d7fbe7; font-family:Inter,"Segoe UI",sans-serif;
-  animation:jr-sent-in .3s cubic-bezier(.2,.9,.3,1.15);
+  display:flex; align-items:center; gap:12px; padding:13px 20px; border-radius:16px;
+  background:linear-gradient(180deg, rgba(20,24,34,.95), rgba(11,13,20,.97));
+  border:1px solid rgba(60,220,160,.4); box-shadow:0 20px 50px rgba(0,0,0,.5), 0 0 30px rgba(40,220,150,.18);
+  backdrop-filter:blur(20px); -webkit-backdrop-filter:blur(20px);
+  color:#eafaf2; font-family:Inter,"Segoe UI",sans-serif;
+  animation:jr-sent-in .3s cubic-bezier(.2,.9,.3,1.12);
 }
 @keyframes jr-sent-in { from { opacity:0; transform:translateX(-50%) translateY(-14px); } to { opacity:1; transform:translateX(-50%) translateY(0); } }
-.jr-sent-check { display:grid; place-items:center; width:26px; height:26px; border-radius:50%; background:rgba(40,235,160,.18); border:1px solid rgba(40,235,160,.5); color:#3dffb0; font-weight:800; font-size:14px; }
+.jr-sent-check { display:grid; place-items:center; width:28px; height:28px; border-radius:50%; background:linear-gradient(135deg,#3dffb0,#16c99a); color:#04170f; font-weight:800; font-size:15px; }
 .jr-sent-toast strong { font-size:14px; }
-.jr-sent-detail { margin-top:2px; font-size:11.5px; opacity:.7; }
-@media (prefers-reduced-motion: reduce) { .jr-approval-dock, .jr-sent-toast { animation:none; } .jr-approval-pulse { animation:none; } }
+.jr-sent-detail { margin-top:2px; font-size:11.5px; opacity:.65; }
+@media (prefers-reduced-motion: reduce) { .jr-approval-dock, .jr-sent-toast { animation:none; } }
 `;
 
 type ApprovalRequest = {
@@ -279,6 +299,28 @@ function fileSize(bytes?: number) {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
   return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+}
+
+// Approval-card icons (inline SVG so they inherit color and need no assets).
+const IcoPlane = ({ s = 20 }: { s?: number }) => (<svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinejoin="round" strokeLinecap="round"><path d="M22 2 11 13" /><path d="M22 2 15 22l-4-9-9-4 20-7Z" /></svg>);
+const IcoClose = () => (<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"><path d="M18 6 6 18M6 6l12 12" /></svg>);
+const IcoChevron = () => (<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="m6 9 6 6 6-6" /></svg>);
+const IcoLink = () => (<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><path d="M10 13a5 5 0 0 0 7 0l3-3a5 5 0 0 0-7-7l-1 1" /><path d="M14 11a5 5 0 0 0-7 0l-3 3a5 5 0 0 0 7 7l1-1" /></svg>);
+const IcoExternal = () => (<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><path d="M15 3h6v6" /><path d="M10 14 21 3" /><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" /></svg>);
+const IcoPencil = () => (<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><path d="M12 20h9" /><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z" /></svg>);
+const IcoXCircle = () => (<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round"><circle cx="12" cy="12" r="9" /><path d="m15 9-6 6M9 9l6 6" /></svg>);
+const IcoCamera = () => (<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><rect x="3" y="7" width="18" height="14" rx="4" /><circle cx="12" cy="14" r="3.2" /><circle cx="17.5" cy="10.5" r="0.6" fill="currentColor" /></svg>);
+const IcoGlobe = () => (<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6"><circle cx="12" cy="12" r="9" /><path d="M3 12h18M12 3a15 15 0 0 1 0 18a15 15 0 0 1 0-18Z" /></svg>);
+
+// Which platform an approval targets, for the "To" row icon + label.
+function platformOf(commit?: { url?: string; surface?: string; task?: string; intent?: string } | null): { name: string; cls: string; icon: React.ReactNode } {
+  const s = `${commit?.url || ""} ${commit?.surface || ""} ${commit?.task || ""} ${commit?.intent || ""}`.toLowerCase();
+  if (/instagram|insta\b/.test(s)) return { name: "Instagram", cls: "jr-appr-ig", icon: <IcoCamera /> };
+  return { name: "Web", cls: "jr-appr-globe", icon: <IcoGlobe /> };
+}
+
+function shortUrl(u?: string): string {
+  return String(u || "").replace(/^https?:\/\//, "").replace(/\/$/, "");
 }
 
 // Pull the actual message the owner wants to send out of their instruction so the approval card can
@@ -661,6 +703,23 @@ export function JarvisUI() {
   // Kept current so a spoken "confirm" in handleSubmit runs this exact function, not a copy of it.
   decideApprovalRef.current = decideApproval;
 
+  // "or press Enter to confirm" — honor it when exactly one action is pending and the owner isn't
+  // typing (Enter in the command bar still submits a message; that guard keeps both behaviours).
+  useEffect(() => {
+    if (approvals.length !== 1) return;
+    const only = approvals[0];
+    if (!only.ownerChallenge || approvalBusy) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Enter" || e.shiftKey) return;
+      const t = e.target as HTMLElement | null;
+      if (t && (t.tagName === "TEXTAREA" || t.tagName === "INPUT" || t.isContentEditable)) return;
+      e.preventDefault();
+      void decideApproval(only, "approve");
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [approvals, approvalBusy, decideApproval]);
+
   const dismiss = useCallback(() => {
     abortRef.current?.abort();
     setVisible(false);
@@ -799,40 +858,66 @@ export function JarvisUI() {
             const busy = approvalBusy === approval.id;
             const messageBody = extractMessageBody(commit?.task);
             const isMessage = /send|message|dm|reply|text|email|post|comment/i.test(String(commit?.intent || commit?.task || approval.tool || ""));
+            const plat = platformOf(commit);
+            const url = commit?.url || commit?.surface || "";
             return (
               <div className="jr-approval" key={approval.id}>
-                <div className="jr-approval-head">
-                  <span className="jr-approval-pulse" />
-                  {isMessage ? "Approve to send" : "Approve to continue"}
+                <div className="jr-appr-header">
+                  <span className="jr-appr-badge"><IcoPlane s={20} /></span>
+                  <div className="jr-appr-titles">
+                    <div className="jr-appr-title">{isMessage ? "Approve to send" : "Approve to continue"}</div>
+                    <div className="jr-appr-sub">{isMessage ? "Review your message before it’s sent" : "Review this action before JARVIS runs it"}</div>
+                  </div>
+                  <button className="jr-appr-close" title="Cancel" disabled={!ownerReady || busy} onClick={() => decideApproval(approval, "deny")}><IcoClose /></button>
                 </div>
-                {commit ? (
+                <div className="jr-appr-divider" />
+
+                {commit && (commit.recipient || isMessage) ? (
                   <>
-                    {commit.recipient ? (
-                      <div className={`jr-approval-to${commit.recipient.confirmed ? "" : " unconfirmed"}`}>
-                        <span className="jr-approval-to-label">To</span>
-                        <span className="jr-approval-chip">{commit.recipient.text}</span>
-                        {!commit.recipient.confirmed ? <span className="jr-approval-unconf">unconfirmed — check this is right</span> : null}
+                    <div className="jr-appr-label">To</div>
+                    <div className="jr-appr-field jr-appr-to">
+                      <span className={plat.cls}>{plat.icon}</span>
+                      <div className="jr-appr-to-text">
+                        <div className="jr-appr-handle">{commit.recipient?.text || plat.name}</div>
+                        <div className="jr-appr-platform">{plat.name}{commit.recipient && !commit.recipient.confirmed ? <span className="jr-appr-unconf"> · unconfirmed</span> : null}</div>
                       </div>
-                    ) : null}
-                    {messageBody
-                      ? <div className="jr-approval-bubble">{messageBody}</div>
-                      : <div className="jr-approval-intent">{commit.task || commit.intent}</div>}
-                    {(commit.url || commit.surface) ? <div className="jr-approval-on">{commit.url || commit.surface}</div> : null}
-                    {commit.unlabelled ? <div className="jr-approval-caveat">That control has no name on the page — identified by role and position.</div> : null}
+                      <span className="jr-appr-chevron"><IcoChevron /></span>
+                    </div>
+                  </>
+                ) : null}
+
+                {messageBody ? (
+                  <>
+                    <div className="jr-appr-label">Message preview</div>
+                    <div className="jr-appr-field jr-appr-msg">
+                      <div className="jr-appr-msg-text">{messageBody}</div>
+                      <div className="jr-appr-msg-meta"><span>{messageBody.length} / 2200</span><span className="jr-appr-ic" style={{ color: "rgba(165,180,210,.5)" }}><IcoPencil /></span></div>
+                    </div>
                   </>
                 ) : (
-                  <>
-                    <div className="jr-approval-intent">{approval.tool.replace(/_/g, " ")}</div>
-                    {summary ? <div className="jr-approval-summary">{summary}</div> : null}
-                  </>
+                  <div className="jr-appr-intent" style={{ marginTop: 14 }}>{commit ? (commit.task || commit.intent) : approval.tool.replace(/_/g, " ")}</div>
                 )}
-                <div className="jr-approval-actions">
-                  <button className="jr-approve" disabled={!ownerReady || busy} onClick={() => decideApproval(approval, "approve")}>{busy ? "Sending…" : (isMessage ? "Send it" : "Approve")}</button>
-                  <button className="jr-deny" disabled={!ownerReady || busy} onClick={() => decideApproval(approval, "deny")}>Cancel</button>
+
+                {url ? (
+                  <div className="jr-appr-field jr-appr-url">
+                    <span className="jr-appr-ic"><IcoLink /></span>
+                    <span className="jr-appr-url-text">{shortUrl(url)}</span>
+                    <span className="jr-appr-ic"><IcoExternal /></span>
+                  </div>
+                ) : null}
+                {commit?.unlabelled ? <div className="jr-appr-caveat">That control has no name on the page — identified by role and position.</div> : null}
+                {!commit && summary ? <div className="jr-appr-note" style={{ textAlign: "left", whiteSpace: "pre-wrap" }}>{summary}</div> : null}
+
+                <div className="jr-appr-actions">
+                  <button className="jr-appr-btn jr-appr-send" disabled={!ownerReady || busy} onClick={() => decideApproval(approval, "approve")}>
+                    {busy ? "Sending…" : <><IcoPlane s={18} />{isMessage ? "Send it" : "Approve"}</>}
+                  </button>
+                  <button className="jr-appr-btn jr-appr-cancel" disabled={!ownerReady || busy} onClick={() => decideApproval(approval, "deny")}>
+                    <IcoXCircle />Cancel
+                  </button>
                 </div>
-                {busy ? <div className="jr-approval-note">Working — the page is being driven now, a few seconds.</div> : null}
-                {!busy && ownerReady && approvals.length === 1 ? <div className="jr-approval-hint">or just type “confirm”</div> : null}
-                {!ownerReady ? <div className="jr-approval-note">Open JARVIS on the owner computer to decide this.</div> : null}
+                {!busy && ownerReady && approvals.length === 1 ? <div className="jr-appr-footer">or press <kbd>Enter</kbd> to confirm</div> : null}
+                {!ownerReady ? <div className="jr-appr-note">Open JARVIS on the owner computer to decide this.</div> : null}
               </div>
             );
           })}
