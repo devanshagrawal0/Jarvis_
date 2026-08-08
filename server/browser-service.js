@@ -173,6 +173,9 @@ function browserElementMetadata(element) {
 // A page read must never outlive this. Generous next to the 179ms a 1500-row page measures at,
 // and short enough that a wedged tab surfaces as an error rather than a silent ten-minute stall.
 const PAGE_READ_TIMEOUT_MS = 15_000;
+// The whole child-frame pass is capped here. Frame content is best-effort — an ad iframe must never
+// hold the read hostage — and the per-frame one-shot read makes 2s ample for the frames that matter.
+const FRAME_READ_BUDGET_MS = 2_000;
 const SNAPSHOT_MARK = "data-jarvis-snapshot-ref";
 const readPageInOneShot = new Function("rootEl", "options", `
   const rankSnapshotCandidates = ${rankSnapshotCandidates.toString()};
@@ -875,23 +878,34 @@ function createBrowserAutomationService({
       }
       _mark.handles = Date.now();
       const frameTexts = [];
+      // Child frames (ads, embeds, sign-in widgets) read the SAME one-shot way as the main frame:
+      // ONE evaluate per frame, not a round trip PER ELEMENT.
+      //
+      // Measured cause of the 95-second read: the per-element version was 96% of a slow snapshot
+      // (framesMs 3372 of 3526 on a 6-frame reproduction). Child frames are frequently cross-origin,
+      // which makes every handle round trip a real network hop; Instagram embeds several, so
+      // element-by-element crossed the 15s read timeout, threw, and the agent retried it ~6× → 95s.
+      // frame.evaluate runs one function inside the frame regardless of origin — one hop, not N.
+      //
+      // Bounded by a wall-clock deadline as well: a frame's content is best-effort, and no embed may
+      // ever hold the whole read hostage. Past the deadline, remaining frames are simply skipped.
+      const frameDeadline = Date.now() + FRAME_READ_BUDGET_MS;
       for (const frame of activePage.frames().filter((candidate) => candidate !== activePage.mainFrame()).slice(0, 8)) {
-        if (elements.length >= limit) break;
-        const frameText = await frame.locator("body").innerText().catch(() => "");
-        if (frameText) frameTexts.push(frameText.slice(0, 4_000));
-        const frameHandles = await frame.locator(SNAPSHOT_SELECTOR).elementHandles().catch(() => []);
-        for (const handle of frameHandles) {
-          if (elements.length >= limit) {
-            await handle.dispose().catch(() => undefined);
-            continue;
-          }
-          const visible = await handle.isVisible().catch(() => false);
-          if (!visible) {
-            await handle.dispose().catch(() => undefined);
-            continue;
-          }
-          const metadata = await handle.evaluate(browserElementMetadata).catch(() => null);
-          if (!metadata || isBlockedTarget(JSON.stringify(metadata))) {
+        if (elements.length >= limit || Date.now() >= frameDeadline) break;
+        const remaining = Math.max(200, frameDeadline - Date.now());
+        const frameRead = await Promise.race([
+          frame.locator("body").first()
+            .evaluate(readPageInOneShot, { selector: SNAPSHOT_SELECTOR, limit: limit - elements.length, mark: SNAPSHOT_MARK })
+            .catch(() => null),
+          new Promise((resolve) => setTimeout(() => resolve(null), remaining)),
+        ]);
+        if (!frameRead) continue;
+        if (frameRead.text) frameTexts.push(frameRead.text.slice(0, 4_000));
+        const frameHandles = await frame.locator(`[${SNAPSHOT_MARK}]`).elementHandles().catch(() => []);
+        for (const [position, metadata] of frameRead.elements.entries()) {
+          const handle = frameHandles[position];
+          if (!handle) continue;
+          if (elements.length >= limit || isBlockedTarget(JSON.stringify(metadata))) {
             await handle.dispose().catch(() => undefined);
             continue;
           }
@@ -900,6 +914,7 @@ function createBrowserAutomationService({
           activeState.refs.set(ref, { pageId, handle, metadata: { ...metadata, frameUrl: frame.url() } });
           elements.push({ ref, ...metadata, frameUrl: frame.url(), sensitive: metadata.type === "password" || isSensitiveAction(sensitiveDescription(metadata)) });
         }
+        await mapWithLimit(frameHandles.slice(frameRead.elements.length), (handle) => handle.dispose().catch(() => undefined));
       }
       _mark.frames = Date.now();
       // Name the slow sub-part on the next slow real page. Silent under 3s so tests and light pages
