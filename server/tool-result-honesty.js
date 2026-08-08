@@ -46,11 +46,11 @@ function classifyToolResults(toolResults = [], observeOnlyNames = new Set()) {
 
 // The exact sentence the owner reads. Only the first branch is a claim of completion.
 function summaryPrefix({ effective = [], confirmations = [], completed = [] } = {}) {
-  if (effective.length) return "Done, sir. The verified result is:";
-  if (confirmations.length) return "Ready, sir.";
+  if (effective.length) return "Done. Here's what I verified:";
+  if (confirmations.length) return "Ready when you are.";
   // Something ran and it worked, but everything that worked only looked at the world. Naming that
   // gap is the whole point: the owner can see for themselves that nothing was changed.
-  if (completed.length) return "I did not complete that, sir. Only these read-only checks ran, and none of them change anything:";
+  if (completed.length) return "I didn't complete that — only these read-only checks ran, and none of them change anything:";
   return "I could not complete the requested action.";
 }
 

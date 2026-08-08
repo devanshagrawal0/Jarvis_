@@ -2205,10 +2205,10 @@ function brainSystemInstruction(mode, recalledMemories = [], runtimeContext = ""
     `You are JARVIS inside ${profile.owner}'s local command center.`,
     profileBlock,
     personalityInstruction(),
-    "The owner is the person you address as 'sir'; you are JARVIS. Never ask the owner to call you sir and never describe sir as your own title.",
-    "Address the owner as 'sir' naturally in greetings, briefings, acknowledgements, and status reports, but do not repeat it mechanically in every sentence.",
-    "On a fresh greeting, say a time-appropriate greeting followed by 'How can I assist you?'",
-    "Talk like an intelligent personal assistant, not a command router. Be natural, context-aware, useful, and pleasantly concise unless depth is requested.",
+    "Address the owner as 'Dev'. You are JARVIS. Use his name naturally and sparingly — never mechanically in every sentence, and never invent honorifics like 'sir'.",
+    "Greetings: match them to the ACTUAL local date/time given below — never guess morning/afternoon/evening. Only greet when the owner is ONLY greeting (e.g. 'hi'). If his message already contains a request, skip the greeting entirely and answer it. Never append boilerplate like 'How can I assist you?'.",
+    "Never open with status filler such as 'Systems are ready', 'System resources are ready', or 'Core systems are online' unless he actually asked for system status. Respond to what he actually said.",
+    "Talk like a sharp, real personal assistant who knows him — natural, context-aware, useful, and concise unless depth is requested. Not a command router, not a butler reciting lines.",
     // Cortex v4 — keep JARVIS honestly aware of its own current abilities so it never
     // undersells itself when asked "what can you do". Describe in plain language.
     "Your real capabilities this build: (1) answer live/current questions with web-search grounding — news, prices, weather, sports; (2) directions, drive times, traffic, and nearby places; (3) a Deep Research mode (multi-source, cited) the owner enables with the Research toggle; (4) exact math, statistics, and data work via a code sandbox; (5) read attached images AND PDF/text documents, and describe screen captures; (6) generate images on request as downloadable artifacts; (7) open on-screen widgets — including in focus mode, e.g. 'open the Kalshi widget in focus mode' — across Profile, Kalshi, Modules, Projects, Agents, Connections, Vision, Memory, Devices, Receipts, Graph, and the Helix room; (8) remember the owner's profile, preferences, and past conversations; (9) show API usage and cost in the Profile widget. When asked what you can do, summarize these honestly; do not claim abilities you lack (e.g. executing live trades or reading private accounts without the owner opening the relevant widget). IMPORTANT: capabilities 1-7 above are always-available BUILT-IN lanes, not entries in the 'Tools exposed for this turn' list — so include them when describing what you can do even though they are not listed as tools, and never limit your self-description to only the exposed tool names.",
@@ -2407,7 +2407,7 @@ function commandResponse(rawCommand) {
     lastIntent = "greeting";
     return {
       intent: "greeting",
-      response: "Good day, sir. Core systems are online. How can I assist you?",
+      response: "Hey Dev. What do you need?",
       tone: "positive",
       actions: ["conversation:ready"],
     };
@@ -3074,10 +3074,10 @@ function instantConversationResponse(prompt) {
   if (/^(forget this memory|forget that preference|update my preference)$/i.test(text)) {
     return "I can update or forget a memory, but I need the exact memory or preference text. Ask `what do you remember about me?` first, then tell me which item to update or forget.";
   }
-  if (/^(hi|hello|hey|good morning|good afternoon|good evening)( jarvis)?$/.test(lower)) {
+  if (/^(hi|hello|hey|yo|sup|good morning|good afternoon|good evening)( jarvis)?$/.test(lower)) {
     const hour = new Date().getHours();
-    const period = hour < 12 ? "morning" : hour < 18 ? "afternoon" : "evening";
-    return `Good ${period}, sir. How can I assist you?`;
+    const period = hour < 5 ? "You're up late" : hour < 12 ? "Morning" : hour < 18 ? "Afternoon" : "Evening";
+    return `${period}, Dev. What do you need?`;
   }
   if (/^(what(?:'s| is)|tell me|give me|show me)?\s*(today'?s\s*)?(date|time|date and time|time and date|current date|current time)\s*(now|today)?$/i.test(text)
     || /\b(what(?:'s| is).*(today'?s|current).*(date|time)|what time is it|what day is it)\b/i.test(text)) {
@@ -4013,10 +4013,10 @@ async function callGemini({ prompt, imageData, attachments = [], mode, sessionId
     }
     finalText = execution.ok
       ? [
-          `Done, sir. I clicked the visible YouTube search bar, typed "${youtubeSearchQuery}", and pressed Enter.`,
+          `Done — I clicked the YouTube search bar, typed "${youtubeSearchQuery}", and pressed Enter.`,
           captureExecution?.ok ? "I captured the screen afterward for verification." : "The search action completed, but the follow-up screen capture did not complete.",
         ].join(" ")
-      : `I could not search YouTube for "${youtubeSearchQuery}", sir. ${execution.error || "The desktop adapter did not complete."}`;
+      : `I couldn't search YouTube for "${youtubeSearchQuery}". ${execution.error || "The desktop adapter did not complete."}`;
     skipAnswerModel = true;
     contents.push({
       role: "user",
