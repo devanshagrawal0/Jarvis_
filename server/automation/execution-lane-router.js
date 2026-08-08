@@ -92,13 +92,28 @@ function routeExecutionLaneInner(text, settings = {}) {
 
   if (browserOutcome(prompt) || email?.requested) {
     const needsPersonalSession = Boolean(email?.requested || (site && AUTHENTICATED_BROWSER_SITES.has(site)));
+    let tools = ["computer_use", "browser_status", "browser_login_handoff", "browser_login_complete"];
+    // Instagram has dedicated, structured tools that return the REAL data (actual messages, the real
+    // notification list, real follower usernames). Without this, the lane exposed only computer_use —
+    // which screenshots and fabricates a vague summary — and the read tools were filtered out before
+    // the model ever saw them. Expose the read tools FIRST so the model reaches for them; computer_use
+    // stays as a fallback for anything they don't cover. (Sends stay on the existing path.)
+    if (site === "instagram") {
+      tools = [
+        "instagram_read_inbox",
+        "instagram_read_conversation",
+        "instagram_read_notifications",
+        "instagram_read_people",
+        ...tools,
+      ];
+    }
     return {
       lane: needsPersonalSession ? "private-browser" : "headless-browser",
       surface: "managed-browser",
       placement: "runtime",
       site,
       startUrl: site ? SITE_START_URLS[site] : null,
-      tools: ["computer_use", "browser_status", "browser_login_handoff", "browser_login_complete"],
+      tools,
       authenticationMayBeRequired: needsPersonalSession,
       profileIsolation: "jarvis-private-profile",
     };

@@ -333,6 +333,15 @@ function createAgentRuntime({ getSettings, toolGateway, codeKnowledge, memorySto
             "If the executor reports an ambiguous person, file, or repository, ask for the missing identity detail; never choose a weak match.",
           ].join("\n")
         : "",
+      toolNames.some((name) => name.startsWith("instagram_read_"))
+        ? [
+            "Reading Instagram — use the dedicated tools, never computer_use:",
+            "To read the DM inbox call instagram_read_inbox. To read one conversation call instagram_read_conversation with the person's name. To read notifications/follow-requests call instagram_read_notifications. For followers/following call instagram_read_people. These return the REAL data (actual message text, the real notification list, real usernames).",
+            "Do NOT use computer_use to read Instagram — it only screenshots and cannot reliably read the text, which produces made-up summaries.",
+            "Report ONLY what the tool returned. Never summarise, paraphrase into vague themes, or guess message contents. If the tool returns ok:false, say what it reported (e.g. signed out) — do not fall back to web research or invent an answer.",
+            "After reading a conversation you HAVE the messages in the tool result — answer follow-ups like 'what was the last message' directly from them; never say you cannot access it.",
+          ].join("\n")
+        : "",
       toolNames.includes("gmail_prepare_email")
         ? [
             "Verified Gmail workflow:",
