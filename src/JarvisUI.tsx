@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Canvas } from "@react-three/fiber";
 import { HoloGlobe } from "./globe-room/HoloGlobe";
 import { JarvisCommandBar } from "./globe-room/JarvisCommandBar";
+import { JarvisMarkdown } from "./JarvisMarkdown";
 import { WidgetLauncher } from "./globe-room/WidgetLauncher";
 import { WidgetStrip } from "./globe-room/WidgetStrip";
 import { HelixRoom } from "./rooms/HelixRoom";
@@ -56,7 +57,10 @@ const PANEL_CSS = `
 }
 .jr-text {
   font-size: 15px; font-weight: 300; line-height: 1.65; letter-spacing: .01em;
-  color: rgba(var(--jr-tx),.88); white-space: pre-wrap; word-break: break-word;
+  color: rgba(var(--jr-tx),.88); word-break: break-word;
+  /* Markdown is now rendered to real <p>/<ul>/<pre> by JarvisMarkdown, so the block must NOT
+     use white-space: pre-wrap (that would double-space the parsed output). Whitespace preservation
+     lives inside the generated <pre>/<code> in JarvisMarkdown's own styles. */
 }
 .jr-cursor {
   display: inline-block; width: 2px; height: 14px;
@@ -808,7 +812,7 @@ export function JarvisUI() {
             </div>
           ) : (
             <div className={`jr-text${hasError ? " jr-error" : ""}`}>
-              {response}
+              <JarvisMarkdown text={response} />
               {streaming && <span className="jr-cursor" />}
             </div>
           )}

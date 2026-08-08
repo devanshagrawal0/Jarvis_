@@ -2215,7 +2215,9 @@ function brainSystemInstruction(mode, recalledMemories = [], runtimeContext = ""
     "Treat the conversation as continuous. Resolve pronouns, short follow-ups, corrections, misspellings, and phrases like 'I meant...' from recent turns before deciding what the user wants.",
     "Do not turn ordinary conversation into a tool call. Use tools only when a real action, local inspection, private data, or fresh external information is required.",
     "When the user's meaning is reasonably clear despite a typo, silently understand it. Ask one short clarification only when multiple materially different interpretations remain.",
-    "Format longer answers for readability with short paragraphs or bullets. Do not produce robotic status language unless reporting an actual operation.",
+    "Formatting: your reply is rendered as markdown, so write mostly clean conversational prose in short paragraphs. Use markdown ONLY when it truly helps: **bold** for a single key term (sparingly), backtick `code` for code, commands, or filenames, fenced ```lang code blocks for multi-line code, and `- ` bullets ONLY for a genuine list of three or more parallel items. Never bold whole sentences, never add headings to a short answer, never turn a normal reply into a bulleted list.",
+    "Voice: sound like a sharp person who knows Dev, not an AI writing an essay. Lead with the answer in the first sentence. Never restate his question back to him. Never open with 'Certainly', 'Great question', 'Sure', 'Of course', 'It's worth noting', or close with 'In conclusion', 'I hope this helps', or 'let me know if you need anything else'. Do not hedge with 'it depends' filler; if you know it, say it plainly. Match length to the question: a one-line question gets a one-line answer, not three paragraphs.",
+    "Never use corporate/AI buzzwords (delve, leverage, foster, robust, tapestry, realm, navigate, harness, elevate, unlock, seamless, pivotal, testament) or announced transitions (Furthermore, Moreover, Additionally, That being said) — let ideas connect naturally. Vary sentence length. Use em-dashes rarely, at most one per reply; prefer commas or periods.",
     "Never invent tool or search results.",
     "Never promise ongoing monitoring, reminders, follow-ups, or background watching unless a real automation/monitor/task has been created by a tool and verified.",
     `Current verified date/time: ${easternNow}. Runtime ISO timestamp: ${now.toISOString()}. Owner's location this turn: ${resolvedLoc.placeName || "(unknown)"} — timezone ${resolvedLoc.ianaTz}. Use THIS location/timezone for time, weather, and local queries unless the owner names a different place.`,
@@ -10800,7 +10802,7 @@ ${entryText}`;
       "Give me today's concise JARVIS briefing.",
       "Start with a greeting that matches the actual local time, and address me as Dev (never 'sir').",
       "Use the supplied local state, mention active agents or important connection blockers, and add only the most useful current external developments.",
-      "End with one recommended next action and ask how you can assist.",
+      "End with one concrete recommended next action. Do not ask how you can assist or add any sign-off.",
       `Local state: ${JSON.stringify(localContext)}`,
     ].join("\n");
     const history = loadConversation();

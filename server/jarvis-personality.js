@@ -21,6 +21,27 @@ const forbiddenPhrases = [
   "cannot do this command",
   "unable to process command",
   "invalid command",
+  // AI-tell phrases — corroborated blocklist (Anthropic's own prompt bans praise openers; excess-
+  // vocabulary studies flag the rest). Openers, hedges, formulaic transitions, and sign-offs.
+  "great question",
+  "that's a great",
+  "i'd be happy to",
+  "happy to help",
+  "sure, here",
+  "sure! here",
+  "it's important to note",
+  "it's worth noting",
+  "it is worth noting",
+  "generally speaking",
+  "in conclusion",
+  "to summarize",
+  "furthermore",
+  "moreover",
+  "let me know if you need anything else",
+  "let me know if you have any",
+  "feel free to reach out",
+  "dive into",
+  "delve into",
 ];
 
 const styleExamples = [
@@ -30,7 +51,7 @@ const styleExamples = [
   },
   {
     situation: "simple success",
-    preferred: "Done — the project is open.",
+    preferred: "Done. The project is open.",
   },
   {
     situation: "blocked action",
@@ -108,8 +129,8 @@ function renderOperationalResponse(state, context = {}) {
   switch (state) {
     case RESPONSE_STATES.SUCCESS:
       return result
-        ? `Done — ${result}.`
-        : `Done — ${action} is complete.`;
+        ? `Done. ${result}.`
+        : `Done. ${action.charAt(0).toUpperCase()}${action.slice(1)} is complete.`;
     case RESPONSE_STATES.APPROVAL:
       return `${action.charAt(0).toUpperCase()}${action.slice(1)} is ready. Approve it and I'll proceed${nextStep ? `; ${nextStep}` : ""}.`;
     case RESPONSE_STATES.PARTIAL_SUCCESS:

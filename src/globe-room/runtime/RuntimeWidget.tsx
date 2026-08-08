@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../../api";
+import { JarvisMarkdown } from "../../JarvisMarkdown";
 import type { SpatialWidgetMode } from "../SpatialWidgetFrame";
 import "./RuntimeWidget.css";
 import "./RuntimeApprovals.css";
@@ -146,7 +147,7 @@ export function RuntimeWidget({mode,initialData,onRefresh}:{mode:SpatialWidgetMo
       </section>
     </main>
 
-    {answer&&<div className="rt-answer"><b>JARVIS</b><span>{answer}</span><button onClick={()=>setAnswer("")}>×</button></div>}
+    {answer&&<div className="rt-answer"><b>JARVIS</b><JarvisMarkdown text={answer}/><button onClick={()=>setAnswer("")}>×</button></div>}
     <footer className="rt-v2-command"><input value={prompt} onChange={event=>setPrompt(event.target.value)} onKeyDown={event=>{if(event.key==="Enter")void runJarvis();}} placeholder="Tell JARVIS what to do next…"/><button disabled={!prompt.trim()||Boolean(busy)} onClick={()=>void runJarvis()}>{busy==="jarvis"?"Working…":"Run"}</button></footer>
   </div>;
 
