@@ -157,26 +157,17 @@ const PANEL_CSS = `
   position:relative; border-radius:24px; padding:22px 24px 18px; font-family:Inter,"Segoe UI",sans-serif;
   border:1px solid transparent;
   background:
-    radial-gradient(150% 95% at 50% -25%, rgba(130,150,255,.14), transparent 55%) padding-box,
-    linear-gradient(180deg, rgba(22,25,34,.975), rgba(14,16,23,.985)) padding-box,
-    linear-gradient(150deg, rgba(185,165,255,.55), rgba(95,155,255,.3) 42%, rgba(80,92,140,.16) 72%, rgba(160,125,255,.45)) border-box;
+    linear-gradient(#0a0b0e,#0a0b0e) padding-box,
+    linear-gradient(140deg, rgba(255,255,255,.15), rgba(255,255,255,.05) 45%, rgba(255,255,255,.12)) border-box;
   box-shadow:
-    0 44px 110px rgba(0,0,0,.72),
-    0 14px 44px rgba(20,30,64,.5),
-    0 0 70px rgba(95,115,225,.14),
-    inset 0 1px 0 rgba(224,232,255,.16),
-    inset 0 -30px 60px rgba(0,0,0,.28);
-  backdrop-filter:blur(30px) saturate(1.35); -webkit-backdrop-filter:blur(30px) saturate(1.35);
+    0 50px 120px rgba(0,0,0,.85),
+    0 18px 54px rgba(0,0,0,.6),
+    inset 0 1px 0 rgba(255,255,255,.07);
 }
 .jr-approval::before {
   content:''; position:absolute; inset:0; border-radius:inherit; pointer-events:none; z-index:0;
   background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
-  background-size:150px 150px; mix-blend-mode:soft-light; opacity:.45;
-}
-/* Specular sheen — a soft diagonal light sweep across the top-left, like glass catching light. */
-.jr-approval::after {
-  content:''; position:absolute; inset:0; border-radius:inherit; pointer-events:none; z-index:0;
-  background:linear-gradient(125deg, rgba(255,255,255,.09), rgba(255,255,255,.02) 20%, transparent 44%);
+  background-size:130px 130px; mix-blend-mode:soft-light; opacity:.5;
 }
 .jr-approval > * { position:relative; z-index:1; }
 .jr-appr-header { display:flex; align-items:center; gap:14px; }
@@ -192,9 +183,9 @@ const PANEL_CSS = `
 .jr-appr-close:hover:not(:disabled) { color:#eaf0fb; background:rgba(180,200,255,.08); }
 .jr-appr-divider { height:1px; margin:16px -4px 2px; background:linear-gradient(90deg, transparent, rgba(150,170,220,.16) 12%, rgba(150,170,220,.16) 88%, transparent); }
 .jr-appr-label { margin:15px 2px 8px; color:rgba(130,155,205,.75); font-size:11px; font-weight:700; letter-spacing:.14em; text-transform:uppercase; }
-.jr-appr-field { border:1px solid rgba(150,165,210,.13); border-radius:14px;
-  background:linear-gradient(180deg, rgba(255,255,255,.022), rgba(0,0,0,.14));
-  box-shadow:inset 0 1px 0 rgba(255,255,255,.05), inset 0 2px 12px rgba(0,0,0,.34); }
+.jr-appr-field { border:1px solid rgba(150,165,210,.12); border-radius:14px;
+  background:rgba(255,255,255,.022);
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.04); }
 .jr-appr-to { display:flex; align-items:center; gap:13px; padding:11px 14px; }
 .jr-appr-ig { flex:0 0 auto; width:38px; height:38px; border-radius:11px; display:grid; place-items:center; color:#fff;
   background:linear-gradient(135deg,#feda75,#fa7e1e 25%,#d62976 55%,#962fbf 80%,#4f5bd5);
