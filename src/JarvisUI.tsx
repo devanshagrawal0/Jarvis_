@@ -142,6 +142,60 @@ const PANEL_CSS = `
 .jr-trace summary { cursor:pointer; color:rgba(var(--jr-tx),.5); }
 .jr-toast { position:fixed; right:26px; bottom:122px; z-index:80; width:min(360px,calc(100vw - 32px)); padding:13px; border-radius:12px; background:rgba(5,22,37,.96); border:1px solid rgba(80,235,170,.42); box-shadow:0 12px 40px rgba(0,0,0,.55); color:#d7fbe7; font-family:Inter,"Segoe UI",sans-serif; }
 .jr-toast a { display:inline-block; margin-top:8px; color:#8ff0b8; font-size:12px; font-weight:700; text-decoration:none; }
+
+/* Floating approval dock — fixed above the command bar, cannot be scrolled past. */
+.jr-approval-dock {
+  position: fixed; left: 50%; bottom: calc(4.5vh + 107px);
+  transform: translateX(-50%);
+  width: min(440px, calc(100vw - 28px)); z-index: 1200;
+  display: grid; gap: 10px;
+  animation: jr-appr-in .28s cubic-bezier(.2,.9,.3,1.15);
+}
+@keyframes jr-appr-in { from { opacity:0; transform:translateX(-50%) translateY(16px) scale(.97); } to { opacity:1; transform:translateX(-50%) translateY(0) scale(1); } }
+.jr-approval {
+  border:1px solid rgba(255,190,90,.55);
+  background:linear-gradient(165deg, rgba(28,20,6,.98), rgba(15,11,4,.99));
+  border-radius:16px; padding:15px 17px 14px;
+  box-shadow:0 0 0 1px rgba(255,190,90,.10), 0 18px 50px rgba(0,0,0,.62), 0 0 42px rgba(255,170,60,.16);
+  font-family:Inter,"Segoe UI",sans-serif;
+}
+.jr-approval-head { display:flex; align-items:center; gap:8px; color:#ffcf8a; font-size:11.5px; font-weight:700; letter-spacing:.1em; text-transform:uppercase; }
+.jr-approval-pulse { width:8px; height:8px; border-radius:50%; background:#ffb43c; animation:jr-pulse 1.6s ease-out infinite; }
+@keyframes jr-pulse { 0%{box-shadow:0 0 0 0 rgba(255,180,60,.55);} 70%{box-shadow:0 0 0 7px rgba(255,180,60,0);} 100%{box-shadow:0 0 0 0 rgba(255,180,60,0);} }
+.jr-approval-to { display:flex; align-items:center; flex-wrap:wrap; gap:8px; margin:12px 0 2px; }
+.jr-approval-to-label { color:rgba(255,255,255,.4); font-size:10.5px; text-transform:uppercase; letter-spacing:.07em; }
+.jr-approval-chip { padding:3px 11px; border-radius:20px; background:rgba(255,190,90,.14); border:1px solid rgba(255,190,90,.4); color:#ffe0b0; font-size:13px; font-weight:650; }
+.jr-approval-to.unconfirmed .jr-approval-chip { background:rgba(255,120,60,.16); border-color:rgba(255,140,60,.55); color:#ffcaa0; }
+.jr-approval-unconf { color:#ff9d5c; font-size:11px; font-weight:600; flex-basis:100%; }
+.jr-approval-bubble { margin:9px 0 13px; padding:11px 14px; border-radius:14px 14px 14px 4px; background:rgba(60,140,255,.15); border:1px solid rgba(90,160,255,.32); color:#eaf3ff; font-size:15px; line-height:1.4; overflow-wrap:anywhere; }
+.jr-approval-intent { margin:11px 0 12px; color:rgba(255,255,255,.94); font-size:15px; font-weight:600; line-height:1.35; overflow-wrap:anywhere; }
+.jr-approval-on { margin:-5px 0 12px; color:rgba(255,255,255,.4); font-size:11.5px; overflow-wrap:anywhere; }
+.jr-approval-caveat { color:#ffc16b; font-size:11.5px; margin:0 0 10px; }
+.jr-approval-summary { margin:8px 0; color:rgba(255,255,255,.72); font-size:12.5px; line-height:1.45; white-space:pre-wrap; }
+.jr-approval-actions { display:flex; gap:9px; margin-top:4px; }
+.jr-approval-actions button { min-height:44px; border-radius:11px; padding:0 14px; cursor:pointer; font-weight:700; font-size:14.5px; transition:filter .12s, transform .06s; }
+.jr-approval-actions button:active:not(:disabled) { transform:translateY(1px); }
+.jr-approve { flex:1; color:#06180f; background:linear-gradient(180deg,#3dffb0,#16e39a); border:1px solid #16e39a; box-shadow:0 4px 18px rgba(20,230,150,.32); }
+.jr-approve:hover:not(:disabled) { filter:brightness(1.08); }
+.jr-deny { flex:0 0 34%; color:#ffd0d0; background:rgba(120,26,26,.28); border:1px solid rgba(255,110,110,.4); }
+.jr-approval-actions button:disabled { opacity:.5; cursor:not-allowed; }
+.jr-approval-note { margin-top:9px; color:rgba(255,255,255,.55); font-size:11.5px; }
+.jr-approval-hint { margin-top:8px; text-align:center; color:rgba(255,255,255,.4); font-size:11px; }
+
+/* "Sent ✓" success confirmation — top-center so it never sits under the response panel. */
+.jr-sent-toast {
+  position:fixed; left:50%; transform:translateX(-50%); top:26px; z-index:1250;
+  display:flex; align-items:center; gap:11px; padding:12px 18px; border-radius:14px;
+  background:linear-gradient(165deg, rgba(6,32,22,.98), rgba(4,20,14,.98));
+  border:1px solid rgba(40,235,160,.5); box-shadow:0 14px 44px rgba(0,0,0,.5), 0 0 30px rgba(30,220,150,.22);
+  color:#d7fbe7; font-family:Inter,"Segoe UI",sans-serif;
+  animation:jr-sent-in .3s cubic-bezier(.2,.9,.3,1.15);
+}
+@keyframes jr-sent-in { from { opacity:0; transform:translateX(-50%) translateY(-14px); } to { opacity:1; transform:translateX(-50%) translateY(0); } }
+.jr-sent-check { display:grid; place-items:center; width:26px; height:26px; border-radius:50%; background:rgba(40,235,160,.18); border:1px solid rgba(40,235,160,.5); color:#3dffb0; font-weight:800; font-size:14px; }
+.jr-sent-toast strong { font-size:14px; }
+.jr-sent-detail { margin-top:2px; font-size:11.5px; opacity:.7; }
+@media (prefers-reduced-motion: reduce) { .jr-approval-dock, .jr-sent-toast { animation:none; } .jr-approval-pulse { animation:none; } }
 `;
 
 type ApprovalRequest = {
@@ -227,6 +281,20 @@ function fileSize(bytes?: number) {
   return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 }
 
+// Pull the actual message the owner wants to send out of their instruction so the approval card can
+// show it in a quote bubble — "text tg saying wasgud" -> "wasgud". Best-effort; returns null when the
+// instruction isn't a "say X" form, in which case the card falls back to showing the instruction.
+function extractMessageBody(task?: string): string | null {
+  const t = String(task || "").trim();
+  if (!t) return null;
+  const m = t.match(/\b(?:saying|that says|says|message[:,]?|telling (?:\w+ )?|reply(?:ing)?[:,]?|text(?:ing)?[:,]?|write[:,]?|wrote[:,]?)\s+["']?(.+?)["']?\s*$/i);
+  const body = m?.[1]?.trim();
+  if (!body || body.length < 1 || body.length > 600) return null;
+  // Guard against grabbing the whole instruction when there was no real "say X" split.
+  if (body.length >= t.length - 2) return null;
+  return body;
+}
+
 async function prepareAttachments(files: File[]): Promise<PreparedAttachment[]> {
   const selected = files.slice(0, 5);
   const total = selected.reduce((sum, file) => sum + file.size, 0);
@@ -273,6 +341,10 @@ export function JarvisUI() {
   // Cortex v4 P1.2-lite — response footer meta (which model answered + sources).
   const [meta, setMeta] = useState<Partial<BrainResponse>>({});
   const [toastArtifact, setToastArtifact] = useState<JarvisArtifact | null>(null);
+  // Success confirmation after an approved action (e.g. a sent DM). Auto-dismisses; a "✓ Sent" the
+  // owner cannot miss, so approving no longer feels like nothing happened.
+  const [sentToast, setSentToast] = useState<{ title: string; detail?: string } | null>(null);
+  const sentToastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   // Cortex v4 P1.6 — attachments. Backend vision path already works (inline_data);
   // read the selected image to a data URL so the next message can carry it.
   const abortRef = useRef<AbortController | null>(null);
@@ -562,10 +634,23 @@ export function JarvisUI() {
         return;
       }
       const outcome = decision === "approve"
-        ? result?.result ?? result?.message ?? `${approval.tool} completed.`
-        : result?.message ?? `${approval.tool} denied.`;
-      const rendered = typeof outcome === "string" ? outcome : JSON.stringify(outcome, null, 2);
+        ? result?.result ?? result?.message ?? "Done."
+        : result?.message ?? "Cancelled.";
+      // Never dump a raw JSON object into the conversation — surface a human sentence. On a successful
+      // approve, also raise a "✓ Sent"/"✓ Done" toast so approving no longer feels like nothing happened.
+      const rendered = typeof outcome === "string" ? outcome
+        : (outcome?.message || outcome?.summary || "Done.");
       setResponse((current) => `${current}${current ? "\n\n" : ""}${rendered}`);
+      if (decision === "approve") {
+        const recipient = approval.commit?.recipient?.text;
+        const isMessage = /send|message|dm|reply|text|email|post|comment/i.test(String(approval.commit?.intent || approval.commit?.task || approval.tool || ""));
+        setSentToast({
+          title: isMessage ? (recipient ? `Sent to ${recipient}` : "Sent") : "Done",
+          detail: isMessage ? undefined : (typeof rendered === "string" ? rendered.slice(0, 90) : undefined),
+        });
+        if (sentToastTimer.current) clearTimeout(sentToastTimer.current);
+        sentToastTimer.current = setTimeout(() => setSentToast(null), 5000);
+      }
     } catch (error) {
       setResponse((current) => `${current}${current ? "\n\n" : ""}Approval failed: ${error instanceof Error ? error.message : String(error)}`);
       setHasError(true);
@@ -700,61 +785,64 @@ export function JarvisUI() {
               : <div className="jr-card" key={`${card.title}-${index}`}><div className="jr-card-title">{card.title}{card.value ? ` · ${card.value}` : ""}</div>{card.body ? <div className="jr-card-body">{card.body}</div> : null}{card.items?.length ? <div className="jr-card-body">{card.items.map((item) => <div key={item}>• {item}</div>)}</div> : null}</div>
           ))}</div> : null}
           {meta.receipt || meta.timing ? <details className="jr-trace"><summary>Technical trace</summary><pre className="jr-card-body">{JSON.stringify({ receipt: meta.receipt, timing: meta.timing, usage: meta.usage }, null, 2)}</pre></details> : null}
-          {approvals.length > 0 ? (
-            <div className="jr-approvals" aria-label="Actions awaiting owner approval">
-              {approvals.map((approval) => {
-                const commit = approval.commit;
-                // Without a commit boundary (any other capability) there is nothing better to show
-                // than the arguments, so that stays as the fallback rather than being deleted.
-                const summary = commit ? "" : Object.entries(approval.summary || {}).map(([key, value]) => `${key}: ${String(value)}`).join("\n");
-                const ownerReady = Boolean(approval.ownerChallenge);
-                const busy = approvalBusy === approval.id;
-                return (
-                  <div className="jr-approval" key={approval.id}>
-                    <div className="jr-approval-head"><span>◆</span>{approval.risk || "execute"} · owner approval</div>
-                    {commit ? (
-                      <>
-                        {/* Headline is the owner's own instruction — the thing actually being
-                            authorised, in their words, with nothing inferred. The mechanic sits
-                            below it: true and worth showing, but not the decision. */}
-                        <div className="jr-approval-intent">{commit.task || commit.intent}</div>
-                        <dl className="jr-approval-facts">
-                          {/* WHO comes first and cannot be scrolled past. Four messages went to a
-                              group chat while this card described only the action, so the recipient
-                              is the first fact, and an unconfirmed one says so instead of hiding. */}
-                          {commit.recipient ? (
-                            <div className={`jr-approval-fact${commit.recipient.confirmed ? "" : " jr-approval-fact-warn"}`}>
-                              <dt>To</dt><dd>{commit.recipient.text}</dd>
-                            </div>
-                          ) : null}
-                          {commit.task ? <div className="jr-approval-fact"><dt>Action</dt><dd>{commit.intent}</dd></div> : null}
-                          {commit.url || commit.surface ? <div className="jr-approval-fact"><dt>On</dt><dd>{commit.url || commit.surface}</dd></div> : null}
-                        </dl>
-                        {commit.unlabelled ? <div className="jr-approval-caveat">That control has no name on the page — it was identified by role and position.</div> : null}
-                      </>
-                    ) : (
-                      <>
-                        <div className="jr-approval-tool">{approval.tool.replace(/_/g, " ")}</div>
-                        {summary ? <div className="jr-approval-summary">{summary}</div> : null}
-                      </>
-                    )}
-                    <div className="jr-approval-actions">
-                      <button className="jr-approve" disabled={!ownerReady || busy} onClick={() => decideApproval(approval, "approve")}>{busy ? "Working…" : "Approve once"}</button>
-                      <button className="jr-deny" disabled={!ownerReady || busy} onClick={() => decideApproval(approval, "deny")}>Deny</button>
-                    </div>
-                    {busy ? <div className="jr-approval-summary">Running the approved step. This takes a few seconds — the page is being driven now.</div> : null}
-                    {/* An affordance nobody is told about is not an affordance. */}
-                    {!busy && ownerReady && approvals.length === 1
-                      ? <div className="jr-approval-hint">or type or say “confirm”</div>
-                      : null}
-                    {!ownerReady ? <div className="jr-approval-summary">Open JARVIS directly on the owner computer to decide this action.</div> : null}
-                  </div>
-                );
-              })}
-            </div>
-          ) : null}
+          {/* Approvals no longer render buried at the bottom of this scrolling panel — they are a
+              fixed, un-missable floating dock rendered below (see jr-approval-dock). */}
         </div>
       </div>
+
+      {approvals.length > 0 ? (
+        <div className="jr-approval-dock" aria-label="Actions awaiting owner approval" role="alertdialog" aria-modal="false">
+          {approvals.map((approval) => {
+            const commit = approval.commit;
+            const summary = commit ? "" : Object.entries(approval.summary || {}).map(([key, value]) => `${key}: ${String(value)}`).join("\n");
+            const ownerReady = Boolean(approval.ownerChallenge);
+            const busy = approvalBusy === approval.id;
+            const messageBody = extractMessageBody(commit?.task);
+            const isMessage = /send|message|dm|reply|text|email|post|comment/i.test(String(commit?.intent || commit?.task || approval.tool || ""));
+            return (
+              <div className="jr-approval" key={approval.id}>
+                <div className="jr-approval-head">
+                  <span className="jr-approval-pulse" />
+                  {isMessage ? "Approve to send" : "Approve to continue"}
+                </div>
+                {commit ? (
+                  <>
+                    {commit.recipient ? (
+                      <div className={`jr-approval-to${commit.recipient.confirmed ? "" : " unconfirmed"}`}>
+                        <span className="jr-approval-to-label">To</span>
+                        <span className="jr-approval-chip">{commit.recipient.text}</span>
+                        {!commit.recipient.confirmed ? <span className="jr-approval-unconf">unconfirmed — check this is right</span> : null}
+                      </div>
+                    ) : null}
+                    {messageBody
+                      ? <div className="jr-approval-bubble">{messageBody}</div>
+                      : <div className="jr-approval-intent">{commit.task || commit.intent}</div>}
+                    {(commit.url || commit.surface) ? <div className="jr-approval-on">{commit.url || commit.surface}</div> : null}
+                    {commit.unlabelled ? <div className="jr-approval-caveat">That control has no name on the page — identified by role and position.</div> : null}
+                  </>
+                ) : (
+                  <>
+                    <div className="jr-approval-intent">{approval.tool.replace(/_/g, " ")}</div>
+                    {summary ? <div className="jr-approval-summary">{summary}</div> : null}
+                  </>
+                )}
+                <div className="jr-approval-actions">
+                  <button className="jr-approve" disabled={!ownerReady || busy} onClick={() => decideApproval(approval, "approve")}>{busy ? "Sending…" : (isMessage ? "Send it" : "Approve")}</button>
+                  <button className="jr-deny" disabled={!ownerReady || busy} onClick={() => decideApproval(approval, "deny")}>Cancel</button>
+                </div>
+                {busy ? <div className="jr-approval-note">Working — the page is being driven now, a few seconds.</div> : null}
+                {!busy && ownerReady && approvals.length === 1 ? <div className="jr-approval-hint">or just type “confirm”</div> : null}
+                {!ownerReady ? <div className="jr-approval-note">Open JARVIS on the owner computer to decide this.</div> : null}
+              </div>
+            );
+          })}
+        </div>
+      ) : null}
+
+      {sentToast ? <div className="jr-sent-toast" role="status">
+        <span className="jr-sent-check">✓</span>
+        <div><strong>{sentToast.title}</strong>{sentToast.detail ? <div className="jr-sent-detail">{sentToast.detail}</div> : null}</div>
+      </div> : null}
 
       {toastArtifact ? <div className="jr-toast" role="status">
         <strong>JARVIS created {toastArtifact.title || toastArtifact.name || "an artifact"}</strong>
