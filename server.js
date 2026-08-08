@@ -2570,8 +2570,15 @@ function summarizeVerifiedToolResults(toolResults) {
       ].filter(Boolean).join("; "));
       continue;
     }
-    const detail = compactToolValue(item.result);
-    lines.push(`${item.tool} completed${detail ? `: ${detail}` : "."}`);
+    // Prefer a natural sentence the tool already produced over a machine key:value dump, and drop the
+    // internal underscore in the tool name, so this transparency line reads less like a computer log.
+    const r = item.result || {};
+    const natural = typeof r.message === "string" ? r.message
+      : typeof r.summary === "string" ? r.summary
+      : typeof r.result === "string" ? r.result
+      : compactToolValue(item.result);
+    const label = String(item.tool || "action").replace(/_/g, " ");
+    lines.push(natural ? `${label}: ${natural}` : `${label} ran`);
   }
   for (const item of confirmations) {
     const reason = item.confirmation?.summary?.reason;

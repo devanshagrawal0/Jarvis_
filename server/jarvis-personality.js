@@ -147,6 +147,29 @@ function renderOperationalResponse(state, context = {}) {
   }
 }
 
+// Final prose cleanup: soften em-dashes to commas (the model still overuses them) and strip the
+// residual AI-tell openers/closers, WITHOUT touching code. Code spans/blocks are split out and left
+// byte-for-byte; numeric ranges like "3—4" are left alone (only letter—letter / spaced dashes change).
+function normalizeAssistantProse(value) {
+  const parts = String(value).split(/(```[\s\S]*?```|`[^`]*`)/g);
+  const softened = parts.map((seg, i) => {
+    if (i % 2 === 1) return seg; // inside `code` or ```block``` — never rewrite
+    return seg
+      .replace(/\s+—\s+/g, ", ")                 // "word — word"  -> "word, word"
+      .replace(/([A-Za-z])—([A-Za-z])/g, "$1, $2"); // "word—word" -> "word, word" (digit—digit ranges untouched)
+  }).join("");
+  return softened
+    .replace(/^\s*(?:Certainly|Absolutely|Of course|Sure|Great question)[!,.\s]+/i, "")
+    .replace(/\bI hope this helps[.!]*/gi, "")
+    .replace(/\bLet me know if (?:you (?:need|have)|there'?s anything)[^.!?\n]*[.!?]*/gi, "")
+    .replace(/\bFeel free to (?:reach out|ask)[^.!?\n]*[.!?]*/gi, "")
+    .replace(/\bHow can I (?:help|assist)[^.!?\n]*\?/gi, "")
+    .replace(/[ \t]{2,}/g, " ")
+    .replace(/[ \t]+\n/g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
 function polishPersonality(text, context = {}) {
   if (context.state) return renderOperationalResponse(context.state, context);
   let value = String(text || "").trim();
@@ -167,13 +190,7 @@ function polishPersonality(text, context = {}) {
   if (/^the action is prepared and waiting for your confirmation\.?$/i.test(value)) {
     return renderOperationalResponse(RESPONSE_STATES.APPROVAL, { action: "the requested action" });
   }
-  value = value
-    .replace(/\bI hope this helps[.!]?/gi, "")
-    .replace(/^(Certainly|Absolutely|Of course)[!,]\s*/i, "")
-    .replace(/\bHow can I help you today\?/gi, "How can I assist you?")
-    .replace(/\n{3,}/g, "\n\n")
-    .trim();
-  return value;
+  return normalizeAssistantProse(value);
 }
 
 module.exports = {
@@ -182,6 +199,7 @@ module.exports = {
   personalityInstruction,
   evaluatePersonality,
   polishPersonality,
+  normalizeAssistantProse,
   renderOperationalResponse,
   RESPONSE_STATES,
 };
