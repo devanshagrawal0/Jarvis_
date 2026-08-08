@@ -158,20 +158,25 @@ const PANEL_CSS = `
   border:1px solid transparent;
   background:
     radial-gradient(150% 95% at 50% -25%, rgba(130,150,255,.14), transparent 55%) padding-box,
-    linear-gradient(180deg, rgba(26,30,44,.95), rgba(12,14,22,.975)) padding-box,
-    linear-gradient(150deg, rgba(185,165,255,.55), rgba(95,155,255,.3) 42%, rgba(80,92,140,.16) 72%, rgba(160,125,255,.45)) border-box;
+    linear-gradient(180deg, rgba(32,38,56,.5), rgba(14,17,28,.62)) padding-box,
+    linear-gradient(150deg, rgba(190,170,255,.6), rgba(100,160,255,.32) 42%, rgba(85,98,148,.16) 72%, rgba(165,130,255,.5)) border-box;
   box-shadow:
     0 44px 110px rgba(0,0,0,.72),
     0 14px 44px rgba(20,30,64,.5),
     0 0 70px rgba(95,115,225,.14),
     inset 0 1px 0 rgba(224,232,255,.16),
     inset 0 -30px 60px rgba(0,0,0,.28);
-  backdrop-filter:blur(30px) saturate(1.35); -webkit-backdrop-filter:blur(30px) saturate(1.35);
+  backdrop-filter:blur(40px) saturate(1.5); -webkit-backdrop-filter:blur(40px) saturate(1.5);
 }
 .jr-approval::before {
   content:''; position:absolute; inset:0; border-radius:inherit; pointer-events:none; z-index:0;
   background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
-  background-size:150px 150px; mix-blend-mode:soft-light; opacity:.5;
+  background-size:150px 150px; mix-blend-mode:soft-light; opacity:.45;
+}
+/* Specular sheen — a soft diagonal light sweep across the top-left, like glass catching light. */
+.jr-approval::after {
+  content:''; position:absolute; inset:0; border-radius:inherit; pointer-events:none; z-index:0;
+  background:linear-gradient(125deg, rgba(255,255,255,.09), rgba(255,255,255,.02) 20%, transparent 44%);
 }
 .jr-approval > * { position:relative; z-index:1; }
 .jr-appr-header { display:flex; align-items:center; gap:14px; }
@@ -334,13 +339,13 @@ const IcoLink = () => (<svg width="16" height="16" viewBox="0 0 24 24" fill="non
 const IcoExternal = () => (<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><path d="M15 3h6v6" /><path d="M10 14 21 3" /><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" /></svg>);
 const IcoPencil = () => (<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><path d="M12 20h9" /><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z" /></svg>);
 const IcoXCircle = () => (<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round"><circle cx="12" cy="12" r="9" /><path d="m15 9-6 6M9 9l6 6" /></svg>);
-const IcoCamera = () => (<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><rect x="3" y="7" width="18" height="14" rx="4" /><circle cx="12" cy="14" r="3.2" /><circle cx="17.5" cy="10.5" r="0.6" fill="currentColor" /></svg>);
+const IcoInstagram = () => (<svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round"><rect x="2.8" y="2.8" width="18.4" height="18.4" rx="5.4" /><circle cx="12" cy="12" r="4.6" /><circle cx="17.4" cy="6.6" r="1.15" fill="currentColor" stroke="none" /></svg>);
 const IcoGlobe = () => (<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6"><circle cx="12" cy="12" r="9" /><path d="M3 12h18M12 3a15 15 0 0 1 0 18a15 15 0 0 1 0-18Z" /></svg>);
 
 // Which platform an approval targets, for the "To" row icon + label.
 function platformOf(commit?: { url?: string; surface?: string; task?: string; intent?: string } | null): { name: string; cls: string; icon: React.ReactNode } {
   const s = `${commit?.url || ""} ${commit?.surface || ""} ${commit?.task || ""} ${commit?.intent || ""}`.toLowerCase();
-  if (/instagram|insta\b/.test(s)) return { name: "Instagram", cls: "jr-appr-ig", icon: <IcoCamera /> };
+  if (/instagram|insta\b/.test(s)) return { name: "Instagram", cls: "jr-appr-ig", icon: <IcoInstagram /> };
   return { name: "Web", cls: "jr-appr-globe", icon: <IcoGlobe /> };
 }
 
