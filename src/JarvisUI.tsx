@@ -158,7 +158,7 @@ const PANEL_CSS = `
   border:1px solid transparent;
   background:
     radial-gradient(150% 95% at 50% -25%, rgba(130,150,255,.14), transparent 55%) padding-box,
-    linear-gradient(180deg, rgba(26,30,44,.95), rgba(12,14,22,.975)) padding-box,
+    linear-gradient(180deg, rgba(16,19,29,.965), rgba(7,9,14,.985)) padding-box,
     linear-gradient(150deg, rgba(185,165,255,.55), rgba(95,155,255,.3) 42%, rgba(80,92,140,.16) 72%, rgba(160,125,255,.45)) border-box;
   box-shadow:
     0 44px 110px rgba(0,0,0,.72),
