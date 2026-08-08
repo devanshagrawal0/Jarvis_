@@ -643,6 +643,19 @@ function createBrowserAutomationService({
     });
   }
 
+  // Instagram READ actions (inbox, one conversation, notifications, followers/following). Shares the
+  // one persistent logged-in profile and the serialized operation queue, so it never fights the send
+  // path or another browser task for the profile lock. All IG reads run on a single dedicated tab.
+  async function instagram(args = {}) {
+    const { runInstagramRead } = require("./instagram/reads");
+    return runExclusive(async () => {
+      const activePage = await ensurePage("instagram");
+      const result = await runInstagramRead(activePage, args);
+      invalidateSnapshot(activePage);
+      return result;
+    });
+  }
+
   async function status(args = {}) {
     return runExclusive(async () => {
       const activePage = await ensurePage(args.taskId);
@@ -879,18 +892,34 @@ function createBrowserAutomationService({
       _mark.handles = Date.now();
       const frameTexts = [];
       // Child frames (ads, embeds, sign-in widgets) read the SAME one-shot way as the main frame:
-      // ONE evaluate per frame, not a round trip PER ELEMENT.
+      // ONE evaluate per frame, not a round trip PER ELEMENT — that per-element pass was the measured
+      // cause of the 95s read (framesMs 3372 of 3526, cross-origin, retried ~6× past the 15s timeout).
       //
-      // Measured cause of the 95-second read: the per-element version was 96% of a slow snapshot
-      // (framesMs 3372 of 3526 on a 6-frame reproduction). Child frames are frequently cross-origin,
-      // which makes every handle round trip a real network hop; Instagram embeds several, so
-      // element-by-element crossed the 15s read timeout, threw, and the agent retried it ~6× → 95s.
-      // frame.evaluate runs one function inside the frame regardless of origin — one hop, not N.
+      // But even one-shot, reading them is mostly waste. Measured live with the CPU free:
       //
-      // Bounded by a wall-clock deadline as well: a frame's content is best-effort, and no embed may
-      // ever hold the whole read hostage. Past the deadline, remaining frames are simply skipped.
+      //   [auto:snapshot] slow { readMs 61, handlesMs 191, framesMs 3276, frameCount 2 }
+      //
+      // The main page read in 61ms; two Instagram AD frames still cost 3.3s — 92% of the read — and
+      // a message send never needs their content: the composer and send control live in the main
+      // frame. So when the main frame already produced something typable, the child frames are
+      // skipped entirely. Sites that genuinely put a form in a frame have no composer in the main
+      // frame, so they still fall through and get read (bounded).
+      // A typable in the main frame — role textbox/searchbox/combobox, a textarea, or a real text
+      // input. Instagram's composer is a div[role="textbox"], so role carries it. Inlined here
+      // because this module has no shared typable helper.
+      const mainFrameHasComposer = elements.some((item) => {
+        const role = String(item.role || "").toLowerCase();
+        const tag = String(item.tag || "").toLowerCase();
+        const type = String(item.type || "").toLowerCase();
+        return role === "textbox" || role === "searchbox" || role === "combobox"
+          || tag === "textarea"
+          || (tag === "input" && !["button", "submit", "reset", "checkbox", "radio", "hidden"].includes(type));
+      });
       const frameDeadline = Date.now() + FRAME_READ_BUDGET_MS;
-      for (const frame of activePage.frames().filter((candidate) => candidate !== activePage.mainFrame()).slice(0, 8)) {
+      const childFrames = mainFrameHasComposer
+        ? []
+        : activePage.frames().filter((candidate) => candidate !== activePage.mainFrame()).slice(0, 8);
+      for (const frame of childFrames) {
         if (elements.length >= limit || Date.now() >= frameDeadline) break;
         const remaining = Math.max(200, frameDeadline - Date.now());
         const frameRead = await Promise.race([
@@ -1350,6 +1379,7 @@ function createBrowserAutomationService({
     completeLoginHandoff,
     pageBrief,
     navigate,
+    instagram,
     inspect,
     snapshot,
     tabs,

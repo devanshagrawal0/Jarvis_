@@ -343,6 +343,10 @@ function createCapabilityEngine({
     ["instagram_like_current", "Like the currently visible Instagram Reel only after verifying that a reel URL is open; returns proof that the control changed from Like to Unlike.", "commit", true],
     ["instagram_prepare_dm", "Open an exact visible Instagram Direct thread and place the requested text in its composer without sending it.", "prepare", false],
     ["instagram_send_current", "Send the already-prepared text in the currently visible Instagram Direct conversation only after verifying the chat URL, recipient context, and exact composer value; returns proof that the composer cleared and the text appeared in the conversation.", "commit", true],
+    ["instagram_read_inbox", "Read the Instagram Direct inbox: the list of conversations with each one's name, latest-message snippet, unread flag, and time. Read-only, changes nothing. Use for 'read my DMs', 'check my messages', 'who messaged me', 'any unread chats'.", "observe", false],
+    ["instagram_read_conversation", "Open one Instagram Direct conversation by the person's name (or a known thread URL) and read its recent messages in order. Read-only. Use for 'read my chat with X', 'what did X say', 'open my conversation with X'.", "observe", false],
+    ["instagram_read_notifications", "Read the Instagram notifications/activity panel: pending follow requests, new followers, likes, comments, and mentions. Read-only. Use for 'check my notifications', 'any follow requests', 'who followed me', 'what's new on Instagram'.", "observe", false],
+    ["instagram_read_people", "Read an Instagram account's followers or following list by scroll-harvesting the modal (capped and human-paced). Defaults to your own account. Read-only. Use for 'who follows me', 'who am I following', 'show X's followers'.", "observe", false],
     ["list_windows", "List visible top-level Windows application windows using semantic UI Automation.", "observe", false],
     ["inspect_window", "Inspect named controls in a Windows application using semantic UI Automation.", "observe", false],
     ["focus_window", "Focus a visible Windows application window.", "execute", true],
@@ -679,6 +683,10 @@ function createCapabilityEngine({
     { name: "instagram_like_current", description: description("instagram_like_current"), parameters: { type: "OBJECT", properties: { expectedHandle: { type: "STRING" } } } },
     { name: "instagram_prepare_dm", description: description("instagram_prepare_dm"), parameters: { type: "OBJECT", properties: { recipient: { type: "STRING" }, message: { type: "STRING" } }, required: ["recipient", "message"] } },
     { name: "instagram_send_current", description: description("instagram_send_current"), parameters: { type: "OBJECT", properties: { expectedRecipient: { type: "STRING" }, resolvedRecipient: { type: "STRING" }, expectedConversationUrl: { type: "STRING" }, message: { type: "STRING" } }, required: ["expectedRecipient", "message"] } },
+    { name: "instagram_read_inbox", description: description("instagram_read_inbox"), parameters: { type: "OBJECT", properties: { limit: { type: "INTEGER", description: "Max conversations to return (default 30)." } } } },
+    { name: "instagram_read_conversation", description: description("instagram_read_conversation"), parameters: { type: "OBJECT", properties: { name: { type: "STRING", description: "The person's name or handle as it appears in your inbox." }, messages: { type: "INTEGER", description: "How many recent messages to return (default 30)." } }, required: ["name"] } },
+    { name: "instagram_read_notifications", description: description("instagram_read_notifications"), parameters: { type: "OBJECT", properties: {} } },
+    { name: "instagram_read_people", description: description("instagram_read_people"), parameters: { type: "OBJECT", properties: { which: { type: "STRING", description: "followers or following." }, handle: { type: "STRING", description: "Whose list to read; omit for your own account." }, cap: { type: "INTEGER", description: "Max people to harvest (default 200)." } }, required: ["which"] } },
     { name: "list_windows", description: description("list_windows"), parameters: { type: "OBJECT", properties: { limit: { type: "INTEGER" } } } },
     { name: "inspect_window", description: description("inspect_window"), parameters: { type: "OBJECT", properties: { title: { type: "STRING" }, limit: { type: "INTEGER" } }, required: ["title"] } },
     { name: "focus_window", description: description("focus_window"), parameters: { type: "OBJECT", properties: { title: { type: "STRING" } }, required: ["title"] } },
@@ -2482,6 +2490,22 @@ function createCapabilityEngine({
     instagram_like_current: instagramLikeCurrent,
     instagram_prepare_dm: instagramPrepareDm,
     instagram_send_current: instagramSendCurrent,
+    instagram_read_inbox: (args) => browserForContext().instagram({ action: "inbox", limit: asNumber(args?.limit, 30, 1, 60) }),
+    instagram_read_conversation: (args = {}) => {
+      const name = cleanString(args.name, 120);
+      // If we already know this person's Instagram thread, hand the URL over so the read navigates
+      // straight to it — no inbox row to click, nothing to intercept, and no wrong-thread risk.
+      let threadUrl = "";
+      const match = name ? contacts.find(name, { channel: "instagram" }) : null;
+      const igAccount = match?.channels?.instagram;
+      if (igAccount && contacts.isConversationUrl?.(igAccount.threadUrl || "", "instagram")) threadUrl = igAccount.threadUrl;
+      return browserForContext().instagram({ action: "conversation", name, threadUrl, messages: asNumber(args.messages, 30, 5, 60) });
+    },
+    instagram_read_notifications: () => browserForContext().instagram({ action: "notifications" }),
+    instagram_read_people: (args = {}) => {
+      const which = /follower/i.test(String(args.which || "")) ? "followers" : "following";
+      return browserForContext().instagram({ action: which, handle: cleanString(args.handle, 120), cap: asNumber(args.cap, 200, 1, 2000) });
+    },
     list_windows: async (args) => { if (!windowsBroker) throw errorWithStatus("Windows broker is not available", 412); return windowsBroker.call("list_windows", args); },
     inspect_window: async (args) => { if (!windowsBroker) throw errorWithStatus("Windows broker is not available", 412); return windowsBroker.call("inspect_window", args); },
     focus_window: async (args) => { if (!windowsBroker) throw errorWithStatus("Windows broker is not available", 412); return windowsBroker.call("focus_window", args); },

@@ -208,6 +208,32 @@ function createToolGateway({ capabilityEngine, moduleRegistry, codeKnowledge }) 
     } else if (/\b(switch tabs?|change tabs?|next tab|previous tab)\b/i.test(prompt)) {
       alwaysUseful.push("desktop_control", "screen_capture");
     }
+    // Instagram gets dedicated read/send tools that use the proven human-coordinate-click path.
+    // Surface them for however the request is phrased so the model reaches for the right tool
+    // instead of the generic browser_act path (which the list overlay defeats).
+    const instagramPrompt = /\binsta(gram)?\b|\bdms?\b|direct message/i.test(prompt)
+      || /\b(follow requests?|who follows me|who followed me|my followers|who i'?m following|who am i following)\b/i.test(prompt);
+    if (instagramPrompt) {
+      if (/\b(inbox|dms?|messages?|conversations?|chats?|unread|who (?:messaged|texted|dm'?d|pinged) me)\b/i.test(prompt)) {
+        alwaysUseful.push("instagram_read_inbox");
+      }
+      if (/\b(read|open|show|see|check|pull up)\b[^.?!]*\b(chat|convo|conversation|messages?|thread|dm)\b/i.test(prompt)
+        || /\bwhat did .+ (?:say|send|write|text)\b/i.test(prompt)) {
+        alwaysUseful.push("instagram_read_conversation");
+      }
+      if (/\b(notifications?|activity|follow requests?|requests?|who (?:followed|liked)|new followers?|what'?s new)\b/i.test(prompt)) {
+        alwaysUseful.push("instagram_read_notifications");
+      }
+      if (/\b(followers?|following)\b/i.test(prompt)) {
+        alwaysUseful.push("instagram_read_people");
+      }
+      if (/\b(dm|message|text|send|reply|tell|write|say|ask)\b/i.test(prompt)) {
+        alwaysUseful.push("instagram_prepare_dm", "instagram_send_current");
+      }
+      // If nothing specific matched but Instagram is clearly the subject, offer the inbox read as
+      // the safe default so the turn still has an Instagram-native tool rather than only browser_act.
+      if (!alwaysUseful.some((n) => n.startsWith("instagram_"))) alwaysUseful.push("instagram_read_inbox");
+    }
     if (/\b(browser|website|web page|chrome|canvas|instagram|gmail|youtube|you tube|github|reddit|google|kalshi|amazon|form|upload|download|submit|click|open .*site|open .*on (?:my )?(?:laptop|computer)|go to|log in)\b/i.test(prompt)) {
       alwaysUseful.push(
         "computer_use",
