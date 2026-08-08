@@ -30,8 +30,10 @@ async function harvestList(driver, options = {}) {
   let cappedOut = false;
 
   for (; scrolls <= maxScrolls; scrolls += 1) {
-    // Read what is on screen RIGHT NOW, before scrolling destroys it.
-    for (const row of driver.rows() || []) {
+    // Read what is on screen RIGHT NOW, before scrolling destroys it. Every driver method is awaited
+    // so the SAME reader works with a synchronous fake driver in tests and a real (async) browser
+    // driver in production — awaiting a plain value is a no-op.
+    for (const row of (await driver.rows()) || []) {
       if (row && row.key != null && !collected.has(row.key)) collected.set(row.key, row);
     }
 
@@ -40,10 +42,10 @@ async function harvestList(driver, options = {}) {
       break;
     }
 
-    const before = driver.scrollHeight();
+    const before = await driver.scrollHeight();
     await driver.scrollStep();
     if (driver.settle) await driver.settle();
-    const after = driver.scrollHeight();
+    const after = await driver.scrollHeight();
 
     // Stall = the list stopped growing. A COUNTER, not a single equality, so one slow network batch
     // does not fool us into stopping early.
