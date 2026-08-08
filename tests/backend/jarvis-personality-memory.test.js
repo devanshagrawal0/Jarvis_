@@ -32,13 +32,13 @@ afterEach(() => {
 
 test("operational states produce natural and evidence-aware JARVIS responses", () => {
   const cases = [
-    [RESPONSE_STATES.SUCCESS, { result: "The project is open" }, /Done, sir/i],
-    [RESPONSE_STATES.APPROVAL, { action: "the email" }, /Approve it and I will proceed/i],
-    [RESPONSE_STATES.PARTIAL_SUCCESS, { result: "the draft", blocker: "Gmail is not connected" }, /completed the draft.+but Gmail/i],
-    [RESPONSE_STATES.PROVIDER_MISSING, { provider: "Google Workspace", action: "sending the email" }, /not connected yet/i],
-    [RESPONSE_STATES.FAILURE, { blocker: "the browser session expired" }, /did not complete/i],
-    [RESPONSE_STATES.CLARIFICATION, { question: "Which Alex do you mean, sir?" }, /Which Alex/i],
-    [RESPONSE_STATES.RECOVERY, { result: "I retained the verified scan results" }, /first attempt did not complete/i],
+    [RESPONSE_STATES.SUCCESS, { result: "The project is open" }, /Done\. The project is open/i],
+    [RESPONSE_STATES.APPROVAL, { action: "the email" }, /Approve it and I'll proceed/i],
+    [RESPONSE_STATES.PARTIAL_SUCCESS, { result: "the draft", blocker: "Gmail is not connected" }, /got the draft done, but Gmail/i],
+    [RESPONSE_STATES.PROVIDER_MISSING, { provider: "Google Workspace", action: "sending the email" }, /connected yet/i],
+    [RESPONSE_STATES.FAILURE, { blocker: "the browser session expired" }, /didn't complete/i],
+    [RESPONSE_STATES.CLARIFICATION, { question: "Which Alex do you mean?" }, /Which Alex/i],
+    [RESPONSE_STATES.RECOVERY, { result: "I retained the verified scan results" }, /first attempt didn't complete/i],
   ];
   for (const [state, context, expected] of cases) {
     const response = renderOperationalResponse(state, context);
