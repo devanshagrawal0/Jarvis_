@@ -25,27 +25,64 @@ test("parsePeople ignores Instagram's own paths, not just some of them", () => {
   assert.deepEqual(parsePeople(els), []);
 });
 
-test("parseInbox extracts threads by their /direct/t/<id> link, deduped", () => {
-  const snap = { elements: [
-    { role: "link", href: "/direct/t/111/", name: "aj  hey there · 40m" },
-    { role: "link", href: "/direct/t/222/", name: "group chat  ok · 2h" },
-    { role: "link", href: "/direct/t/111/", name: "aj  hey there · 40m" }, // dup
-    { role: "link", href: "/aj/", name: "aj" }, // profile link, not a thread
-  ] };
-  const out = parseInbox(snap);
-  assert.equal(out.count, 2);
-  assert.deepEqual(out.threads.map((t) => t.threadId), ["111", "222"]);
-  assert.ok(out.threads[0].label.includes("aj"), "the raw label is surfaced as-is");
+// The REAL inbox, captured live (Wave 1 validation): thread rows are role=button divs whose name is
+// the whole row; the notes carousel at the top are also buttons but have no timestamp. These exact
+// strings came off the live page.
+const REAL_INBOX = { elements: [
+  // notes carousel + controls — must be EXCLUDED
+  { role: "button", name: "What's on your mind? Your note" },
+  { role: "button", name: "I’ve a yoshi Yashi" },
+  { role: "button", name: "Happy Birthday @maryamzaafrann!! Miss you!! 🥳 Cyrus Maram" },
+  { role: "button", name: "New message" },
+  { role: "button", name: "Next" },
+  { role: "link", name: "Requests", href: "https://www.instagram.com/direct/requests/" },
+  // real conversation rows
+  { role: "button", name: "aj You: diagnostic timing test · 2h" },
+  { role: "button", name: "Tg Tg sent an attachment. · 6h Unread" },
+  { role: "button", name: "Raghav Mittal You: koi na · 20h" },
+  { role: "button", name: "Vaishant Reddy Vaishant sent an attachment. · 23h Unread" },
+  { role: "button", name: "Tg 2 new messages · 2d Unread" },
+  { role: "button", name: "chetas_privvv and Vaishant Reddy 2 new messages · 4d Unread" },
+  { role: "button", name: "Active Yash Active now" },
+  { role: "button", name: "Ignacio Ignacio sent an attachment. · 1w Unread" },
+  { role: "button", name: "Mayan Agrawal Mayan sent an attachment. · 1w Unread" },
+] };
+
+test("parseInbox finds the real conversation rows and excludes notes/controls", () => {
+  const out = parseInbox(REAL_INBOX);
+  assert.equal(out.count, 9, "9 real threads, not the notes carousel or the New-message button");
+  // The exact note/control labels must not appear among the parsed threads. (Checked as full-string
+  // equality, not substring — "New message" is a substring of the real thread "2 new messages".)
+  const noteLabels = new Set([
+    "What’s on your mind? Your note", "I’ve a yoshi Yashi",
+    "Happy Birthday @maryamzaafrann!! Miss you!! 🥳 Cyrus Maram", "New message", "Next", "Requests",
+  ]);
+  for (const t of out.threads) assert.ok(!noteLabels.has(t.label), `note leaked: ${t.label}`);
 });
 
-test("parseInbox does NOT fake a participant name it cannot reliably extract", () => {
-  // Name/snippet live in separate elements on the real page; guessing them from row text is the
-  // kind of over-fitting that produces confident-but-wrong output. Honest until the live read wires
-  // the real structure.
-  const snap = { elements: [{ role: "link", href: "/direct/t/1/", name: "aj hey there · 40m" }] };
-  const t = parseInbox(snap).threads[0];
-  assert.equal(t.name, null);
-  assert.equal(t.unreadKnown, false);
+test("parseInbox reads unread reliably (it IS in the row text)", () => {
+  const byLabel = Object.fromEntries(parseInbox(REAL_INBOX).threads.map((t) => [t.label, t]));
+  assert.equal(byLabel["Tg Tg sent an attachment. · 6h Unread"].unread, true);
+  assert.equal(byLabel["aj You: diagnostic timing test · 2h"].unread, false);
+});
+
+test("parseInbox extracts a best-effort name for the clear cases", () => {
+  const names = parseInbox(REAL_INBOX).threads.map((t) => t.name);
+  assert.ok(names.includes("aj"));
+  assert.ok(names.includes("Raghav Mittal"));
+  assert.ok(names.includes("Yash"));      // from "Active Yash Active now"
+  assert.ok(names.includes("Tg"));        // from "Tg 2 new messages" (dupe leading word collapsed)
+});
+
+test("parseInbox flags a group conversation", () => {
+  const group = parseInbox(REAL_INBOX).threads.find((t) => /chetas_privvv/.test(t.label));
+  assert.equal(group.isGroup, true);
+});
+
+test("parseInbox surfaces the full row label as the source of truth", () => {
+  const aj = parseInbox(REAL_INBOX).threads.find((t) => t.name === "aj");
+  assert.equal(aj.label, "aj You: diagnostic timing test · 2h");
+  assert.equal(aj.time, "2h");
 });
 
 test("classifyNotification labels each row by its verb", () => {

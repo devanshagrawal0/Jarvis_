@@ -31,34 +31,58 @@ function parsePeople(elements) {
   return [...seen.values()];
 }
 
-// A DM inbox into threads. Each thread is a link to /direct/t/<id>/; the row's text carries the
-// participant name(s) and the last-message snippet. Unread state on Instagram is only a visual dot
-// with no clean attribute, so it is reported best-effort and flagged, never asserted.
-const THREAD_HREF = /\/direct\/t\/(\d+)\/?/;
+// A DM inbox into threads — rewritten against the REAL Instagram DOM (validated live, Wave 1).
+//
+// Confirmed reality: a thread row is NOT an anchor with a /direct/t/ href (there is none). It is a
+// `div[role="button"]` whose accessible NAME is the whole row, e.g.
+//   "aj You: diagnostic timing test · 2h"
+//   "Tg Tg sent an attachment. · 6h Unread"
+//   "Active Yash Active now"
+// The notes carousel at the top (song lyrics, birthday notes) are ALSO role=button divs, so we tell
+// conversations apart by the markers only a conversation row has: a "· <time>" stamp, the word
+// "Unread", "Active now", or "N new messages". And — correcting an earlier wrong assumption — the
+// unread state IS in the text ("Unread"), so we can report it reliably after all.
+//
+// The participant name and the message snippet are concatenated into that one string with no clean
+// separator, so a precise split is not reliable. The full row LABEL is the source of truth (and is
+// exactly what a person sees in the app); `name` is a clearly best-effort leading extraction.
+
+const THREAD_SIGNAL = /(·\s*\d+\s*[smhdwy])|(\bUnread\b)|(\bActive\s+now\b)|(\bActive\s+\d+\s*[a-z]+ ago\b)|(\b\d+\s+new messages?\b)/i;
+const TIME_STAMP = /·\s*(\d+\s*[smhdwy])\b/i;
+
+function bestEffortName(label) {
+  let s = String(label || "");
+  s = s.replace(/·\s*\d+\s*[smhdwy].*/i, "");         // drop "· 2h ..." and everything after
+  s = s.replace(/\bUnread\b/gi, "");
+  s = s.replace(/\bActive\s+(now|\d+\s*[a-z]+ ago)\b/gi, ""); // drop presence status
+  s = s.replace(/^\s*Active\s+/i, "");                // drop a leading "Active " presence prefix
+  s = s.trim();
+  // Cut at the snippet markers: your reply, an attachment note, or "N new messages".
+  s = s.split(/\s+(?:You:|sent\b|\d+\s+new messages?\b)/i)[0].trim();
+  // Instagram often repeats the sender name at the snippet start ("Tg Tg sent…"); drop an immediate
+  // duplicate leading word.
+  s = s.replace(/^(\S+)\s+\1\b/, "$1");
+  return s || null;
+}
 
 function parseInbox(snapshot) {
   const elements = (snapshot && snapshot.elements) || [];
   const threads = [];
   const seen = new Set();
   for (const el of elements) {
-    const href = String(el.href || "");
-    const m = THREAD_HREF.exec(href);
-    if (!m) continue;
-    const threadId = m[1];
-    if (seen.has(threadId)) continue;
-    seen.add(threadId);
+    const role = String(el.role || "").toLowerCase();
+    if (role !== "button") continue;
+    const label = textOf(el);
+    if (!THREAD_SIGNAL.test(label)) continue; // a real conversation row, not a note or a control
+    if (seen.has(label)) continue;
+    seen.add(label);
+    const timeMatch = TIME_STAMP.exec(label);
     threads.push({
-      threadId,
-      href,
-      // Solid: the thread id and its link. NOT guessed: the participant name and the snippet — in a
-      // real inbox those are separate elements, and splitting the row text for them is fragile
-      // guessing (it already broke on normalized whitespace). We surface the raw accessible label and
-      // leave name/snippet for the live-read validation to wire against the real DOM. Honest beats a
-      // pretty parse that's wrong.
-      label: textOf(el),
-      name: null,     // filled once the real inbox structure is confirmed (Wave 1 live read)
-      snippet: null,
-      unreadKnown: false, // no reliable unread signal from the snapshot alone
+      label,                                   // the whole row — the reliable source of truth
+      name: bestEffortName(label),             // best-effort leading name (not guaranteed exact)
+      unread: /\bUnread\b/i.test(label),       // reliable: the word is in the row
+      isGroup: /\band\b/i.test(bestEffortName(label) || ""),
+      time: timeMatch ? timeMatch[1].replace(/\s+/g, "") : (/\bActive\s+now\b/i.test(label) ? "now" : null),
     });
   }
   return { count: threads.length, threads };
