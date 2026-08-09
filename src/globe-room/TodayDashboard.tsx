@@ -76,6 +76,10 @@ export function TodayDashboard({ data, loading, onExpand, onRefresh }: { data: a
   const baseHr = Math.max(0, Math.min(19, hr - 1));
   const ticks = [0, 1, 2, 3, 4].map((k) => ((baseHr + k) % 24));
   const nowPct = 15 + ((hourIn(nowIso, tz) + (Number(new Date(nowIso).getMinutes()) / 60) - baseHr) / 4) * 70;
+  // Plot real events on the ruler (only those inside the visible 5-hour window). No invented waveform.
+  const eventDots = timeline
+    .map((e: any) => { const h = hourIn(e.startAt, tz) + (Number(new Date(e.startAt).getMinutes()) / 60); const pct = 15 + ((h - baseHr) / 4) * 70; return { pct, x: 4 * pct }; })
+    .filter((d) => d.pct >= 4 && d.pct <= 96);
 
   // ── Wave 2: natural-language quick capture ──────────────────────────────────
   const capRef = useRef<HTMLInputElement>(null);
@@ -97,12 +101,13 @@ export function TodayDashboard({ data, loading, onExpand, onRefresh }: { data: a
     const t = text.trim();
     if (!t || busy) return;
     setBusy(true);
+    setCap("");                                                    // clear immediately so a second Enter can't resend the same text
     try {
       const r = await fetch("/api/atlas/capture", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text: t, tz }) });
       const d = await r.json().catch(() => ({}));
-      if (d && d.ok) { setCap(""); showFlash(true, d.message || "Captured."); onRefresh?.(); }
-      else { command(t); setCap(""); showFlash(true, "Not a task or reminder — sent to Jarvis."); }   // let the brain handle non-capture text
-    } catch { showFlash(false, "Couldn't reach the day-model. Is the backend running?"); }
+      if (d && d.ok) { showFlash(true, d.message || "Captured."); onRefresh?.(); }
+      else { command(t); showFlash(true, "Not a task or reminder — sent to Jarvis."); }   // let the brain handle non-capture text
+    } catch { setCap(t); showFlash(false, "Couldn't reach the day-model. Is the backend running?"); }  // restore text so it isn't lost
     finally { setBusy(false); }
   };
 
@@ -231,12 +236,18 @@ export function TodayDashboard({ data, loading, onExpand, onRefresh }: { data: a
             <div className="td-timeline">
               <div className="td-axis">{ticks.map((h, i) => <span key={i}>{i === 1 ? <span className="td-now-pill">NOW</span> : `${((h % 12) || 12)} ${h < 12 ? "AM" : "PM"}`}</span>)}</div>
               <svg className="td-wave" viewBox="0 0 400 54" preserveAspectRatio="none">
-                <defs><linearGradient id="wv" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stopColor="#45e0ff" /><stop offset="1" stopColor="#46e6b0" /></linearGradient></defs>
-                <path d="M0 40 L400 40" stroke="rgba(120,200,240,.12)" strokeWidth="1" />
-                <path d={Array.from({ length: 41 }, (_, i) => { const x = i * 10; const y = 40 - Math.abs(Math.sin(i * 0.7)) * (i < 20 ? 6 + i : 26 - (i - 20)) * 0.6; return `${i ? "L" : "M"}${x} ${Math.max(8, y)}`; }).join(" ")} fill="none" stroke="url(#wv)" strokeWidth="2" strokeLinecap="round" />
-                <circle cx={4 * (nowPct)} cy="26" r="4" fill="#45e0ff" />
-                <circle cx={4 * (nowPct)} cy="26" r="9" fill="none" stroke="#45e0ff" strokeOpacity=".4" />
+                <path d="M8 40 L392 40" stroke="rgba(120,200,240,.16)" strokeWidth="1.5" strokeLinecap="round" />
+                {/* real events plotted on the hour ruler — no invented waveform */}
+                {eventDots.map((d, i) => (
+                  <g key={i}>
+                    <line x1={d.x} y1="40" x2={d.x} y2="18" stroke="rgba(69,224,255,.5)" strokeWidth="1.5" />
+                    <circle cx={d.x} cy="16" r="4.5" fill="#45e0ff" />
+                  </g>
+                ))}
+                <circle cx={4 * nowPct} cy="40" r="4" fill="#46e6b0" />
+                <circle cx={4 * nowPct} cy="40" r="9" fill="none" stroke="#46e6b0" strokeOpacity=".45" />
               </svg>
+              {!timeline.length && <div className="td-timeline-empty">No events on today's timeline.</div>}
             </div>
           </div>
           <div className="td-panel">

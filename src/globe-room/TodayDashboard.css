@@ -175,7 +175,8 @@
 .td-timeline { padding: 0 14px 11px; }
 .td-axis { display: flex; justify-content: space-between; font-size: 9.5px; color: var(--td-mut); margin: 5px 0 6px; }
 .td-now-pill { padding: 2px 8px; border-radius: 6px; background: rgba(79,227,255,.18); border: 1px solid rgba(79,227,255,.42); color: var(--td-cyan); font: 700 8px Orbitron; box-shadow: 0 0 12px rgba(79,227,255,.24); }
-.td-wave { width: 100%; height: 42px; }
+.td-wave { width: 100%; height: 42px; position: relative; }
+.td-timeline-empty { margin-top: -30px; text-align: center; font-size: 11px; color: var(--td-mut2); position: relative; pointer-events: none; }
 .td-wait { padding: 0 15px 14px; }
 .td-person { display: flex; align-items: center; gap: 11px; padding: 10px 12px; border-radius: 12px; background: linear-gradient(155deg, rgba(18,37,60,.5), rgba(8,15,28,.55)); border: 1px solid var(--td-line); box-shadow: var(--hi); }
 .td-avatar { width: 38px; height: 38px; border-radius: 50%; display: grid; place-items: center; font: 700 12px Orbitron; color: #05121c; background: linear-gradient(145deg, var(--td-cyan), var(--td-purple)); flex-shrink: 0; box-shadow: 0 0 14px rgba(79,227,255,.3); }

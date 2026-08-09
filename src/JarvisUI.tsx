@@ -565,6 +565,35 @@ export function JarvisUI() {
       setSynapseOpen(true);
       return;
     }
+
+    // ATLAS quick capture — a task / reminder / event / note said in plain words lands in Today
+    // DETERMINISTICALLY, without waiting on the model to pick the atlas_capture tool. The gate is
+    // conservative (unambiguous imperatives, or a reminder/event that carries a time), so ordinary
+    // questions still go to the brain; if the server doesn't recognise it, we fall straight through.
+    if (!files.length) {
+      const TIME_HINT = /\b(at\s*\d{1,2}(:\d{2})?\s*(a\.?m\.?|p\.?m\.?)?|\d{1,2}(:\d{2})?\s*(a\.?m\.?|p\.?m\.?)|in\s+\d+\s*(min|minute|hour|hr)s?|tomorrow|tonight|today|this\s+(morning|afternoon|evening)|noon|midnight|on\s+(mon|tue|wed|thu|fri|sat|sun)|(mon|tues|wednes|thurs|fri|satur|sun)day|\b(morning|afternoon|evening)\b)\b/i;
+      const looksLikeCapture =
+        /^\s*(add (a |an )?(task|todo|to-?do)|new task|to-?do|task:)/i.test(text)
+        || /^\s*(note:|jot|take (a|down).*note|make a note|new note)/i.test(text)
+        || /^\s*(schedule\b|add (an? )?(event|meeting|appointment))/i.test(text)
+        || (/\b(remind me|set (a |up a )?reminder|nudge me|don'?t let me forget)\b/i.test(text) && TIME_HINT.test(text))
+        || /\b(said (he|she|they)('| wi)ll|promised (he|she|they)|waiting (on|for)\s+[A-Z]|owes me)\b/i.test(text)
+        || (/\b(meeting|lunch|dinner|coffee|appointment|interview|flight|class|standup|sync)\b/i.test(text) && TIME_HINT.test(text));
+      if (looksLikeCapture) {
+        try {
+          const res = await fetch("/api/atlas/capture", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text }) });
+          const cap = await res.json().catch(() => ({}));
+          if (cap && cap.ok) {
+            setResponse(cap.message || "Captured.");
+            setMeta({ model: "atlas" } as BrainResponse);
+            setVisible(true);
+            document.dispatchEvent(new CustomEvent("jarvis:open-widget", { detail: { id: "today" } }));
+            return;
+          }
+        } catch { /* backend unreachable — fall through to the brain */ }
+      }
+    }
+
     abortRef.current?.abort();
     abortRef.current = new AbortController();
 
