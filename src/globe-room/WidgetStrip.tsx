@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "../api";
 import { KalshiChip, KalshiCard, KalshiExpanded } from "./KalshiWidget";
+import { TodayDashboard } from "./TodayDashboard";
 import { SpatialWidgetFrame, type SpatialWidgetState } from "./SpatialWidgetFrame";
 import { DeviceMeshCommandCenter } from "./DeviceMeshCommandCenter";
 import { SynapseWidget } from "../rooms/synapse/SynapseWidget";
@@ -1027,16 +1028,17 @@ export function WeatherCard({ data, loading, onClose, onExpand }: {
   );
 }
 
-export function TodayCard({ data, loading, onClose, onExpand }: {
-  data: any; loading: boolean; onClose: () => void; onExpand: () => void;
+export function TodayCard({ data, loading, onClose, onExpand, embedded }: {
+  data: any; loading: boolean; onClose: () => void; onExpand: () => void; embedded?: boolean;
 }) {
   const t = (iso?: string | null) => { try { return iso ? new Date(iso).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }) : ""; } catch { return ""; } };
   const now = data?.nowNext?.now, next = data?.nowNext?.next;
   const top: any[] = data?.topOfMind ?? [];
   const counts = data?.counts ?? {};
+  // embedded = the "normal" widget state inside a SpatialWidgetFrame: fill the frame, no own chrome.
   return (
-    <div style={CARD_STYLE}>
-      <CardHeader icon="◔" title="Today" onClose={onClose} onExpand={onExpand} />
+    <div style={embedded ? { width: "100%", height: "100%", overflow: "auto", background: "transparent", color: "#dff4ff" } : CARD_STYLE}>
+      {!embedded && <CardHeader icon="◔" title="Today" onClose={onClose} onExpand={onExpand} />}
       <div style={CARD_BODY_STYLE}>
         {loading ? <LoadingRows /> : (
           <>
@@ -2027,7 +2029,9 @@ export function WidgetStrip({ mode }: { mode: string; showChips?: boolean }) {
     switch (id) {
       case "runtime":     return <RuntimeWidget mode={state.mode} initialData={data} onRefresh={() => void refresh(id)} />;
       case "contacts":    return <ContactsCommandCenter data={data} loading={loading} onRefresh={() => void refresh(id)} />;
-      case "today":       return <TodayCommandCenter data={data} loading={loading} />;
+      case "today":       return state.mode === "expanded"
+                            ? <TodayDashboard data={data} loading={loading} onExpand={() => patchWindow(state.id, { mode: "expanded" })} /> // focused view: full reference dashboard
+                            : <TodayCard {...props} embedded onExpand={() => patchWindow(state.id, { mode: "expanded" })} />;            // normal view: compact card
       case "profile":     return <ProfileCommandCenter data={data} loading={loading} />;
       case "weather":     return <WeatherCommandCenter data={data} loading={loading} />;
       case "vitals":      return <VitalsCommandCenter data={data} loading={loading} />;
