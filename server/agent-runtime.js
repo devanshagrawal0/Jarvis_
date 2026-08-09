@@ -52,7 +52,10 @@ function createAgentRuntime({ getSettings, toolGateway, codeKnowledge, memorySto
     const deepResearch = /\b(deep research|research report|investigate|source-backed|source backed|citations?|evidence|read sources?|compare sources?|summarize (?:this )?(?:url|link|page|article)|read (?:this )?(?:url|link|page|article))\b/.test(lower)
       || /https?:\/\/[^\s)]+/i.test(text);
     const action = deviceMesh || localObserve || pcGraph || agentSwarm || skillAutopilot || marketDiscovery || workComposer || /\b(open|close|launch|send|write|draft|focus|click|type|create|deploy|run|search(?:\s+(?:for|my|on|in))?|check my|remember|save)\b/.test(lower);
-    const fresh = marketDiscovery || deepResearch || sportsSchedule || /\b(latest|recent|most recent|today|tomorrow|current|right now|online|internet|news|score|schedule|price|weather|research|look up|google|web|events?|things to do|who is|when is|where is|who won|finals|championship)\b/.test(lower);
+    // Bare time words (today/tomorrow/current/right now) are NOT fresh signals on their own — "im
+    // tired today" is conversation, not a live-data request. Real fresh queries carry a topical
+    // signal (news/weather/price/score/latest/who won), which is what this matches.
+    const fresh = marketDiscovery || deepResearch || sportsSchedule || /\b(latest|recent|most recent|online|internet|news|headline|score|standings|schedule|fixtures?|price|quote|weather|forecast|temperature|research|look up|google|web search|search the web|events?|things to do|who is|when is|where is|who won|finals|championship)\b/.test(lower);
     const privateAccount = kalshiAccountPrompt || /\b(my (kalshi|portfolio|positions?|bets?|orders?|fills?|balance)|latest (kalshi )?(bet|fill|order)|best (kalshi )?position)\b/.test(lower);
     const personal = privateAccount || /\b(i like|i prefer|my favorite|about me|remember|what do you know about me|always|never|when i ask)\b/.test(lower);
     const followUp = text.trim().split(/\s+/).length < 8 || /\b(that|it|them|those|earlier|previous|i meant|actually)\b/.test(lower);

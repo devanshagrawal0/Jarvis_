@@ -20,7 +20,10 @@ function rawUserMessage(prompt) {
 function needsFreshInfo(text) {
   // Require genuine LIVE intent — a bare "market"/"stock"/"shares" is often definitional
   // ("what is prediction market arbitrage"), so those alone must NOT trigger retrieval.
-  return /\b(latest|today|currently|current|right now|live|online|breaking|news|headline|weather|forecast|temperature|score|standings|schedule|fixture|price|quote|fell|fall|falling|rose|rising|rally|crash|surge|surged|plunge|plunged|jumped|slump|earnings|results|dividend|recent|this (?:week|morning|month|year)|new video)\b/i.test(String(text || ""));
+  // Bare time words (today/currently/current/right now/this week) are NOT live intent on their own —
+  // "im tired today" is conversation, not a live-data request. Every topical signal below is kept;
+  // only the standalone time words were removed.
+  return /\b(latest|live|online|breaking|news|headline|weather|forecast|temperature|score|standings|schedule|fixture|price|quote|fell|fall|falling|rose|rising|rally|crash|surge|surged|plunge|plunged|jumped|slump|earnings|results|dividend|recent|new video)\b/i.test(String(text || ""));
 }
 
 module.exports = { rawUserMessage, needsFreshInfo };
