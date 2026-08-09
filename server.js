@@ -12940,7 +12940,10 @@ ${entryText}`;
   }
 
   if (req.method === "GET" && pathname === "/api/oauth/google/start") {
-    sendJson(res, 200, providers.google.start({ sessionId: req.jarvisSession.id }));
+    // Wave 4 — progressive scopes: ?bundles=gmail_send,calendar_read grants only those (identity is
+    // always included; prior grants are preserved). No param keeps the legacy Gmail-only behaviour.
+    const bundles = (url.searchParams.get("bundles") || "").split(",").map((s) => s.trim()).filter(Boolean);
+    sendJson(res, 200, providers.google.start({ sessionId: req.jarvisSession.id, bundles }));
     return;
   }
 

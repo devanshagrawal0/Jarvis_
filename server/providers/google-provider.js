@@ -1,13 +1,12 @@
 const { OAuth2Client } = require("google-auth-library");
 const crypto = require("crypto");
 const { cleanString, createOAuthStateStore, errorWithStatus, fetchJson } = require("./provider-utils");
+const scopeModel = require("./google-scopes");
 
-const GOOGLE_SCOPES = [
-  "openid",
-  "email",
-  "https://www.googleapis.com/auth/gmail.compose",
-  "https://www.googleapis.com/auth/gmail.send",
-];
+// Legacy default = the original Gmail send/draft grant, so an owner who connected before Wave 4 (or
+// who calls start with no bundles) keeps exactly today's behaviour.
+const GOOGLE_SCOPES = scopeModel.scopesForBundles(["gmail_send"]);
+const DEFAULT_BUNDLES = ["gmail_send"];
 
 function createGoogleProvider({
   runtimeDir,
@@ -68,6 +67,7 @@ function createGoogleProvider({
     if (!clientId) missing.push("googleClientId");
     if (!clientSecret) missing.push("googleClientSecret");
     if (!hasAccess && !hasRefresh) missing.push("Google login");
+    const grantedScopeString = String(settings.googleScopes || (hasAccess || hasRefresh ? GOOGLE_SCOPES.join(" ") : ""));
     return {
       connected: Boolean(clientId && clientSecret && (hasAccess || hasRefresh)),
       configured: Boolean(clientId && clientSecret),
@@ -76,26 +76,48 @@ function createGoogleProvider({
       authMode: "oauth2",
       missing,
       canConnect: Boolean(clientId && clientSecret),
-      scopes: String(settings.googleScopes || GOOGLE_SCOPES.join(" ")).split(/\s+/).filter(Boolean),
+      scopes: grantedScopeString.split(/\s+/).filter(Boolean),
+      // Wave 4 — per-service health, granted bundles, and the catalogue of connectable capabilities.
+      services: scopeModel.serviceHealth(grantedScopeString),
+      grantedBundles: scopeModel.bundlesFromGranted(grantedScopeString),
+      catalog: Object.entries(scopeModel.BUNDLES).map(([key, b]) => ({ key, service: b.service, level: b.level, label: b.label, why: b.why })),
     };
   }
 
-  function start({ sessionId }) {
+  // Progressive: request identity + only the named capability bundles. include_granted_scopes keeps
+  // whatever was granted before, so connecting Calendar never re-prompts (or drops) Gmail, and a
+  // Gmail-only owner never grants Calendar. `bundles` defaults to the legacy Gmail grant.
+  function start({ sessionId, bundles } = {}) {
     const settings = getSettings();
     const oauth = client(settings);
     const callback = redirectUri(settings);
     const state = stateStore.issue("google", sessionId, callback);
+    const requested = Array.isArray(bundles) && bundles.length ? bundles.filter((b) => scopeModel.BUNDLES[b]) : DEFAULT_BUNDLES;
+    const scope = scopeModel.scopesForBundles(requested);
     return {
       authorizationUrl: oauth.generateAuthUrl({
         access_type: "offline",
         prompt: "consent",
         include_granted_scopes: true,
-        scope: GOOGLE_SCOPES,
+        scope,
         state,
       }),
       redirectUri: callback,
+      requestedBundles: requested,
+      requestedScopes: scope,
+      explanations: scopeModel.explainScopes(scope),
       expiresInSeconds: 600,
     };
+  }
+
+  // Fail a capability cleanly (412) when its scope was never granted or has been revoked — so the
+  // affected feature degrades on its own instead of surfacing a raw Google 403.
+  function requireCapability(bundleKey, label) {
+    const scopes = getSettings().googleScopes;
+    if (!scopes) return;   // legacy/unknown grant — don't block; Google itself still enforces server-side
+    if (!scopeModel.grants(scopes, bundleKey)) {
+      throw errorWithStatus(`Google ${label} isn't connected. Grant the "${scopeModel.BUNDLES[bundleKey]?.label || bundleKey}" scope from Connections.`, 412);
+    }
   }
 
   async function callback({ code, state, sessionId }) {
@@ -163,6 +185,7 @@ function createGoogleProvider({
   }
 
   async function sendEmail(message) {
+    requireCapability("gmail_send", "email sending");
     const normalized = normalizedMessage(message);
     const token = await accessToken();
     const { data } = await fetchJson(fetchImpl, "https://gmail.googleapis.com/gmail/v1/users/me/messages/send", {
@@ -272,7 +295,7 @@ function createGoogleProvider({
     return { disconnected: true };
   }
 
-  return { accessToken, callback, createDraft, deleteDraft, disconnect, getDraft, redirectUri, sendDraft, sendEmail, start, status, test };
+  return { accessToken, callback, createDraft, deleteDraft, disconnect, getDraft, redirectUri, requireCapability, sendDraft, sendEmail, start, status, test };
 }
 
 module.exports = { createGoogleProvider, GOOGLE_SCOPES };
