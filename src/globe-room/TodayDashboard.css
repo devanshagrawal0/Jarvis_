@@ -162,8 +162,28 @@
 .td-task-main { flex: 1; min-width: 0; }
 .td-task-main strong { display: block; font-size: 13.5px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .td-task-main small { display: block; margin-top: 2px; font-size: 10px; color: var(--td-mut); }
-.td-icon-btn { background: none; border: none; color: var(--td-mut); cursor: pointer; font-size: 15px; padding: 3px; }
-.td-icon-btn:hover { color: var(--td-cyan); }
+.td-icon-btn { background: none; border: none; color: var(--td-mut); cursor: pointer; font-size: 14px; padding: 3px 5px; border-radius: 7px; transition: .14s; }
+.td-icon-btn:hover { color: var(--td-cyan); background: rgba(79,227,255,.1); }
+/* Wave 3 — complete checkbox on a task row */
+.td-check { flex-shrink: 0; width: 26px; height: 26px; border-radius: 50%; cursor: pointer; background: transparent; border: 2px solid rgba(177,139,255,.55); position: relative; transition: .16s; }
+.td-check.hi { border-color: rgba(255,191,98,.6); }
+.td-check:hover { background: rgba(79,227,255,.14); border-color: var(--td-cyan); box-shadow: 0 0 12px rgba(79,227,255,.3); }
+.td-check:hover::after { content: "✓"; position: absolute; inset: 0; display: grid; place-items: center; font-size: 13px; color: var(--td-cyan); }
+.td-task.is-busy, .td-person.is-busy, .td-agenda-row.is-busy { opacity: .4; pointer-events: none; transition: opacity .2s; }
+/* Wave 3 — waiting-on pill actions */
+.td-pill-btn { flex-shrink: 0; padding: 5px 10px; border-radius: 8px; cursor: pointer; background: rgba(74,166,255,.1); border: 1px solid rgba(74,166,255,.32); color: #bfe0ff; font: 600 9.5px Orbitron, sans-serif; letter-spacing: .04em; transition: .14s; }
+.td-pill-btn:hover { background: rgba(74,166,255,.2); }
+.td-pill-btn.ok { background: rgba(70,230,176,.1); border-color: rgba(70,230,176,.34); color: #b6f4df; }
+.td-pill-btn.ok:hover { background: rgba(70,230,176,.2); }
+/* Wave 3 — up-next agenda (events + reminders, cancelable) */
+.td-agenda { padding: 2px 13px 12px; display: flex; flex-direction: column; gap: 6px; }
+.td-agenda-row { display: flex; align-items: center; gap: 10px; padding: 7px 10px; border-radius: 10px; background: linear-gradient(155deg, rgba(18,37,60,.42), rgba(8,15,28,.5)); border: 1px solid var(--td-line); box-shadow: var(--hi); }
+.td-agenda-ic { flex-shrink: 0; width: 24px; height: 24px; border-radius: 7px; display: grid; place-items: center; font-size: 13px; }
+.td-agenda-ic.event { color: var(--td-cyan); background: rgba(79,227,255,.1); border: 1px solid rgba(79,227,255,.24); }
+.td-agenda-ic.reminder { color: var(--td-green); background: rgba(70,230,176,.1); border: 1px solid rgba(70,230,176,.26); }
+.td-agenda-main { flex: 1; min-width: 0; }
+.td-agenda-main strong { display: block; font-size: 12.5px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.td-agenda-main small { display: block; margin-top: 1px; font-size: 10px; color: var(--td-mut); }
 .td-tom-actions { display: flex; gap: 9px; padding: 7px 13px 12px; }
 .td-oline { padding: 8px 13px; border-radius: 9px; cursor: pointer; display: inline-flex; align-items: center; gap: 7px; font: 600 8.5px Orbitron; letter-spacing: .07em; text-transform: uppercase; background: linear-gradient(155deg, rgba(79,227,255,.12), rgba(79,227,255,.04)); border: 1px solid rgba(79,227,255,.3); color: var(--td-cyan); box-shadow: var(--hi); transition: .16s; }
 .td-oline:hover { background: rgba(79,227,255,.2); }

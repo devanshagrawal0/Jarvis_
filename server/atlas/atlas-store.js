@@ -149,6 +149,7 @@ function createAtlasStore({ runtimeDir, file } = {}) {
     return db.prepare("SELECT * FROM atlas_events WHERE start_at < ? AND (end_at IS NULL OR end_at > ?) OR (start_at >= ? AND start_at <= ?) ORDER BY start_at")
       .all(endIso, startIso, startIso, endIso).map(eventRow);
   }
+  function deleteEvent(id) { return db.prepare("DELETE FROM atlas_events WHERE id=?").run(id).changes > 0; }
 
   // ── Reminders (durable, fire-exactly-once) ────────────────────────────────
   const remRow = (r) => r && ({ id: r.id, title: r.title, fireAt: r.fire_at, tz: r.tz, taskId: r.task_id, recurrence: j(r.recurrence), source: { kind: r.source_kind, ref: r.source_ref }, firedAt: r.fired_at, cancelledAt: r.cancelled_at, createdAt: r.created_at });
@@ -196,7 +197,7 @@ function createAtlasStore({ runtimeDir, file } = {}) {
   return {
     db,
     createTask, getTask, updateTask, listTasks, waitingOnMe, waitingOnThem,
-    createEvent, eventsBetween,
+    createEvent, eventsBetween, deleteEvent,
     createReminder, cancelReminder, pendingReminders, claimDueReminders,
     upsertPerson, listPeople,
     addNote, listNotes,

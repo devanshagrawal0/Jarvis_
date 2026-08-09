@@ -6840,6 +6840,7 @@ async function handleApi(req, res, pathname, url) {
         topOfMind,
         counts: { openTasks: openTasks.length, waitingOnThem: atlasStore.waitingOnThem().length, pendingReminders: atlasStore.pendingReminders().length },
         waitingOnThem: atlasStore.waitingOnThem(10),
+        reminders: atlasStore.pendingReminders().slice(0, 10),   // Wave 3 — so the board can list + cancel them
       });
     } catch (e) { sendJson(res, 500, { available: false, error: String(e && e.message || e) }); }
     return;
@@ -6900,6 +6901,12 @@ async function handleApi(req, res, pathname, url) {
     catch (e) { sendJson(res, 400, { error: String(e && e.message || e) }); }
     return;
   }
+  { const m = pathname.match(/^\/api\/atlas\/events\/([^/]+)$/);
+    if (m && req.method === "DELETE") {
+      if (!atlasStore) { sendJson(res, 503, { error: "atlas unavailable" }); return; }
+      try { sendJson(res, 200, { ok: atlasStore.deleteEvent(m[1]) }); } catch (e) { sendJson(res, 400, { error: String(e && e.message || e) }); }
+      return;
+    } }
   if (pathname === "/api/atlas/people" && req.method === "GET") { if (!atlasStore) { sendJson(res, 200, { people: [] }); return; } sendJson(res, 200, { people: atlasStore.listPeople() }); return; }
   if (pathname === "/api/atlas/people" && req.method === "POST") { if (!atlasStore) { sendJson(res, 503, { error: "atlas unavailable" }); return; } try { const d = await parseRequestData(req); sendJson(res, 201, { person: atlasStore.upsertPerson(d) }); } catch (e) { sendJson(res, 400, { error: String(e && e.message || e) }); } return; }
   if (pathname === "/api/atlas/notes" && req.method === "GET") { if (!atlasStore) { sendJson(res, 200, { notes: [] }); return; } sendJson(res, 200, { notes: atlasStore.listNotes() }); return; }

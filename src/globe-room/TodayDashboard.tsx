@@ -111,6 +111,28 @@ export function TodayDashboard({ data, loading, onExpand, onRefresh }: { data: a
     finally { setBusy(false); }
   };
 
+  // ── Wave 3: act on the board (complete / snooze / drop / cancel / remove) ────
+  const [pending, setPending] = useState<Set<string>>(new Set());   // ids mid-flight, for row fade
+  const mark = (id: string, on: boolean) => setPending((s) => { const n = new Set(s); on ? n.add(id) : n.delete(id); return n; });
+  const act = async (id: string, run: () => Promise<Response>) => {
+    if (pending.has(id)) return;
+    mark(id, true);
+    try { const r = await run(); if (r.ok) onRefresh?.(); } catch { /* leave the row; a refresh will reconcile */ }
+    finally { mark(id, false); }
+  };
+  const patchTask = (id: string, body: Record<string, unknown>) => act(id, () => fetch(`/api/atlas/tasks/${id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }));
+  const completeTask = (id: string) => patchTask(id, { status: "done" });
+  const dropTask = (id: string) => patchTask(id, { status: "dropped" });
+  const snoozeTask = (id: string) => patchTask(id, { dueAt: new Date(Date.now() + 3600_000).toISOString() });   // +1h
+  const cancelReminder = (id: string) => act(id, () => fetch(`/api/atlas/reminders/${id}/cancel`, { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" }));
+  const removeEvent = (id: string) => act(id, () => fetch(`/api/atlas/events/${id}`, { method: "DELETE" }));
+  // upcoming agenda = today's events + pending reminders, merged and time-sorted, each cancelable
+  const reminders: any[] = data?.reminders || [];
+  const agenda = [
+    ...timeline.map((e: any) => ({ kind: "event", id: e.id, title: e.title, at: e.startAt, loc: e.location })),
+    ...reminders.map((r: any) => ({ kind: "reminder", id: r.id, title: r.title, at: r.fireAt, loc: null })),
+  ].sort((a, b) => String(a.at).localeCompare(String(b.at)));
+
   const stat = (cls: string, ic: ReactNode, label: string, num: number | string, foot: string, a: string) => (
     <div className={`td-stat ${cls}`}>
       <div className="td-stat-top"><span className="td-stat-ic">{ic}</span><span className="chev">›</span></div>
@@ -216,11 +238,11 @@ export function TodayDashboard({ data, loading, onExpand, onRefresh }: { data: a
             <div className="r"><span>Due today or high priority</span><span className="sort">⇅ Sort</span></div>
           </div>
           {top.length ? top.slice(0, 3).map((t) => (
-            <div className="td-task" key={t.id}>
-              <div className={`td-task-badge ${t.priority >= 3 ? "hi" : ""}`}>!!</div>
+            <div className={`td-task ${pending.has(t.id) ? "is-busy" : ""}`} key={t.id}>
+              <button className={`td-check ${t.priority >= 3 ? "hi" : ""}`} title="Mark done" onClick={() => completeTask(t.id)} />
               <div className="td-task-main"><strong>{t.title}</strong><small>{t.dueAt ? `Due ${clockOf(t.dueAt, tz)}` : "No due time"}{t.waitingOn === "them" && t.actor ? ` · waiting on ${t.actor}` : ""}</small></div>
-              <button className="td-icon-btn" title="Save">☆</button>
-              <button className="td-icon-btn" title="More">⋯</button>
+              <button className="td-icon-btn" title="Snooze 1 hour" onClick={() => snoozeTask(t.id)}>⏰</button>
+              <button className="td-icon-btn" title="Dismiss" onClick={() => dropTask(t.id)}>✕</button>
             </div>
           )) : <div className="td-empty">Nothing urgent is due today. Add a task and it shows here.</div>}
           <div className="td-tom-actions">
@@ -232,7 +254,7 @@ export function TodayDashboard({ data, loading, onExpand, onRefresh }: { data: a
         {/* Bottom row */}
         <section className="td-bottom">
           <div className="td-panel">
-            <div className="td-panel-h"><div><div className="t">Timeline</div><div className="n">{timeline.length} today</div></div></div>
+            <div className="td-panel-h"><div><div className="t">Up Next</div><div className="n">{agenda.length ? `${agenda.length} today` : "clear"}</div></div><div className="r">Events &amp; reminders</div></div>
             <div className="td-timeline">
               <div className="td-axis">{ticks.map((h, i) => <span key={i}>{i === 1 ? <span className="td-now-pill">NOW</span> : `${((h % 12) || 12)} ${h < 12 ? "AM" : "PM"}`}</span>)}</div>
               <svg className="td-wave" viewBox="0 0 400 54" preserveAspectRatio="none">
@@ -247,17 +269,26 @@ export function TodayDashboard({ data, loading, onExpand, onRefresh }: { data: a
                 <circle cx={4 * nowPct} cy="40" r="4" fill="#46e6b0" />
                 <circle cx={4 * nowPct} cy="40" r="9" fill="none" stroke="#46e6b0" strokeOpacity=".45" />
               </svg>
-              {!timeline.length && <div className="td-timeline-empty">No events on today's timeline.</div>}
+            </div>
+            <div className="td-agenda">
+              {agenda.length ? agenda.slice(0, 4).map((it) => (
+                <div className={`td-agenda-row ${pending.has(it.id) ? "is-busy" : ""}`} key={`${it.kind}-${it.id}`}>
+                  <span className={`td-agenda-ic ${it.kind}`}>{it.kind === "event" ? "◈" : "⏰"}</span>
+                  <div className="td-agenda-main"><strong>{it.title}</strong><small>{clockOf(it.at, tz)}{it.loc ? ` · ${it.loc}` : it.kind === "reminder" ? " · reminder" : ""}</small></div>
+                  <button className="td-icon-btn" title={it.kind === "event" ? "Remove event" : "Cancel reminder"} onClick={() => it.kind === "event" ? removeEvent(it.id) : cancelReminder(it.id)}>✕</button>
+                </div>
+              )) : <div className="td-empty">Nothing coming up. Capture a reminder or event above.</div>}
             </div>
           </div>
           <div className="td-panel">
             <div className="td-panel-h b"><div><div className="t">Waiting on Others</div><div className="n">{waiting.length}</div></div><div className="r">Delegated / replies</div></div>
             <div className="td-wait">
               {waiting.length ? waiting.slice(0, 3).map((t) => (
-                <div className="td-person" key={t.id} style={{ marginBottom: 8 }}>
+                <div className={`td-person ${pending.has(t.id) ? "is-busy" : ""}`} key={t.id} style={{ marginBottom: 8 }}>
                   <div className="td-avatar">{(t.actor || "?").split(/\s+/).map((s: string) => s[0]).slice(0, 2).join("").toUpperCase()}</div>
-                  <div className="who"><strong>{t.actor || t.title}</strong><small>{t.actor ? "Waiting for response" : t.title}</small></div>
-                  <span className="td-dot" style={{ background: "var(--td-blue)", boxShadow: "0 0 8px var(--td-blue)" }} />
+                  <div className="who"><strong>{t.actor || t.title}</strong><small>{t.actor ? t.title : "Waiting for response"}</small></div>
+                  <button className="td-pill-btn" title="Nudge them" onClick={() => command(`Draft a short, friendly nudge to ${t.actor || "them"} about: ${t.title}`)}>Nudge</button>
+                  <button className="td-pill-btn ok" title="Mark received / done" onClick={() => completeTask(t.id)}>✓ Got it</button>
                 </div>
               )) : <div className="td-empty">You're not blocked on anyone right now.</div>}
             </div>
