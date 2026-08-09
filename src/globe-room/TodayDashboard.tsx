@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import { useEffect, useState } from "react";
 import "./TodayDashboard.css";
 import heroArt from "./assets/hero-planet.png";
 
@@ -60,7 +61,12 @@ export function TodayDashboard({ data, loading, onExpand }: { data: any; loading
   const waiting: any[] = data?.waitingOnThem || [];
   const c = data?.counts || {};
   const hr = hourIn(nowIso, tz);
-  const greeting = hr < 5 ? "Good night" : hr < 12 ? "Good morning" : hr < 17 ? "Good afternoon" : hr < 21 ? "Good evening" : "Good night";
+  // Live ticking clock — the hero anchor when the day is clear (real + useful, not filler text).
+  const [tick, setTick] = useState(() => Date.now());
+  useEffect(() => { const t = window.setInterval(() => setTick(Date.now()), 1000); return () => window.clearInterval(t); }, []);
+  const [liveTime, liveAp] = (() => {
+    try { return new Date(tick).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", timeZone: tz || undefined }).split(" "); } catch { return ["", ""]; }
+  })();
   const dparts: Record<string, string> = (() => {
     try { return new Intl.DateTimeFormat("en-US", { weekday: "long", day: "2-digit", month: "long", year: "numeric", timeZone: tz || undefined }).formatToParts(new Date(nowIso)).reduce((a, p) => ({ ...a, [p.type]: p.value }), {}); } catch { return {}; }
   })();
@@ -123,15 +129,23 @@ export function TodayDashboard({ data, loading, onExpand }: { data: any; loading
           <div className="td-hero-particles" />
           <div className="td-hero-fade" />
           <div className="td-hero-l">
-            <div className="eyebrow">{greeting.toUpperCase()}{data?.place ? ` · ${data.place}` : ""}</div>
-            <h2>
-              <span className="lead">{now ? "Now:" : next ? "Next:" : "Today"}</span>
-              {focusEvent ? <><span className="td-gem">◈</span><span className="ttl">{focusEvent.title}</span></> : <span className="ttl lead" style={{ fontSize: 22 }}>the day is clear</span>}
-            </h2>
-            <div className="meta">
-              {focusEvent ? <span>Starts at {clockOf(focusEvent.startAt, tz)}{focusEvent.location ? ` · ${focusEvent.location}` : ""}</span> : <span>Nothing scheduled — a good day to get ahead.</span>}
-              {now && <span className="td-live"><span className="td-dot" /> LIVE NOW</span>}
-            </div>
+            <div className="eyebrow">{wk ? wk.toUpperCase() : "TODAY"}{dd ? ` · ${(dparts.month || "").toUpperCase()} ${dd.replace(/^0/, "")}` : ""}</div>
+            {focusEvent ? (
+              <>
+                <div className="td-kick">{now ? <span className="td-live"><span className="td-dot" /> LIVE NOW</span> : <>NEXT UP{next?.startAt ? ` · ${clockOf(next.startAt, tz)}` : ""}</>}</div>
+                <h2><span className="td-gem">◈</span><span className="ttl">{focusEvent.title}</span></h2>
+                <div className="meta"><span>{now ? "In progress" : "Starts"} {clockOf(focusEvent.startAt, tz)}{focusEvent.location ? ` · ${focusEvent.location}` : ""}</span></div>
+              </>
+            ) : (
+              <>
+                <div className="td-clock">{liveTime}<span className="ap">{liveAp}</span></div>
+                <div className="td-chips">
+                  <span className="td-chip"><i style={{ background: "var(--td-cyan)" }} />{c.openTasks ?? 0} open task{(c.openTasks ?? 0) === 1 ? "" : "s"}</span>
+                  <span className="td-chip"><i style={{ background: "var(--td-green)" }} />{c.pendingReminders ?? 0} reminder{(c.pendingReminders ?? 0) === 1 ? "" : "s"}</span>
+                  <span className="td-chip"><i style={{ background: "var(--td-purple)" }} />{timeline.length ? `${timeline.length} event${timeline.length === 1 ? "" : "s"}` : "nothing scheduled"}</span>
+                </div>
+              </>
+            )}
           </div>
         </section>
 

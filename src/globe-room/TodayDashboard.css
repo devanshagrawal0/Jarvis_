@@ -20,7 +20,7 @@
   /* frosted glass: brighter top-left, deep bottom-right, translucent */
   --glass:  linear-gradient(155deg, rgba(24, 46, 72, .74), rgba(9, 18, 32, .82) 60%, rgba(7, 13, 24, .86));
   --glass2: linear-gradient(155deg, rgba(18, 37, 60, .6), rgba(8, 15, 28, .72));
-  --hi: inset 0 1px 0 rgba(150, 224, 255, .16), inset 0 0 24px rgba(60, 150, 210, .05);
+  --hi: inset 0 1px 0 rgba(160, 230, 255, .22), inset 0 0 26px rgba(64, 156, 216, .07);
   position: absolute; inset: 0;
   display: grid; grid-template-columns: 82px 1fr 252px;
   background:
@@ -80,7 +80,7 @@
 .td-online { font: 600 9px Orbitron; letter-spacing: .1em; color: var(--td-green); display: flex; align-items: center; gap: 6px; }
 
 /* ── Hero (embedded 4K art + live motion) ───────────────────────────────── */
-.td-hero { position: relative; overflow: hidden; border-radius: 16px; min-height: 130px; display: flex; align-items: center; border: 1px solid var(--td-lineHi); box-shadow: 0 18px 44px rgba(0,0,0,.4), var(--hi); background: #060c16; }
+.td-hero { position: relative; overflow: hidden; border-radius: 16px; min-height: 142px; display: flex; align-items: center; border: 1px solid var(--td-lineHi); box-shadow: 0 18px 44px rgba(0,0,0,.4), var(--hi); background: #060c16; }
 .td-hero-bg { position: absolute; inset: 0; background-size: cover; background-position: 82% center; background-repeat: no-repeat; transform: scale(1.06); animation: td-kenburns 26s ease-in-out infinite alternate; }
 @keyframes td-kenburns { from { transform: scale(1.06) translate(0,0); } to { transform: scale(1.12) translate(-1.4%, -1.2%); } }
 .td-hero-fade { position: absolute; inset: 0; background: linear-gradient(90deg, #060c16 12%, rgba(6,12,22,.72) 42%, rgba(6,12,22,.1) 72%, transparent), linear-gradient(0deg, rgba(6,12,22,.5), transparent 40%); }
@@ -99,6 +99,14 @@
 .td-gem { color: var(--td-purple); font-size: 18px; filter: drop-shadow(0 0 8px rgba(177,139,255,.7)); }
 .td-hero .meta { display: flex; align-items: center; gap: 12px; font-size: 12px; color: var(--td-mut); }
 .td-live { display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px; border-radius: 999px; border: 1px solid rgba(70,230,176,.34); color: var(--td-green); font: 600 8.5px Orbitron; letter-spacing: .1em; background: rgba(70,230,176,.08); }
+/* hero — event kicker */
+.td-kick { margin-top: 7px; font: 600 9px Orbitron, Inter, sans-serif; letter-spacing: .14em; color: var(--td-mut); display: flex; align-items: center; }
+/* hero — clear-day live clock + at-a-glance chips */
+.td-clock { margin: 7px 0 9px; font-family: Orbitron, Inter, sans-serif; font-weight: 600; font-size: 46px; line-height: 1; letter-spacing: .01em; color: var(--td-ink); text-shadow: 0 0 26px rgba(120,200,255,.34); font-variant-numeric: tabular-nums; display: flex; align-items: baseline; gap: 8px; }
+.td-clock .ap { font-size: 15px; font-weight: 500; color: var(--td-cyan); letter-spacing: .08em; text-shadow: 0 0 12px rgba(79,227,255,.5); }
+.td-chips { display: flex; flex-wrap: wrap; gap: 7px; }
+.td-chip { display: inline-flex; align-items: center; gap: 7px; padding: 5px 11px 5px 9px; border-radius: 999px; border: 1px solid var(--td-line); background: rgba(10,24,40,.5); backdrop-filter: blur(6px); font-size: 11px; color: rgba(214,236,250,.82); white-space: nowrap; box-shadow: var(--hi); }
+.td-chip i { width: 6px; height: 6px; border-radius: 50%; box-shadow: 0 0 8px currentColor; }
 .td-hero-btn { position: relative; z-index: 2; margin: 0 22px 0 auto; padding: 11px 20px; border-radius: 11px; cursor: pointer; display: inline-flex; align-items: center; gap: 9px; white-space: nowrap; background: linear-gradient(135deg, rgba(79,227,255,.24), rgba(79,227,255,.08)); border: 1px solid rgba(79,227,255,.5); color: #eafdff; font: 600 10px Orbitron; letter-spacing: .1em; box-shadow: 0 0 22px rgba(79,227,255,.2), var(--hi); transition: .18s; }
 .td-hero-btn:hover { background: linear-gradient(135deg, rgba(79,227,255,.36), rgba(79,227,255,.16)); box-shadow: 0 0 30px rgba(79,227,255,.34); }
 .td-quote { position: absolute; z-index: 2; right: 18px; top: 14px; text-align: right; font: italic 500 11px Inter; color: rgba(190,165,255,.72); line-height: 1.4; text-shadow: 0 0 10px rgba(0,0,0,.6); }
