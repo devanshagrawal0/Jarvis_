@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import "./TodayDashboard.css";
 import heroArt from "./assets/hero-planet.png";
 
@@ -50,7 +50,7 @@ function Spark({ a }: { a: string }) {
   );
 }
 
-export function TodayDashboard({ data, loading, onExpand }: { data: any; loading?: boolean; onExpand?: () => void }) {
+export function TodayDashboard({ data, loading, onExpand, onRefresh }: { data: any; loading?: boolean; onExpand?: () => void; onRefresh?: () => void }) {
   const tz = data?.tz;
   const nowIso: string = data?.now || new Date().toISOString();
   const now = data?.nowNext?.now || null;
@@ -76,6 +76,35 @@ export function TodayDashboard({ data, loading, onExpand }: { data: any; loading
   const baseHr = Math.max(0, Math.min(19, hr - 1));
   const ticks = [0, 1, 2, 3, 4].map((k) => ((baseHr + k) % 24));
   const nowPct = 15 + ((hourIn(nowIso, tz) + (Number(new Date(nowIso).getMinutes()) / 60) - baseHr) / 4) * 70;
+
+  // ── Wave 2: natural-language quick capture ──────────────────────────────────
+  const capRef = useRef<HTMLInputElement>(null);
+  const [cap, setCap] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [flash, setFlash] = useState<{ ok: boolean; msg: string } | null>(null);
+  const flashTimer = useRef<number | null>(null);
+  const showFlash = (ok: boolean, msg: string) => {
+    setFlash({ ok, msg });
+    if (flashTimer.current) window.clearTimeout(flashTimer.current);
+    flashTimer.current = window.setTimeout(() => setFlash(null), 4200);
+  };
+  useEffect(() => () => { if (flashTimer.current) window.clearTimeout(flashTimer.current); }, []);
+  const seed = (s: string) => {
+    setCap(s);
+    window.setTimeout(() => { const el = capRef.current; if (el) { el.focus(); el.selectionStart = el.selectionEnd = s.length; } }, 0);
+  };
+  const submitCapture = async (text: string) => {
+    const t = text.trim();
+    if (!t || busy) return;
+    setBusy(true);
+    try {
+      const r = await fetch("/api/atlas/capture", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text: t, tz }) });
+      const d = await r.json().catch(() => ({}));
+      if (d && d.ok) { setCap(""); showFlash(true, d.message || "Captured."); onRefresh?.(); }
+      else { command(t); setCap(""); showFlash(true, "Not a task or reminder — sent to Jarvis."); }   // let the brain handle non-capture text
+    } catch { showFlash(false, "Couldn't reach the day-model. Is the backend running?"); }
+    finally { setBusy(false); }
+  };
 
   const stat = (cls: string, ic: ReactNode, label: string, num: number | string, foot: string, a: string) => (
     <div className={`td-stat ${cls}`}>
@@ -117,6 +146,23 @@ export function TodayDashboard({ data, loading, onExpand }: { data: any; loading
             <span style={{ color: "var(--td-mut)" }}>{I.search}</span>
           </div>
         </header>
+
+        {/* Quick capture — say it, it lands in Today (deterministic; falls back to Jarvis) */}
+        <div className={`td-capture ${flash ? (flash.ok ? "ok" : "err") : ""} ${busy ? "busy" : ""}`}>
+          <span className="td-capture-ic">{I.plus}</span>
+          <input
+            ref={capRef}
+            className="td-capture-input"
+            value={cap}
+            onChange={(e) => setCap(e.target.value)}
+            onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); void submitCapture(cap); } }}
+            placeholder={"Tell me to remember something — “remind me to call the bank at 5”, “lunch with Priya tomorrow at 1”, “note: parking is B12”"}
+            aria-label="Quick capture a task, reminder, event, or note"
+          />
+          {flash
+            ? <span className={`td-capture-flash ${flash.ok ? "ok" : "err"}`}>{flash.msg}</span>
+            : <button className="td-capture-send" onClick={() => void submitCapture(cap)} disabled={!cap.trim() || busy}>{busy ? "Saving…" : "Capture ⏎"}</button>}
+        </div>
 
         {/* Hero — embedded 4K art + live-motion layers (rings, glow, particles, ken-burns parallax) */}
         <section className="td-hero">
@@ -233,8 +279,8 @@ export function TodayDashboard({ data, loading, onExpand }: { data: any; loading
 
         <div className="td-card">
           <div className="h" style={{ marginBottom: 6 }}>Quick Actions</div>
-          <div className="td-qa-row" onClick={() => command("Create a new task: ")}><span className="td-qa-ic">{I.plus}</span><strong>New Task</strong><span className="chev">›</span></div>
-          <div className="td-qa-row" onClick={() => command("Take a new note: ")}><span className="td-qa-ic">{I.note}</span><strong>New Note</strong><span className="chev">›</span></div>
+          <div className="td-qa-row" onClick={() => seed("Add a task: ")}><span className="td-qa-ic">{I.plus}</span><strong>New Task</strong><span className="chev">›</span></div>
+          <div className="td-qa-row" onClick={() => seed("Note: ")}><span className="td-qa-ic">{I.note}</span><strong>New Note</strong><span className="chev">›</span></div>
           <div className="td-qa-row" onClick={() => command("Listen for a voice command.")}><span className="td-qa-ic">{I.mic}</span><strong>Voice Command</strong><span className="chev">›</span></div>
         </div>
       </aside>

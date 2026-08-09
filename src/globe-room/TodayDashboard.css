@@ -112,6 +112,23 @@
 .td-quote { position: absolute; z-index: 2; right: 18px; top: 14px; text-align: right; font: italic 500 11px Inter; color: rgba(190,165,255,.72); line-height: 1.4; text-shadow: 0 0 10px rgba(0,0,0,.6); }
 .td-quote span { display: block; font-style: normal; font: 600 8px Orbitron; letter-spacing: .12em; color: rgba(177,139,255,.6); margin-top: 3px; }
 
+/* ── Quick capture bar ──────────────────────────────────────────────────── */
+.td-capture { display: flex; align-items: center; gap: 10px; padding: 8px 10px 8px 12px; border-radius: 13px; border: 1px solid var(--td-line); background: var(--glass2); box-shadow: var(--hi); transition: border-color .18s, box-shadow .18s; }
+.td-capture:focus-within { border-color: var(--td-lineHi); box-shadow: 0 0 0 1px rgba(79,227,255,.18), 0 0 22px rgba(79,227,255,.14), var(--hi); }
+.td-capture.ok { border-color: rgba(70,230,176,.5); }
+.td-capture.err { border-color: rgba(255,120,120,.5); }
+.td-capture-ic { display: grid; place-items: center; width: 24px; height: 24px; border-radius: 8px; color: var(--td-cyan); background: rgba(79,227,255,.1); border: 1px solid rgba(79,227,255,.24); flex-shrink: 0; }
+.td-capture-ic svg { width: 15px; height: 15px; }
+.td-capture-input { flex: 1; min-width: 0; background: transparent; border: none; outline: none; color: var(--td-ink); font: 400 13px Inter, sans-serif; letter-spacing: .01em; }
+.td-capture-input::placeholder { color: var(--td-mut2); }
+.td-capture-send { flex-shrink: 0; padding: 7px 13px; border-radius: 9px; cursor: pointer; background: linear-gradient(135deg, rgba(79,227,255,.22), rgba(79,227,255,.07)); border: 1px solid rgba(79,227,255,.42); color: #eafdff; font: 600 10px Orbitron, sans-serif; letter-spacing: .06em; transition: .16s; }
+.td-capture-send:hover:not(:disabled) { background: linear-gradient(135deg, rgba(79,227,255,.34), rgba(79,227,255,.14)); box-shadow: 0 0 18px rgba(79,227,255,.28); }
+.td-capture-send:disabled { opacity: .4; cursor: default; }
+.td-capture-flash { flex-shrink: 0; max-width: 46%; padding: 6px 12px; border-radius: 9px; font: 500 11px Inter, sans-serif; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; animation: td-flash-in .22s ease; }
+.td-capture-flash.ok { color: var(--td-green); background: rgba(70,230,176,.1); border: 1px solid rgba(70,230,176,.34); }
+.td-capture-flash.err { color: #ff9a9a; background: rgba(255,120,120,.1); border: 1px solid rgba(255,120,120,.34); }
+@keyframes td-flash-in { from { opacity: 0; transform: translateX(6px); } to { opacity: 1; transform: none; } }
+
 /* ── Stat cards ─────────────────────────────────────────────────────────── */
 .td-stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 9px; }
 .td-stat { position: relative; overflow: hidden; border-radius: 13px; padding: 12px 13px 13px; min-height: 84px; background: var(--glass2); border: 1px solid var(--td-line); box-shadow: var(--hi); --a: var(--td-cyan); transition: transform .16s, box-shadow .16s, border-color .16s; }

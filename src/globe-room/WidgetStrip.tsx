@@ -1029,7 +1029,7 @@ export function WeatherCard({ data, loading, onClose, onExpand }: {
 }
 
 export function TodayCard({ data, loading, onClose, onExpand, embedded }: {
-  data: any; loading: boolean; onClose: () => void; onExpand: () => void; embedded?: boolean;
+  data: any; loading: boolean; onClose: () => void; onExpand: () => void; embedded?: boolean; onRefresh?: () => void;
 }) {
   const t = (iso?: string | null) => { try { return iso ? new Date(iso).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }) : ""; } catch { return ""; } };
   const now = data?.nowNext?.now, next = data?.nowNext?.next;
@@ -2030,8 +2030,8 @@ export function WidgetStrip({ mode }: { mode: string; showChips?: boolean }) {
       case "runtime":     return <RuntimeWidget mode={state.mode} initialData={data} onRefresh={() => void refresh(id)} />;
       case "contacts":    return <ContactsCommandCenter data={data} loading={loading} onRefresh={() => void refresh(id)} />;
       case "today":       return state.mode === "expanded"
-                            ? <TodayDashboard data={data} loading={loading} onExpand={() => patchWindow(state.id, { mode: "expanded" })} /> // focused view: full reference dashboard
-                            : <TodayCard {...props} embedded onExpand={() => patchWindow(state.id, { mode: "expanded" })} />;            // normal view: compact card
+                            ? <TodayDashboard data={data} loading={loading} onRefresh={() => void refresh(id)} onExpand={() => patchWindow(state.id, { mode: "expanded" })} /> // focused view: full reference dashboard
+                            : <TodayCard {...props} embedded onRefresh={() => void refresh(id)} onExpand={() => patchWindow(state.id, { mode: "expanded" })} />;            // normal view: compact card
       case "profile":     return <ProfileCommandCenter data={data} loading={loading} />;
       case "weather":     return <WeatherCommandCenter data={data} loading={loading} />;
       case "vitals":      return <VitalsCommandCenter data={data} loading={loading} />;

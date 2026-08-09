@@ -17,6 +17,7 @@ const { PREPARE_ONLY_PHRASE, compileOutcome, resolveExecutableTask } = require("
 const { trace } = require("./automation/trace");
 const { createContactStore } = require("./contacts");
 const { enrichCandidates } = require("./automation/identity-enrichment");
+const atlasCapture = require("./atlas/atlas-capture");
 
 const execFileAsync = promisify(execFile);
 const CONFIRMATIONS_FILE = "confirmations.json";
@@ -175,9 +176,13 @@ function createCapabilityEngine({
   neuralVault,
   missionEngine,
   apexIngest,
+  getAtlas,
+  getOwnerTz,
   desktopTakeover,
 }) {
   const getApex = () => (typeof apexIngest === "function" ? apexIngest() : apexIngest);
+  const atlas = () => (typeof getAtlas === "function" ? getAtlas() : null);
+  const ownerTz = () => { try { return (typeof getOwnerTz === "function" ? getOwnerTz() : null) || atlasCapture.DEFAULT_TZ; } catch { return atlasCapture.DEFAULT_TZ; } };
   const confirmationsPath = path.join(runtimeDir, CONFIRMATIONS_FILE);
   const memoryPath = path.join(runtimeDir, MEMORY_FILE);
   // Who the owner means when they say a name. Consulted before any identity search, so a known
@@ -373,6 +378,7 @@ function createCapabilityEngine({
     ["apex_health_check", "Run the APEX Data Health Bot: audit every enabled data source (keyless + keyed) for reachability, return a per-source report, an analysis, and PROPOSED config fixes for any that are down. Read-only — proposes fixes but does not apply them. Follow with apex_health_apply once the user approves.", "observe", false],
     ["apex_health_apply", "Apply the data-source fixes proposed by the last apex_health_check (after the user approves), hot-reload the ingestion governor WITHOUT restarting the server, then re-verify and report the new health. Optionally pass specific source ids to apply only those.", "execute", false],
     ["apex_brief", "Get a data-grounded market brief assembled from live APEX data: a headline, a narrative paragraph, index session (yesterday close→today open→gap→range), top movers, sector leaders/laggards, macro, top news, and 'things to watch'. type can be now, morning, or eod. Use to brief the user on the market.", "observe", false],
+    ["atlas_capture", "Capture the owner's task, reminder, calendar event, or note from one natural sentence and save it to their day (ATLAS/Today). Use whenever the owner wants to remember, be reminded, add a to-do, schedule something, or jot a note — e.g. 'remind me to call the bank at 5', 'add a task file taxes', 'lunch with Priya tomorrow at 1', 'note: parking is B12'. Pass the owner's own sentence as text; the tool parses the time and kind itself and lands it in Today.", "execute", false],
   ].map(([name, description, risk, confirmationRequired]) => ({
     name,
     description,
@@ -485,6 +491,10 @@ function createCapabilityEngine({
     { name: "artifact_status", description: description("artifact_status"), parameters: { type: "OBJECT", properties: {
       id: { type: "STRING", description: "Optional artifact id. Omit to list recent artifacts." },
     } } },
+    { name: "atlas_capture", description: description("atlas_capture"), parameters: { type: "OBJECT", properties: {
+      text: { type: "STRING", description: "The owner's own sentence to capture verbatim, e.g. 'remind me to call the bank at 5pm' or 'add a task file the reimbursement'." },
+      tz: { type: "STRING", description: "Optional IANA timezone; defaults to the owner's resolved location timezone." },
+    }, required: ["text"] } },
     { name: "pc_graph_rebuild", description: description("pc_graph_rebuild"), parameters: { type: "OBJECT", properties: {
       roots: { type: "ARRAY", items: { type: "STRING" }, description: "Optional root folders to index. Defaults to workspace, Downloads, Documents, and Desktop." },
       limit: { type: "INTEGER", description: "Maximum files to scan, 1 to 50000. Defaults to 1200." },
@@ -2057,6 +2067,15 @@ function createCapabilityEngine({
     desktop_control: desktopControl,
     close_app: closeApp,
     network_inventory: networkInventory,
+    atlas_capture: async (args) => {
+      const store = atlas();
+      if (!store) throw errorWithStatus("The day-model (ATLAS) is not available in this runtime.", 412);
+      const text = cleanString(args.text, 600);
+      if (!text) throw errorWithStatus("atlas_capture needs the owner's sentence in `text`.", 400);
+      const result = atlasCapture.capture(store, text, { tz: cleanString(args.tz, 60) || ownerTz(), sourceKind: "chat" });
+      if (!result.ok) return { ok: false, captured: false, message: "That didn't look like a task, reminder, event, or note — nothing was saved." };
+      return { ok: true, captured: true, kind: result.kind, message: result.message, item: result.item };
+    },
     search_projects: async (args) => {
       const query = cleanString(args.query, 120).toLowerCase();
       const projects = scanProjects();

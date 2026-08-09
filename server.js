@@ -82,6 +82,7 @@ const { startArbiterScheduler } = require("./server/arbiter/arbiter-scheduler");
 const { createUserContext } = require("./server/user-context");
 const { createAtlasStore } = require("./server/atlas/atlas-store");           // ATLAS Wave 1 — day-model store
 const { createAtlasScheduler } = require("./server/atlas/atlas-scheduler");   // ATLAS Wave 1 — reminder tick
+const atlasCapture = require("./server/atlas/atlas-capture");                 // ATLAS Wave 2 — NL quick capture
 // DM-1: Cloudflare Quick Tunnel — phones can reach Jarvis from any network
 const { startTunnel, stopTunnel, getTunnelUrl, isTunnelActive, getTunnelStatus } = require("./server/tunnel-manager");
 // DM-3: WebSocket Hub — real-time backbone replacing all HTTP polling
@@ -6843,6 +6844,20 @@ async function handleApi(req, res, pathname, url) {
     } catch (e) { sendJson(res, 500, { available: false, error: String(e && e.message || e) }); }
     return;
   }
+  // Wave 2 — natural-language quick capture. One sentence in, the right row out. Deterministic:
+  // if the text isn't a capture intent we return kind:null so the caller can route it to the brain.
+  if (pathname === "/api/atlas/capture" && req.method === "POST") {
+    if (!atlasStore) { sendJson(res, 503, { ok: false, error: "atlas unavailable" }); return; }
+    try {
+      const d = await parseRequestData(req);
+      const loc = userContext ? userContext.resolveLocation() : { ianaTz: "America/New_York" };
+      const tz = d.tz || loc.ianaTz || "America/New_York";
+      const result = atlasCapture.capture(atlasStore, d.text, { tz, sourceKind: d.sourceKind || "owner", sourceRef: "capture" });
+      if (result.ok) { try { if (typeof wsHub !== "undefined" && wsHub && wsHub.broadcast) wsHub.broadcast({ type: "atlas.changed", kind: result.kind }); } catch {} }
+      sendJson(res, result.ok ? 201 : 200, result);
+    } catch (e) { sendJson(res, 400, { ok: false, error: String(e && e.message || e) }); }
+    return;
+  }
   if (pathname === "/api/atlas/tasks" && req.method === "GET") {
     if (!atlasStore) { sendJson(res, 200, { tasks: [] }); return; }
     const url = new URL(req.url, "http://x");
@@ -13380,6 +13395,8 @@ capabilityEngine = createCapabilityEngine({
   neuralVault,
   missionEngine,
   apexIngest: () => apexIngest,
+  getAtlas: () => atlasStore,
+  getOwnerTz: () => { try { return userContext ? userContext.resolveLocation().ianaTz : null; } catch { return null; } },
   desktopTakeover,
 });
 toolGateway = createToolGateway({
