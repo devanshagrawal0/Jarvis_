@@ -2036,7 +2036,9 @@ export function WidgetStrip({ mode }: { mode: string; showChips?: boolean }) {
       case "agents":      return <AgentsCommandCenter data={data} loading={loading} onRefresh={() => void refresh(id)} />;
       case "connections": return <ConnectionsCommandCenter data={data} loading={loading} />;
       case "trust":       return <TrustCommandCenter data={data} loading={loading} />;
-      case "kalshi":      return <KalshiExpanded      {...props} onRefresh={() => refresh(id)} />;
+      case "kalshi":      return state.mode === "expanded"
+                            ? <KalshiExpanded {...props} embedded onRefresh={() => refresh(id)} />   // focused view: full tabbed dashboard
+                            : <KalshiCard {...props} embedded onExpand={() => patchWindow(state.id, { mode: "expanded" })} />; // normal view: compact card
       case "vision":      return <VisionCommandCenter data={data} loading={loading} onRefresh={() => void refresh(id)} />;
       case "memory":      return <MemoryCommandCenter data={data} loading={loading} />;
       case "devices":     return <DeviceMeshCommandCenter />;

@@ -383,8 +383,8 @@ const TABS: { id: Tab; label: string }[] = [
   { id: "ALERTS",         label: "Alerts"          },
 ];
 
-export function KalshiDashboard({ data, loading, onClose, onRefresh }: {
-  data: any; loading: boolean; onClose: () => void; onRefresh?: () => void;
+export function KalshiDashboard({ data, loading, onClose, onRefresh, embedded }: {
+  data: any; loading: boolean; onClose: () => void; onRefresh?: () => void; embedded?: boolean;
 }) {
   const [tab,         setTab]         = useState<Tab>("LIVE_POSITIONS");
   const [selTicker,   setSelTicker]   = useState<string | null>(null);
@@ -488,8 +488,12 @@ export function KalshiDashboard({ data, loading, onClose, onRefresh }: {
 
   // ── Render ──────────────────────────────────────────────────────────────────
   return (
+    // Era III: the dashboard fills its SpatialWidgetFrame body (position:absolute inset:49px 0 0),
+    // NOT the viewport. It used to be position:fixed inset:0 (a full-screen overlay), which burst
+    // out of the widget frame — hiding the globe and overlapping the command bar. Filling the parent
+    // keeps it a real draggable/resizable window over the globe, per JARVIS_ERA3_SPATIAL_WORKSPACE.md.
     <div style={{
-      position: "fixed", inset: 0, zIndex: 500,
+      position: "relative", width: "100%", height: "100%",
       background: C.bg, fontFamily: C.font, color: C.text,
       display: "flex", flexDirection: "column", overflow: "hidden",
     }}>
@@ -498,8 +502,9 @@ export function KalshiDashboard({ data, loading, onClose, onRefresh }: {
         @keyframes spin   { from{transform:rotate(0deg)} to{transform:rotate(360deg)} }
       `}</style>
 
-      {/* ── Header ── */}
-      <div style={{
+      {/* ── Header (hidden when embedded: the SpatialWidgetFrame already provides window chrome,
+             so rendering this too gave the double header) ── */}
+      {!embedded && <div style={{
         display: "flex", alignItems: "center", gap: 10,
         padding: "0 20px", height: 44, flexShrink: 0,
         borderBottom: `1px solid ${C.border}`,
@@ -524,7 +529,7 @@ export function KalshiDashboard({ data, loading, onClose, onRefresh }: {
           animation: spinning ? "spin 0.8s linear infinite" : "none",
         }}>↻</button>
         <button onClick={onClose} style={{ background: "none", border: "none", color: C.muted, cursor: "pointer", fontSize: 18, padding: "3px 6px", lineHeight: 1 }}>×</button>
-      </div>
+      </div>}
 
       {/* ── Tabs ── */}
       <div style={{

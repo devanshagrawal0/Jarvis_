@@ -1074,8 +1074,8 @@ export function KalshiChip({ market, isActive, onClick }: {
 
 // ── CARD ───────────────────────────────────────────────────────────────────────
 
-export function KalshiCard({ data, loading, onClose, onExpand }: {
-  data: any; loading: boolean; onClose: () => void; onExpand: () => void;
+export function KalshiCard({ data, loading, onClose, onExpand, embedded }: {
+  data: any; loading: boolean; onClose: () => void; onExpand: () => void; embedded?: boolean;
 }) {
   const markets: KalshiMarket[] = data?.markets ?? [];
   const m               = markets[0] ?? null;
@@ -1083,21 +1083,25 @@ export function KalshiCard({ data, loading, onClose, onExpand }: {
   const portfolioValue  = data?.portfolio?.portfolioValue ?? data?.portfolioValue ?? 0;
   const disconnected    = data?.__state === "disconnected";
 
+  // embedded = rendered inside a SpatialWidgetFrame (the "normal" widget state): fill the frame and
+  // drop this component's own card chrome + header, since the frame supplies the window and header.
   return (
-    <div style={{
+    <div style={embedded ? {
+      width: "100%", height: "100%", overflow: "auto", fontFamily: C.font, color: C.text,
+    } : {
       width: 320, background: C.surfaceCard, border: `1px solid ${C.border}`, borderRadius: 14,
       backdropFilter: "blur(22px)", WebkitBackdropFilter: "blur(22px)",
       boxShadow: "0 12px 40px rgba(0,0,0,0.6), 0 0 0 1px rgba(0,229,255,0.05)",
       overflow: "hidden", fontFamily: C.font, color: C.text,
     }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 7, padding: "9px 12px 8px", borderBottom: `1px solid ${C.borderFaint}` }}>
+      {!embedded && <div style={{ display: "flex", alignItems: "center", gap: 7, padding: "9px 12px 8px", borderBottom: `1px solid ${C.borderFaint}` }}>
         <span style={{ fontSize: 13, flexShrink: 0 }}>▲</span>
         <span style={{ flex: 1, fontSize: 10, fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
           {m?.title ?? "Kalshi Markets"}
         </span>
         <button onClick={onExpand} title="Expand" style={ICON_BTN}>⋮</button>
         <button onClick={onClose}  title="Close"  style={ICON_BTN}>×</button>
-      </div>
+      </div>}
 
       <div style={{ padding: "10px 13px" }}>
         <div style={{ display: "flex", gap: 8, marginBottom: 10 }}>
