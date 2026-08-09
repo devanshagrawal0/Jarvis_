@@ -80,6 +80,8 @@ const { initArbiterDB, baseRates: arbiterBaseRates } = require("./server/arbiter
 const { startArbiterScheduler } = require("./server/arbiter/arbiter-scheduler");
 // Cortex v3 · Wave 0 — authoritative user profile + location resolver
 const { createUserContext } = require("./server/user-context");
+const { createAtlasStore } = require("./server/atlas/atlas-store");           // ATLAS Wave 1 — day-model store
+const { createAtlasScheduler } = require("./server/atlas/atlas-scheduler");   // ATLAS Wave 1 — reminder tick
 // DM-1: Cloudflare Quick Tunnel — phones can reach Jarvis from any network
 const { startTunnel, stopTunnel, getTunnelUrl, isTunnelActive, getTunnelStatus } = require("./server/tunnel-manager");
 // DM-3: WebSocket Hub — real-time backbone replacing all HTTP polling
@@ -221,6 +223,8 @@ let toolGateway;
 let agentRuntime;
 let userContext;
 let costMeter;
+let atlasStore;       // ATLAS Wave 1 — operational day-model (tasks/events/reminders/people/notes)
+let atlasScheduler;   // ATLAS Wave 1 — durable fire-once reminder tick
 let reactExecutor;
 let activityGraph;
 let proactiveIntelligence;
@@ -3292,6 +3296,25 @@ async function generateImageArtifact(promptText) {
     fs.writeFileSync(path.join(ARTIFACTS_DIR, name), Buffer.from(inline.data, "base64"));
     return { name, mimeType: mime };
   } catch { return null; }
+}
+
+// Local calendar-day bounds [midnight, next-midnight) in an IANA timezone, returned as UTC ISO.
+// Used by /api/atlas/today so "today's timeline" means the owner's real local day, not UTC.
+// DST edges can be off by an hour at the exact transition; acceptable for a day view (the
+// Wave-2 temporal engine handles DST rigorously).
+function atlasLocalDayBounds(tz) {
+  const now = new Date();
+  const off = (() => {
+    const p = new Intl.DateTimeFormat("en-US", { timeZone: tz, hour12: false, year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit" })
+      .formatToParts(now).reduce((a, x) => (a[x.type] = x.value, a), {});
+    const asUTC = Date.UTC(+p.year, +p.month - 1, +p.day, +p.hour, +p.minute, +p.second);
+    return asUTC - now.getTime(); // ms the local wall clock is ahead of UTC
+  })();
+  const local = new Date(now.getTime() + off);
+  const startLocalUTC = Date.UTC(local.getUTCFullYear(), local.getUTCMonth(), local.getUTCDate(), 0, 0, 0);
+  const startIso = new Date(startLocalUTC - off).toISOString();
+  const endIso = new Date(startLocalUTC - off + 24 * 3600_000).toISOString();
+  return { startIso, endIso };
 }
 
 // Real current conditions for a resolved location, via keyless open-meteo. Injected into
@@ -6791,6 +6814,82 @@ async function handleApi(req, res, pathname, url) {
     }
     return;
   }
+  // ── ATLAS Wave 1 — the owner's day-model (tasks, events, reminders, people, notes) + Today.
+  // No connected accounts required; this is the local spine everything later builds on.
+  if (pathname === "/api/atlas/today" && req.method === "GET") {
+    if (!atlasStore) { sendJson(res, 200, { available: false, reason: "atlas not initialized" }); return; }
+    try {
+      const loc = userContext ? userContext.resolveLocation() : { ianaTz: "America/New_York", placeName: "" };
+      const tz = loc.ianaTz || "America/New_York";
+      const { startIso, endIso } = atlasLocalDayBounds(tz);
+      const nowIso = new Date().toISOString();
+      const events = atlasStore.eventsBetween(startIso, endIso);
+      const nextEvent = events.find((e) => e.startAt > nowIso) || null;
+      const nowEvent = events.find((e) => e.startAt <= nowIso && (!e.endAt || e.endAt > nowIso)) || null;
+      const openTasks = atlasStore.listTasks({ status: "open" });
+      // "Top of mind": due today or overdue or high priority, capped.
+      const topOfMind = openTasks
+        .filter((t) => (t.dueAt && t.dueAt <= endIso) || t.priority >= 2)
+        .slice(0, 3);
+      sendJson(res, 200, {
+        available: true,
+        place: loc.placeName || "", tz, now: nowIso,
+        nowNext: { now: nowEvent, next: nextEvent },
+        timeline: events,
+        topOfMind,
+        counts: { openTasks: openTasks.length, waitingOnThem: atlasStore.waitingOnThem().length, pendingReminders: atlasStore.pendingReminders().length },
+        waitingOnThem: atlasStore.waitingOnThem(10),
+      });
+    } catch (e) { sendJson(res, 500, { available: false, error: String(e && e.message || e) }); }
+    return;
+  }
+  if (pathname === "/api/atlas/tasks" && req.method === "GET") {
+    if (!atlasStore) { sendJson(res, 200, { tasks: [] }); return; }
+    const url = new URL(req.url, "http://x");
+    sendJson(res, 200, { tasks: atlasStore.listTasks({ status: url.searchParams.get("status") || "open" }), waitingOnMe: atlasStore.waitingOnMe(), waitingOnThem: atlasStore.waitingOnThem() });
+    return;
+  }
+  if (pathname === "/api/atlas/tasks" && req.method === "POST") {
+    if (!atlasStore) { sendJson(res, 503, { error: "atlas unavailable" }); return; }
+    try { const d = await parseRequestData(req); sendJson(res, 201, { task: atlasStore.createTask({ ...d, source: d.source || { kind: "owner" } }) }); }
+    catch (e) { sendJson(res, 400, { error: String(e && e.message || e) }); }
+    return;
+  }
+  { const m = pathname.match(/^\/api\/atlas\/tasks\/([^/]+)$/);
+    if (m && (req.method === "PATCH" || req.method === "POST")) {
+      if (!atlasStore) { sendJson(res, 503, { error: "atlas unavailable" }); return; }
+      try { const d = await parseRequestData(req); sendJson(res, 200, { task: atlasStore.updateTask(m[1], d) }); }
+      catch (e) { sendJson(res, 400, { error: String(e && e.message || e) }); }
+      return;
+    } }
+  if (pathname === "/api/atlas/reminders" && req.method === "GET") {
+    if (!atlasStore) { sendJson(res, 200, { reminders: [] }); return; }
+    sendJson(res, 200, { reminders: atlasStore.pendingReminders() });
+    return;
+  }
+  if (pathname === "/api/atlas/reminders" && req.method === "POST") {
+    if (!atlasStore) { sendJson(res, 503, { error: "atlas unavailable" }); return; }
+    try { const d = await parseRequestData(req); sendJson(res, 201, { reminder: atlasStore.createReminder({ ...d, source: d.source || { kind: "owner" } }) }); }
+    catch (e) { sendJson(res, 400, { error: String(e && e.message || e) }); }
+    return;
+  }
+  { const m = pathname.match(/^\/api\/atlas\/reminders\/([^/]+)\/cancel$/);
+    if (m && req.method === "POST") {
+      if (!atlasStore) { sendJson(res, 503, { error: "atlas unavailable" }); return; }
+      try { sendJson(res, 200, { reminder: atlasStore.cancelReminder(m[1]) }); } catch (e) { sendJson(res, 400, { error: String(e && e.message || e) }); }
+      return;
+    } }
+  if (pathname === "/api/atlas/events" && req.method === "POST") {
+    if (!atlasStore) { sendJson(res, 503, { error: "atlas unavailable" }); return; }
+    try { const d = await parseRequestData(req); sendJson(res, 201, { event: atlasStore.createEvent({ ...d, source: d.source || { kind: "owner" } }) }); }
+    catch (e) { sendJson(res, 400, { error: String(e && e.message || e) }); }
+    return;
+  }
+  if (pathname === "/api/atlas/people" && req.method === "GET") { if (!atlasStore) { sendJson(res, 200, { people: [] }); return; } sendJson(res, 200, { people: atlasStore.listPeople() }); return; }
+  if (pathname === "/api/atlas/people" && req.method === "POST") { if (!atlasStore) { sendJson(res, 503, { error: "atlas unavailable" }); return; } try { const d = await parseRequestData(req); sendJson(res, 201, { person: atlasStore.upsertPerson(d) }); } catch (e) { sendJson(res, 400, { error: String(e && e.message || e) }); } return; }
+  if (pathname === "/api/atlas/notes" && req.method === "GET") { if (!atlasStore) { sendJson(res, 200, { notes: [] }); return; } sendJson(res, 200, { notes: atlasStore.listNotes() }); return; }
+  if (pathname === "/api/atlas/notes" && req.method === "POST") { if (!atlasStore) { sendJson(res, 503, { error: "atlas unavailable" }); return; } try { const d = await parseRequestData(req); sendJson(res, 201, { note: atlasStore.addNote(d.body, d.tags || []) }); } catch (e) { sendJson(res, 400, { error: String(e && e.message || e) }); } return; }
+
   // ── Weather (Cortex v4 P4) — keyless via open-meteo, using the owner's home
   // lat/lon from the Vault. Powers the Weather widget + commute framing.
   if (req.method === "GET" && pathname === "/api/weather") {
@@ -13091,6 +13190,21 @@ try {
 } catch (e) { console.error("[init] apex failed:", e.message); apexDb = null; apexIngest = null; }
 startupCheckpoint("helix and apex databases");
 try { userContext = createUserContext({ runtimeDir: RUNTIME_DIR }); console.log("[init] user-context ready (core profile + location resolver)"); } catch (e) { console.error("[init] userContext failed:", e.message); userContext = null; }
+// ATLAS Wave 1 — the operational day-model + durable reminder scheduler. Reminders fire once,
+// survive restarts, and deliver via the existing push fabric + a widget-facing feed.
+try {
+  atlasStore = createAtlasStore({ runtimeDir: RUNTIME_DIR });
+  atlasScheduler = createAtlasScheduler({
+    store: atlasStore,
+    deliver: async (reminder) => {
+      try { atlasStore.addNote(`Reminder fired: ${reminder.title}`, ["reminder-fired"]); } catch {}
+      try { await broadcastPushToAllDevices("Reminder", reminder.title, { type: "atlas_reminder", reminderId: reminder.id, taskId: reminder.taskId || null }); } catch {}
+      try { if (typeof wsHub !== "undefined" && wsHub && wsHub.broadcast) wsHub.broadcast({ type: "atlas.reminder.fired", reminder }); } catch {}
+    },
+  });
+  atlasScheduler.start();
+  console.log("[init] ATLAS ready (day-model + durable reminders)");
+} catch (e) { console.error("[init] ATLAS failed:", e.message); atlasStore = null; atlasScheduler = null; }
 try { costMeter = createCostMeter({ runtimeDir: RUNTIME_DIR }); } catch (e) { console.error("[init] costMeter failed:", e.message); costMeter = null; }
 try { memoryStore = createMemoryStore(RUNTIME_DIR); } catch (e) { console.error("[init] memoryStore failed:", e.message); }
 try { memoryExtractor = createMemoryExtractor({ memoryStore, getSettings: loadSettings, turnThreshold: 5 }); } catch (e) { console.error("[init] memoryExtractor failed:", e.message); }

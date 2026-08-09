@@ -43,6 +43,42 @@ export function ProfileCommandCenter({ data, loading }: { data: any; loading: bo
   </div>;
 }
 
+// ATLAS Wave 1 — Today. The assistant's home surface: now/next, the day's timeline, the few
+// things that need the owner, and what he's waiting on. Reads /api/atlas/today (local day-model).
+function clockOf(iso?: string | null, tz?: string) {
+  if (!iso) return "";
+  try { return new Date(iso).toLocaleTimeString([], { hour: "numeric", minute: "2-digit", timeZone: tz || undefined }); } catch { return ""; }
+}
+export function TodayCommandCenter({ data, loading }: { data: any; loading: boolean }) {
+  const tz = data?.tz;
+  const now = data?.nowNext?.now || null;
+  const next = data?.nowNext?.next || null;
+  const timeline: any[] = data?.timeline || [];
+  const top: any[] = data?.topOfMind || [];
+  const waiting: any[] = data?.waitingOnThem || [];
+  const counts = data?.counts || {};
+  const nowIso = data?.now;
+  return <div className="pc-center today-command">
+    <section className="pc-hero"><div><span>YOUR DAY</span><h2>{now ? now.title : next ? `Next: ${next.title}` : "Nothing scheduled"}</h2><p>{now ? `On now until ${clockOf(now.endAt, tz) || "—"}${next ? ` · then ${next.title} at ${clockOf(next.startAt, tz)}` : ""}` : next ? `Starts at ${clockOf(next.startAt, tz)}${next.location ? ` · ${next.location}` : ""}` : `${data?.place || "your area"} · ${clockOf(nowIso, tz)} — the day is clear.`}</p></div><div className="pc-live"><i /> {loading ? "SYNCING" : "LIVE"}</div></section>
+    <div className="pc-stats"><Stat label="Open tasks" value={counts.openTasks ?? 0} note="to do" tone="cyan" /><Stat label="Top of mind" value={top.length} note="need you today" tone="amber" /><Stat label="Waiting on others" value={counts.waitingOnThem ?? 0} note="delegated / replies" tone="violet" /><Stat label="Reminders set" value={counts.pendingReminders ?? 0} note="will fire on time" tone="green" /></div>
+    <div className="pc-profile-grid">
+      <section className="pc-panel pc-span"><header><div><span>Top of mind</span><strong>{top.length ? `${top.length} for today` : "All clear"}</strong></div><small>due today or high priority</small></header>
+        {top.length ? <div className="pc-coverage">{top.map((t) => <article key={t.id}><b>{"!".repeat(Math.max(1, t.priority || 1))}</b><span>{t.title}</span><p>{t.dueAt ? `Due ${clockOf(t.dueAt, tz)}` : "No due time"}{t.waitingOn === "them" && t.actor ? ` · waiting on ${t.actor}` : ""}</p></article>)}</div>
+          : <p style={{ opacity: 0.6, padding: "6px 2px" }}>Nothing urgent is due today. Add a task and it will show here.</p>}
+        <div className="pc-actions"><button onClick={() => command("Plan my day from my ATLAS tasks, calendar and top-of-mind. Give a realistic order, protect focus time, and flag anything at risk. Do not invent items.")}>Plan my day</button><button onClick={() => command("What am I forgetting today? Check my open tasks, reminders and what I'm waiting on others for. Be concise and honest.")}>What am I forgetting?</button></div>
+      </section>
+      <section className="pc-panel"><header><div><span>Timeline</span><strong>{timeline.length} today</strong></div><small>{data?.place || ""}</small></header>
+        {timeline.length ? <div className="today-timeline">{timeline.map((e) => <article key={e.id} className={now && e.id === now.id ? "is-now" : ""}><i>{clockOf(e.startAt, tz)}</i><div><strong>{e.title}</strong><small>{e.location || e.kind}{e.endAt ? ` · until ${clockOf(e.endAt, tz)}` : ""}</small></div></article>)}</div>
+          : <p style={{ opacity: 0.6, padding: "6px 2px" }}>No events today.</p>}
+      </section>
+      <section className="pc-panel"><header><div><span>Waiting on others</span><strong>{waiting.length}</strong></div><small>delegated / expected replies</small></header>
+        {waiting.length ? <div className="pc-coverage">{waiting.map((t) => <article key={t.id}><b>⧖</b><span>{t.title}</span><p>{t.actor ? `From ${t.actor}` : "Expected reply"}{t.dueAt ? ` · by ${clockOf(t.dueAt, tz)}` : ""}</p></article>)}</div>
+          : <p style={{ opacity: 0.6, padding: "6px 2px" }}>You're not blocked on anyone right now.</p>}
+      </section>
+    </div>
+  </div>;
+}
+
 export function WeatherCommandCenter({ data, loading }: { data: any; loading: boolean }) {
   const current = data?.current || {};
   const days: any[] = data?.days || [];

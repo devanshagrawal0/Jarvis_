@@ -7,7 +7,7 @@ import { SynapseWidget } from "../rooms/synapse/SynapseWidget";
 import { GraphCommandCenter, VisionCommandCenter } from "./IntelligenceCommandCenters";
 import { AgentsCommandCenter, ModulesCommandCenter, ProjectsCommandCenter } from "./OperationalCommandCenters";
 import { ConnectionsCommandCenter, ReceiptsCommandCenter, TrustCommandCenter } from "./AssuranceCommandCenters";
-import { ProfileCommandCenter, VitalsCommandCenter, WeatherCommandCenter } from "./PersonalCommandCenters";
+import { ProfileCommandCenter, VitalsCommandCenter, WeatherCommandCenter, TodayCommandCenter } from "./PersonalCommandCenters";
 import { MemoryCommandCenter } from "./MemoryCommandCenter";
 import { ContactsCommandCenter } from "./ContactsCommandCenter";
 import { RuntimeMinimized, RuntimeWidget } from "./runtime/RuntimeWidget";
@@ -1027,6 +1027,46 @@ export function WeatherCard({ data, loading, onClose, onExpand }: {
   );
 }
 
+export function TodayCard({ data, loading, onClose, onExpand }: {
+  data: any; loading: boolean; onClose: () => void; onExpand: () => void;
+}) {
+  const t = (iso?: string | null) => { try { return iso ? new Date(iso).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }) : ""; } catch { return ""; } };
+  const now = data?.nowNext?.now, next = data?.nowNext?.next;
+  const top: any[] = data?.topOfMind ?? [];
+  const counts = data?.counts ?? {};
+  return (
+    <div style={CARD_STYLE}>
+      <CardHeader icon="◔" title="Today" onClose={onClose} onExpand={onExpand} />
+      <div style={CARD_BODY_STYLE}>
+        {loading ? <LoadingRows /> : (
+          <>
+            <div style={{ marginBottom: 8 }}>
+              <div style={{ fontSize: 15, fontWeight: 700, lineHeight: 1.2 }}>{now ? now.title : next ? next.title : "Nothing scheduled"}</div>
+              <Muted>{now ? `on now${now.endAt ? ` · until ${t(now.endAt)}` : ""}` : next ? `next · ${t(next.startAt)}` : "the day is clear"}</Muted>
+            </div>
+            <Divider />
+            <div style={{ display: "flex", gap: 12, fontSize: 11, margin: "8px 0" }}>
+              <Muted>✓ {counts.openTasks ?? 0} tasks</Muted>
+              <Muted>⧖ {counts.waitingOnThem ?? 0} waiting</Muted>
+              <Muted>⏰ {counts.pendingReminders ?? 0} reminders</Muted>
+            </div>
+            {top.length ? <>
+              <Divider />
+              <div style={{ marginTop: 6 }}>
+                {top.slice(0, 3).map((task) => (
+                  <div key={task.id} style={{ fontSize: 11, padding: "3px 0", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                    <span style={{ color: "#ffbf62", marginRight: 6 }}>{"!".repeat(Math.max(1, task.priority || 1))}</span>{task.title}
+                  </div>
+                ))}
+              </div>
+            </> : null}
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
 export function WeatherExpanded({ data, loading, onClose }: { data: any; loading: boolean; onClose: () => void }) {
   const cur = data?.current;
   const days: any[] = data?.days ?? [];
@@ -1351,6 +1391,7 @@ function getChipStat(id: string, data: any): string {
   switch (id) {
     case "runtime":     return `${(data.tasks ?? []).filter((task: any) => ["queued", "planning", "ready", "running", "waiting_approval", "waiting_owner", "paused", "recovering", "verified"].includes(task.state)).length} active`;
     case "contacts":    return `${data.contacts?.length ?? 0} known`;
+    case "today":       return data.nowNext?.next ? new Date(data.nowNext.next.startAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }) : (data.counts?.openTasks ? `${data.counts.openTasks} tasks` : "clear");
     case "profile":     return data.identity?.preferred_name ?? "—";
     case "weather":     return data.current ? `${data.current.temp}°` : "—";
     case "vitals":      return data.memory ? `${data.memory.pct}%` : "—";
@@ -1448,6 +1489,8 @@ async function fetchWidgetData(id: string): Promise<any> {
         __error: list.__error,
         __fetchedAt: new Date().toISOString(),
       }));
+    case "today":
+      return widgetApi("/api/atlas/today", { available: false });
     case "profile":
       return widgetApi("/api/profile", { available: false });
     case "weather":
@@ -1651,6 +1694,7 @@ function LegacyWidgetStrip({ mode, showChips = true }: { mode: string; showChips
     const loading = loadingIds.has(id);
     const props = { data, loading, onClose: handleClose, onExpand: handleExpand };
     switch (id) {
+      case "today":       return <TodayCard       {...props} key={id} />;
       case "profile":     return <ProfileCard     {...props} key={id} />;
       case "weather":     return <WeatherCard     {...props} key={id} />;
       case "vitals":      return <VitalsCard      {...props} key={id} />;
@@ -1677,6 +1721,7 @@ function LegacyWidgetStrip({ mode, showChips = true }: { mode: string; showChips
     const props = { data, loading, onClose: handleClose };
     switch (id) {
       case "contacts":    return <ContactsCommandCenter data={data} loading={loading} onRefresh={() => void handleRefresh(id)} />;
+      case "today":       return <TodayCommandCenter data={data} loading={loading} />;
       case "profile":     return <ProfileCommandCenter data={data} loading={loading} />;
       case "weather":     return <WeatherCommandCenter data={data} loading={loading} />;
       case "vitals":      return <VitalsCommandCenter data={data} loading={loading} />;
@@ -1982,6 +2027,7 @@ export function WidgetStrip({ mode }: { mode: string; showChips?: boolean }) {
     switch (id) {
       case "runtime":     return <RuntimeWidget mode={state.mode} initialData={data} onRefresh={() => void refresh(id)} />;
       case "contacts":    return <ContactsCommandCenter data={data} loading={loading} onRefresh={() => void refresh(id)} />;
+      case "today":       return <TodayCommandCenter data={data} loading={loading} />;
       case "profile":     return <ProfileCommandCenter data={data} loading={loading} />;
       case "weather":     return <WeatherCommandCenter data={data} loading={loading} />;
       case "vitals":      return <VitalsCommandCenter data={data} loading={loading} />;
