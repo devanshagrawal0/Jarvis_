@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 import "./TodayDashboard.css";
-import planetArt from "./assets/hero-planet.png";
+import heroArt from "./assets/hero-planet.png";
 
 // Today — focused view. Built to the 4 reference mockups: deep-space canvas, cyan primary with
 // purple/blue/green semantic accents, left icon rail, "Next" hero + holographic art, four stat
@@ -77,7 +77,6 @@ export function TodayDashboard({ data, loading, onExpand }: { data: any; loading
       <div className="lbl">{label}</div>
       <div className="num">{num}</div>
       <div className="foot">{foot}</div>
-      <Spark a={a} />
     </div>
   );
 
@@ -115,7 +114,7 @@ export function TodayDashboard({ data, loading, onExpand }: { data: any; loading
 
         {/* Hero — embedded 4K art + live-motion layers (rings, glow, particles, ken-burns parallax) */}
         <section className="td-hero">
-          <div className="td-hero-bg" style={{ backgroundImage: `url(${planetArt})` }} />
+          <div className="td-hero-bg" style={{ backgroundImage: `url(${heroArt})` }} />
           <div className="td-hero-glow" />
           <svg className="td-hero-rings" viewBox="0 0 300 300" fill="none">
             <g className="r1">{[132, 118, 104].map((r, i) => <ellipse key={i} cx="150" cy="150" rx={r} ry={r * 0.32} stroke="rgba(79,227,255,.3)" strokeWidth="1" transform="rotate(-16 150 150)" />)}</g>
@@ -134,8 +133,6 @@ export function TodayDashboard({ data, loading, onExpand }: { data: any; loading
               {now && <span className="td-live"><span className="td-dot" /> LIVE NOW</span>}
             </div>
           </div>
-          {focusEvent && <button className="td-hero-btn" onClick={() => command(`Prepare me for "${focusEvent.title}" — the context, the people, and what I need.`)}>{now ? "JOIN NOW" : "VIEW DETAILS"} ›</button>}
-          <div className="td-quote">Discipline today,<br />freedom tomorrow.<span>— JARVIS</span></div>
         </section>
 
         {/* Stat cards */}
