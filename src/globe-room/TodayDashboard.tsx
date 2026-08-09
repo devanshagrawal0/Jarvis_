@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import "./TodayDashboard.css";
+import planetArt from "./assets/hero-planet.png";
 
 // Today — focused view. Built to the 4 reference mockups: deep-space canvas, cyan primary with
 // purple/blue/green semantic accents, left icon rail, "Next" hero + holographic art, four stat
@@ -112,13 +113,21 @@ export function TodayDashboard({ data, loading, onExpand }: { data: any; loading
           </div>
         </header>
 
-        {/* Hero */}
+        {/* Hero — embedded 4K art + live-motion layers (rings, glow, particles, ken-burns parallax) */}
         <section className="td-hero">
+          <div className="td-hero-bg" style={{ backgroundImage: `url(${planetArt})` }} />
+          <div className="td-hero-glow" />
+          <svg className="td-hero-rings" viewBox="0 0 300 300" fill="none">
+            <g className="r1">{[132, 118, 104].map((r, i) => <ellipse key={i} cx="150" cy="150" rx={r} ry={r * 0.32} stroke="rgba(79,227,255,.3)" strokeWidth="1" transform="rotate(-16 150 150)" />)}</g>
+            <g className="r2">{[92, 78].map((r, i) => <ellipse key={i} cx="150" cy="150" rx={r} ry={r * 0.34} stroke="rgba(177,139,255,.28)" strokeWidth="1" transform="rotate(-16 150 150)" />)}</g>
+          </svg>
+          <div className="td-hero-particles" />
+          <div className="td-hero-fade" />
           <div className="td-hero-l">
             <div className="eyebrow">{greeting.toUpperCase()}{data?.place ? ` · ${data.place}` : ""}</div>
             <h2>
               <span className="lead">{now ? "Now:" : next ? "Next:" : "Today"}</span>
-              {focusEvent ? <><span className="td-gem">◈</span>{focusEvent.title}</> : <span className="lead" style={{ fontSize: 22 }}>the day is clear</span>}
+              {focusEvent ? <><span className="td-gem">◈</span><span className="ttl">{focusEvent.title}</span></> : <span className="ttl lead" style={{ fontSize: 22 }}>the day is clear</span>}
             </h2>
             <div className="meta">
               {focusEvent ? <span>Starts at {clockOf(focusEvent.startAt, tz)}{focusEvent.location ? ` · ${focusEvent.location}` : ""}</span> : <span>Nothing scheduled — a good day to get ahead.</span>}
@@ -126,12 +135,7 @@ export function TodayDashboard({ data, loading, onExpand }: { data: any; loading
             </div>
           </div>
           {focusEvent && <button className="td-hero-btn" onClick={() => command(`Prepare me for "${focusEvent.title}" — the context, the people, and what I need.`)}>{now ? "JOIN NOW" : "VIEW DETAILS"} ›</button>}
-          <svg className="td-hero-art" viewBox="0 0 320 320" fill="none">
-            <defs><radialGradient id="planet" cx="50%" cy="45%" r="55%"><stop offset="0" stopColor="#2aa6d6" stopOpacity=".5" /><stop offset="1" stopColor="#0a1830" stopOpacity="0" /></radialGradient></defs>
-            <circle cx="170" cy="150" r="82" fill="url(#planet)" stroke="rgba(69,224,255,.35)" strokeWidth="1" />
-            {[0, 1, 2].map((k) => <ellipse key={k} cx="170" cy="150" rx={128 - k * 6} ry={38 - k * 4} stroke="rgba(69,224,255,.18)" strokeWidth="1" transform={`rotate(${-18 + k * 3} 170 150)`} />)}
-            <circle cx="292" cy="118" r="2.5" fill="#8fdcff" />
-          </svg>
+          <div className="td-quote">Discipline today,<br />freedom tomorrow.<span>— JARVIS</span></div>
         </section>
 
         {/* Stat cards */}

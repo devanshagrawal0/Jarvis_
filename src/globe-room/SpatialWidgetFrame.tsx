@@ -64,7 +64,7 @@ export function SpatialWidgetFrame({ state, icon, title, stat, status, fetchedAt
   const sizeStart = { w: state.w, h: state.h };
   const setMode = (mode: SpatialWidgetMode) => {
     if (mode === "expanded") {
-      onUpdate({ mode, x: Math.max(18, Math.round(window.innerWidth * .08)), y: 72, w: Math.min(1180, Math.round(window.innerWidth * .72)), h: Math.min(760, window.innerHeight - 190) });
+      onUpdate({ mode, x: Math.max(18, Math.round(window.innerWidth * .07)), y: 58, w: Math.min(1240, Math.round(window.innerWidth * .76)), h: Math.min(884, window.innerHeight - 130) });
     } else if (mode === "normal") {
       onUpdate({ mode, w: clamp(state.w, 460, 720), h: clamp(state.h, 390, 610), x: clamp(state.x, 12, Math.max(12, window.innerWidth - 480)), y: clamp(state.y, 64, Math.max(64, window.innerHeight - 520)) });
     } else onUpdate({ mode });

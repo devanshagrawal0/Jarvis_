@@ -1910,7 +1910,7 @@ function defaultSpatialWindow(id: string, order: number, focus = false): Spatial
   const row = Math.floor(order / columns) % 2;
   const w = Math.min(680, Math.max(580, window.innerWidth * .36));
   const h = Math.min(610, Math.max(500, window.innerHeight * .56));
-  if (focus) return { id, mode: "expanded", x: Math.round(window.innerWidth * .08), y: 70, w: Math.min(1180, Math.round(window.innerWidth * .72)), h: Math.min(760, window.innerHeight - 190), z: 100 + order };
+  if (focus) return { id, mode: "expanded", x: Math.round(window.innerWidth * .07), y: 58, w: Math.min(1240, Math.round(window.innerWidth * .76)), h: Math.min(884, window.innerHeight - 130), z: 100 + order };
   return { id, mode: "normal", x: 22 + column * 42, y: 68 + row * 48, w, h, z: 100 + order };
 }
 
