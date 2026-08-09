@@ -184,6 +184,9 @@
 .td-agenda-main { flex: 1; min-width: 0; }
 .td-agenda-main strong { display: block; font-size: 12.5px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .td-agenda-main small { display: block; margin-top: 1px; font-size: 10px; color: var(--td-mut); }
+/* inline rename field */
+.td-edit { width: 100%; background: rgba(6,14,26,.7); border: 1px solid var(--td-lineHi); border-radius: 7px; color: var(--td-ink); font: 600 13px Inter, sans-serif; padding: 4px 8px; outline: none; box-shadow: 0 0 0 2px rgba(79,227,255,.14); }
+.td-task-main strong[title], .td-agenda-main strong[title] { cursor: text; }
 .td-tom-actions { display: flex; gap: 9px; padding: 7px 13px 12px; }
 .td-oline { padding: 8px 13px; border-radius: 9px; cursor: pointer; display: inline-flex; align-items: center; gap: 7px; font: 600 8.5px Orbitron; letter-spacing: .07em; text-transform: uppercase; background: linear-gradient(155deg, rgba(79,227,255,.12), rgba(79,227,255,.04)); border: 1px solid rgba(79,227,255,.3); color: var(--td-cyan); box-shadow: var(--hi); transition: .16s; }
 .td-oline:hover { background: rgba(79,227,255,.2); }

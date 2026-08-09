@@ -6906,6 +6906,17 @@ async function handleApi(req, res, pathname, url) {
       if (!atlasStore) { sendJson(res, 503, { error: "atlas unavailable" }); return; }
       try { sendJson(res, 200, { ok: atlasStore.deleteEvent(m[1]) }); } catch (e) { sendJson(res, 400, { error: String(e && e.message || e) }); }
       return;
+    }
+    if (m && (req.method === "PATCH" || req.method === "POST")) {
+      if (!atlasStore) { sendJson(res, 503, { error: "atlas unavailable" }); return; }
+      try { const d = await parseRequestData(req); sendJson(res, 200, { event: atlasStore.updateEvent(m[1], d) }); } catch (e) { sendJson(res, 400, { error: String(e && e.message || e) }); }
+      return;
+    } }
+  { const m = pathname.match(/^\/api\/atlas\/reminders\/([^/]+)$/);
+    if (m && (req.method === "PATCH" || req.method === "POST")) {
+      if (!atlasStore) { sendJson(res, 503, { error: "atlas unavailable" }); return; }
+      try { const d = await parseRequestData(req); sendJson(res, 200, { reminder: atlasStore.updateReminder(m[1], d) }); } catch (e) { sendJson(res, 400, { error: String(e && e.message || e) }); }
+      return;
     } }
   if (pathname === "/api/atlas/people" && req.method === "GET") { if (!atlasStore) { sendJson(res, 200, { people: [] }); return; } sendJson(res, 200, { people: atlasStore.listPeople() }); return; }
   if (pathname === "/api/atlas/people" && req.method === "POST") { if (!atlasStore) { sendJson(res, 503, { error: "atlas unavailable" }); return; } try { const d = await parseRequestData(req); sendJson(res, 201, { person: atlasStore.upsertPerson(d) }); } catch (e) { sendJson(res, 400, { error: String(e && e.message || e) }); } return; }
@@ -13222,6 +13233,18 @@ try {
       try { atlasStore.addNote(`Reminder fired: ${reminder.title}`, ["reminder-fired"]); } catch {}
       try { await broadcastPushToAllDevices("Reminder", reminder.title, { type: "atlas_reminder", reminderId: reminder.id, taskId: reminder.taskId || null }); } catch {}
       try { if (typeof wsHub !== "undefined" && wsHub && wsHub.broadcast) wsHub.broadcast({ type: "atlas.reminder.fired", reminder }); } catch {}
+      // Wave 3 — recurring reminders: after a repeating one fires, arm the next occurrence. Each
+      // occurrence is its own fire-once row, so the idempotency guard is preserved. `after` is
+      // max(scheduled, now) so a late catch-up schedules a FUTURE slot instead of looping missed ones.
+      try {
+        if (reminder.recurrence) {
+          const tz = reminder.tz || "America/New_York";
+          const p = new Intl.DateTimeFormat("en-US", { timeZone: tz, hourCycle: "h23", hour: "2-digit", minute: "2-digit" }).formatToParts(new Date(reminder.fireAt)).reduce((a, x) => (a[x.type] = x.value, a), {});
+          const after = Math.max(new Date(reminder.fireAt).getTime(), Date.now());
+          const nextIso = atlasCapture.nextOccurrence(reminder.recurrence, after, tz, +p.hour, +p.minute);
+          atlasStore.createReminder({ title: reminder.title, fireAt: nextIso, tz, recurrence: reminder.recurrence, source: { kind: "system", ref: "recurrence" } });
+        }
+      } catch (e) { console.error("[atlas] recurrence re-arm failed:", e.message); }
     },
   });
   atlasScheduler.start();

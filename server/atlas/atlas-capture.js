@@ -62,7 +62,7 @@ function extractWhen(text, tz, now) {
     const unit = /h/i.test(rel[2]) ? "h" : "m";
     consumed.push(rel[0]);
     const iso = new Date(nowMs + n * (unit === "h" ? 3600 : 60) * 1000).toISOString();
-    return { iso, hadDate: true, hadClock: true, consumed };
+    return { iso, hadDate: true, hadClock: true, consumed, hh: null, mm: 0 };
   }
 
   // day words
@@ -129,7 +129,44 @@ function extractWhen(text, tz, now) {
   }
   if (hh == null) hh = 9;                                           // date but no clock -> 9:00 local
 
-  return { iso: zonedWallToIso(date.y, date.mo, date.d, hh, mm, tz), hadDate, hadClock, consumed };
+  return { iso: zonedWallToIso(date.y, date.mo, date.d, hh, mm, tz), hadDate, hadClock, consumed, hh, mm };
+}
+
+// ── recurrence ─────────────────────────────────────────────────────────────────
+// Detect "every day / daily / every morning / every monday / every weekday / weekly".
+// Returns { freq:'daily'|'weekly'|'weekdays', weekday?, defHour?, phrase } or null.
+function detectRecurrence(text) {
+  const t = String(text || "");
+  let m;
+  if ((m = t.match(/\bevery\s+(mon|tue|tues|wed|wednes|thu|thur|thurs|fri|satur|sat|sun)[a-z]*day?s?\b/i))) {
+    const key = m[1].toLowerCase().slice(0, 3);
+    const weekday = { sun: 0, mon: 1, tue: 2, wed: 3, thu: 4, fri: 5, sat: 6 }[key];
+    return { freq: "weekly", weekday, phrase: m[0] };
+  }
+  if (/\bevery\s+weekday\b|\bevery\s+week\s?day\b|\bon\s+weekdays\b/i.test(t)) return { freq: "weekdays", phrase: (t.match(/\bevery\s+weekday\b|\bon\s+weekdays\b/i) || [])[0] };
+  if ((m = t.match(/\bevery\s+morning\b/i))) return { freq: "daily", defHour: 9, phrase: m[0] };
+  if ((m = t.match(/\bevery\s+(?:evening|night)\b/i))) return { freq: "daily", defHour: 20, phrase: m[0] };
+  if ((m = t.match(/\bevery\s+afternoon\b/i))) return { freq: "daily", defHour: 14, phrase: m[0] };
+  if ((m = t.match(/\b(every\s*day|everyday|daily|each\s+day)\b/i))) return { freq: "daily", phrase: m[0] };
+  if ((m = t.match(/\b(every\s+week|weekly)\b/i))) return { freq: "weekly", phrase: m[0] };
+  return null;
+}
+
+// The next instant strictly after `afterMs` that matches the recurrence, at hh:mm local (tz).
+function nextOccurrence(rec, afterMs, tz, hh, mm) {
+  const H = Number.isFinite(hh) ? hh : (rec.defHour ?? 9);
+  const M = Number.isFinite(mm) ? mm : 0;
+  const base = tzParts(tz, afterMs);
+  for (let i = 0; i < 370; i++) {
+    const d = addDays(base.y, base.mo, base.d, i);
+    const iso = zonedWallToIso(d.y, d.mo, d.d, H, M, tz);
+    if (new Date(iso).getTime() <= afterMs) continue;
+    const dow = new Date(Date.UTC(d.y, d.mo - 1, d.d)).getUTCDay();
+    if (rec.freq === "daily") return iso;
+    if (rec.freq === "weekdays") { if (dow >= 1 && dow <= 5) return iso; continue; }
+    if (rec.freq === "weekly") { if (dow === rec.weekday) return iso; continue; }
+  }
+  return new Date(afterMs + 86400_000).toISOString();
 }
 
 // Strip the matched time phrases + leading verb noise so the title reads clean.
@@ -140,6 +177,9 @@ function cleanTitle(text, consumed = []) {
   }
   return t
     .replace(/\b(please|pls)\b/gi, " ")
+    // recurrence phrases drive the recurrence field, not the title text
+    .replace(/\bevery\s+(day|morning|afternoon|evening|night|week|weekday|mon|tue|tues|wed|wednes|thu|thur|thurs|fri|satur|sat|sun)[a-z]*\b/gi, " ")
+    .replace(/\b(everyday|daily|weekly|each\s+day|on\s+weekdays)\b/gi, " ")
     // priority words drive the priority field, not the title text
     .replace(/,?\s*\b(urgent|asap|important|critical|high[- ]?priority|top priority)\b/gi, " ")
     .replace(/\s+([,.;:])/g, "$1")            // "reimbursement , urgent" -> "reimbursement,"
@@ -174,7 +214,14 @@ function parseCapture(rawText, opts = {}) {
   if (remM) {
     const after = text.slice(text.toLowerCase().indexOf(remM[0].toLowerCase()) + remM[0].length).trim();
     const when = extractWhen(after || text, tz, now);
+    const rec = detectRecurrence(after || text);
     const title = titleCaseFirst(cleanTitle(after || text, when?.consumed).replace(/^(to|that|about)\s+/i, ""));
+    if (rec) {
+      // recurring reminder — first fire is the next matching occurrence at the given (or default) clock
+      const nowMs = now.getTime();
+      const fireAt = nextOccurrence(rec, nowMs, tz, when?.hh, when?.mm);
+      return { kind: "reminder", title: title || "Reminder", fireAt, tz, recurrence: rec };
+    }
     if (when && when.iso) return { kind: "reminder", title: title || "Reminder", fireAt: when.iso, tz };
     // Reminder with no parseable time can't fire — make it an honest open task instead.
     return { kind: "task", title: title || "Follow up", waitingOn: "me", priority: 1, tz, note: "no time given — saved as a task" };
@@ -222,14 +269,23 @@ function parseCapture(rawText, opts = {}) {
 function fmtClock(iso, tz) {
   try { return new Date(iso).toLocaleString("en-US", { weekday: "short", hour: "numeric", minute: "2-digit", timeZone: tz }); } catch { return iso; }
 }
+const WD_NAMES = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+function recurrenceLabel(rec) {
+  if (!rec) return "";
+  if (rec.freq === "daily") return "daily";
+  if (rec.freq === "weekdays") return "every weekday";
+  if (rec.freq === "weekly") return `every ${WD_NAMES[rec.weekday] || "week"}`;
+  return "";
+}
 function applyCapture(store, parsed, ctx = {}) {
   if (!store || !parsed || !parsed.kind) return { ok: false, kind: null, message: parsed?.reason || "nothing to capture" };
   const source = { kind: ctx.sourceKind || "owner", ref: ctx.sourceRef || "capture" };
   const tz = parsed.tz || ctx.tz || DEFAULT_TZ;
   switch (parsed.kind) {
     case "reminder": {
-      const item = store.createReminder({ title: parsed.title, fireAt: parsed.fireAt, tz, source });
-      return { ok: true, kind: "reminder", item, message: `Reminder set — ${parsed.title} · ${fmtClock(parsed.fireAt, tz)}` };
+      const item = store.createReminder({ title: parsed.title, fireAt: parsed.fireAt, tz, recurrence: parsed.recurrence || null, source });
+      const rep = parsed.recurrence ? ` · repeats ${recurrenceLabel(parsed.recurrence)}` : "";
+      return { ok: true, kind: "reminder", item, message: `Reminder set — ${parsed.title} · ${fmtClock(parsed.fireAt, tz)}${rep}` };
     }
     case "event": {
       const item = store.createEvent({ title: parsed.title, startAt: parsed.startAt, endAt: parsed.endAt, location: parsed.location, tz, source });
@@ -255,4 +311,4 @@ function capture(store, rawText, opts = {}) {
   return applyCapture(store, parsed, opts);
 }
 
-module.exports = { parseCapture, applyCapture, capture, zonedWallToIso, extractWhen, DEFAULT_TZ };
+module.exports = { parseCapture, applyCapture, capture, zonedWallToIso, extractWhen, detectRecurrence, nextOccurrence, recurrenceLabel, DEFAULT_TZ };

@@ -126,6 +126,24 @@ export function TodayDashboard({ data, loading, onExpand, onRefresh }: { data: a
   const snoozeTask = (id: string) => patchTask(id, { dueAt: new Date(Date.now() + 3600_000).toISOString() });   // +1h
   const cancelReminder = (id: string) => act(id, () => fetch(`/api/atlas/reminders/${id}/cancel`, { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" }));
   const removeEvent = (id: string) => act(id, () => fetch(`/api/atlas/events/${id}`, { method: "DELETE" }));
+  // inline rename — double-click a title to edit; Enter/blur saves, Escape cancels
+  const [editing, setEditing] = useState<{ id: string; kind: "task" | "event" | "reminder"; value: string } | null>(null);
+  const startEdit = (id: string, kind: "task" | "event" | "reminder", value: string) => setEditing({ id, kind, value });
+  const saveEdit = async () => {
+    if (!editing) return;
+    const { id, kind, value } = editing;
+    const title = value.trim();
+    setEditing(null);
+    if (!title) return;
+    const url = kind === "task" ? `/api/atlas/tasks/${id}` : kind === "event" ? `/api/atlas/events/${id}` : `/api/atlas/reminders/${id}`;
+    await act(id, () => fetch(url, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ title }) }));
+  };
+  const editBox = (id: string, kind: "task" | "event" | "reminder", value: string, cls = "") => (
+    <input className={`td-edit ${cls}`} autoFocus value={editing?.value ?? value}
+      onChange={(e) => setEditing((cur) => cur ? { ...cur, value: e.target.value } : cur)}
+      onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); void saveEdit(); } else if (e.key === "Escape") setEditing(null); }}
+      onBlur={() => void saveEdit()} />
+  );
   // upcoming agenda = today's events + pending reminders, merged and time-sorted, each cancelable
   const reminders: any[] = data?.reminders || [];
   const agenda = [
@@ -240,7 +258,7 @@ export function TodayDashboard({ data, loading, onExpand, onRefresh }: { data: a
           {top.length ? top.slice(0, 3).map((t) => (
             <div className={`td-task ${pending.has(t.id) ? "is-busy" : ""}`} key={t.id}>
               <button className={`td-check ${t.priority >= 3 ? "hi" : ""}`} title="Mark done" onClick={() => completeTask(t.id)} />
-              <div className="td-task-main"><strong>{t.title}</strong><small>{t.dueAt ? `Due ${clockOf(t.dueAt, tz)}` : "No due time"}{t.waitingOn === "them" && t.actor ? ` · waiting on ${t.actor}` : ""}</small></div>
+              <div className="td-task-main">{editing?.id === t.id ? editBox(t.id, "task", t.title) : <strong onDoubleClick={() => startEdit(t.id, "task", t.title)} title="Double-click to rename">{t.title}</strong>}<small>{t.dueAt ? `Due ${clockOf(t.dueAt, tz)}` : "No due time"}{t.waitingOn === "them" && t.actor ? ` · waiting on ${t.actor}` : ""}</small></div>
               <button className="td-icon-btn" title="Snooze 1 hour" onClick={() => snoozeTask(t.id)}>⏰</button>
               <button className="td-icon-btn" title="Dismiss" onClick={() => dropTask(t.id)}>✕</button>
             </div>
@@ -274,7 +292,7 @@ export function TodayDashboard({ data, loading, onExpand, onRefresh }: { data: a
               {agenda.length ? agenda.slice(0, 4).map((it) => (
                 <div className={`td-agenda-row ${pending.has(it.id) ? "is-busy" : ""}`} key={`${it.kind}-${it.id}`}>
                   <span className={`td-agenda-ic ${it.kind}`}>{it.kind === "event" ? "◈" : "⏰"}</span>
-                  <div className="td-agenda-main"><strong>{it.title}</strong><small>{clockOf(it.at, tz)}{it.loc ? ` · ${it.loc}` : it.kind === "reminder" ? " · reminder" : ""}</small></div>
+                  <div className="td-agenda-main">{editing?.id === it.id ? editBox(it.id, it.kind as "event" | "reminder", it.title) : <strong onDoubleClick={() => startEdit(it.id, it.kind as "event" | "reminder", it.title)} title="Double-click to rename">{it.title}</strong>}<small>{clockOf(it.at, tz)}{it.loc ? ` · ${it.loc}` : it.kind === "reminder" ? " · reminder" : ""}</small></div>
                   <button className="td-icon-btn" title={it.kind === "event" ? "Remove event" : "Cancel reminder"} onClick={() => it.kind === "event" ? removeEvent(it.id) : cancelReminder(it.id)}>✕</button>
                 </div>
               )) : <div className="td-empty">Nothing coming up. Capture a reminder or event above.</div>}

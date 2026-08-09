@@ -24,6 +24,22 @@ test("task create/list and the waiting-on ledgers keep actor/beneficiary straigh
   s.close();
 });
 
+test("events and reminders can be edited and removed (Wave 3)", () => {
+  const s = createAtlasStore({ file: ":memory:" });
+  const e = s.createEvent({ title: "Standup", startAt: future(3600_000) });
+  const e2 = s.updateEvent(e.id, { title: "Standup (renamed)", location: "Zoom" });
+  assert.equal(e2.title, "Standup (renamed)");
+  assert.equal(e2.location, "Zoom");
+  assert.equal(s.deleteEvent(e.id), true);
+  assert.equal(s.eventsBetween(past(1_000), future(7200_000)).length, 0, "deleted event is gone");
+
+  const r = s.createReminder({ title: "Call bank", fireAt: future(3600_000) });
+  const r2 = s.updateReminder(r.id, { title: "Call the bank tomorrow" });
+  assert.equal(r2.title, "Call the bank tomorrow");
+  assert.equal(s.pendingReminders().length, 1);
+  s.close();
+});
+
 test("a due reminder fires exactly once even when two ticks race", async () => {
   const s = createAtlasStore({ file: ":memory:" });
   s.createReminder({ title: "standup", fireAt: past(1000) });

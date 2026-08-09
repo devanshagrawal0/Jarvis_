@@ -150,6 +150,14 @@ function createAtlasStore({ runtimeDir, file } = {}) {
       .all(endIso, startIso, startIso, endIso).map(eventRow);
   }
   function deleteEvent(id) { return db.prepare("DELETE FROM atlas_events WHERE id=?").run(id).changes > 0; }
+  function updateEvent(id, patch = {}) {
+    const cur = eventRow(db.prepare("SELECT * FROM atlas_events WHERE id=?").get(id));
+    if (!cur) throw new Error("Event not found");
+    const next = { ...cur, ...patch };
+    db.prepare("UPDATE atlas_events SET title=?,start_at=?,end_at=?,tz=?,location=?,kind=?,movable=?,updated_at=? WHERE id=?")
+      .run(String(next.title || cur.title).trim(), next.startAt, next.endAt ?? null, next.tz, next.location ?? null, next.kind, next.movable ? 1 : 0, nowIso(), id);
+    return eventRow(db.prepare("SELECT * FROM atlas_events WHERE id=?").get(id));
+  }
 
   // ── Reminders (durable, fire-exactly-once) ────────────────────────────────
   const remRow = (r) => r && ({ id: r.id, title: r.title, fireAt: r.fire_at, tz: r.tz, taskId: r.task_id, recurrence: j(r.recurrence), source: { kind: r.source_kind, ref: r.source_ref }, firedAt: r.fired_at, cancelledAt: r.cancelled_at, createdAt: r.created_at });
@@ -161,6 +169,14 @@ function createAtlasStore({ runtimeDir, file } = {}) {
     return remRow(db.prepare("SELECT * FROM atlas_reminders WHERE id=?").get(row.id));
   }
   function cancelReminder(id) { db.prepare("UPDATE atlas_reminders SET cancelled_at=? WHERE id=? AND fired_at IS NULL AND cancelled_at IS NULL").run(nowIso(), id); return remRow(db.prepare("SELECT * FROM atlas_reminders WHERE id=?").get(id)); }
+  function updateReminder(id, patch = {}) {
+    const cur = remRow(db.prepare("SELECT * FROM atlas_reminders WHERE id=?").get(id));
+    if (!cur) throw new Error("Reminder not found");
+    const next = { ...cur, ...patch };
+    db.prepare("UPDATE atlas_reminders SET title=?,fire_at=?,tz=? WHERE id=? AND fired_at IS NULL")
+      .run(String(next.title || cur.title).trim(), next.fireAt, next.tz, id);
+    return remRow(db.prepare("SELECT * FROM atlas_reminders WHERE id=?").get(id));
+  }
   function pendingReminders() { return db.prepare("SELECT * FROM atlas_reminders WHERE fired_at IS NULL AND cancelled_at IS NULL ORDER BY fire_at").all().map(remRow); }
   // Atomically claim every reminder due at/before `asOfIso` that hasn't fired. The UPDATE is the
   // idempotency guard: a second scheduler tick (or a post-restart catch-up) can't re-fire a row
@@ -197,8 +213,8 @@ function createAtlasStore({ runtimeDir, file } = {}) {
   return {
     db,
     createTask, getTask, updateTask, listTasks, waitingOnMe, waitingOnThem,
-    createEvent, eventsBetween, deleteEvent,
-    createReminder, cancelReminder, pendingReminders, claimDueReminders,
+    createEvent, eventsBetween, deleteEvent, updateEvent,
+    createReminder, cancelReminder, updateReminder, pendingReminders, claimDueReminders,
     upsertPerson, listPeople,
     addNote, listNotes,
     close: () => db.close(),

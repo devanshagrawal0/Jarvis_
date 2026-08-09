@@ -88,6 +88,44 @@ test("note: explicit note prefix", () => {
   assert.equal(r.body, "parking spot is B12");
 });
 
+test("recurring reminder: 'every day at 9am' repeats daily, first fire next 9am", () => {
+  const r = P("remind me to take meds every day at 9am");   // 9am already passed at 14:30
+  assert.equal(r.kind, "reminder");
+  assert.deepEqual(r.recurrence, { freq: "daily", phrase: r.recurrence.phrase });
+  assert.equal(r.recurrence.freq, "daily");
+  assert.equal(localOf(r.fireAt), "2026-08-10 09:00");
+  assert.doesNotMatch(r.title, /every|daily/i, "recurrence words don't leak into the title");
+  assert.match(r.title, /take meds/i);
+});
+
+test("recurring reminder: 'every monday at 10am' is weekly on the right weekday", () => {
+  const r = P("remind me to submit the report every monday at 10am");
+  assert.equal(r.kind, "reminder");
+  assert.equal(r.recurrence.freq, "weekly");
+  assert.equal(r.recurrence.weekday, 1);
+  assert.equal(localOf(r.fireAt), "2026-08-10 10:00");   // Mon after Sun 8/9
+});
+
+test("recurring reminder: 'every morning' uses the 9am default", () => {
+  const r = P("remind me to stretch every morning");
+  assert.equal(r.recurrence.freq, "daily");
+  assert.equal(localOf(r.fireAt), "2026-08-10 09:00");
+});
+
+test("recurring reminder: 'every weekday at 8am' skips the weekend", () => {
+  const r = P("remind me to check email every weekday at 8am");
+  assert.equal(r.recurrence.freq, "weekdays");
+  assert.equal(localOf(r.fireAt), "2026-08-10 08:00");   // Mon
+});
+
+test("nextOccurrence after a fire lands strictly in the future", () => {
+  const { nextOccurrence } = require("../../server/atlas/atlas-capture");
+  const firedAt = new Date("2026-08-10T13:00:00.000Z").getTime();   // Mon 9am EDT
+  const next = nextOccurrence({ freq: "daily" }, firedAt, TZ, 9, 0);
+  assert.ok(new Date(next).getTime() > firedAt);
+  assert.equal(localOf(next), "2026-08-11 09:00");
+});
+
 test("non-capture questions return kind:null so the brain handles them", () => {
   assert.equal(P("what's the weather like today?").kind, null);
   assert.equal(P("who won the game last night").kind, null);
