@@ -186,6 +186,44 @@ function createUserContext({ runtimeDir, owner = "Dev" }) {
     db.prepare("INSERT INTO locations (label,address,lat,lng,timezone,is_current,source,valid_from,confidence) VALUES ('mentioned',?,?,?,?,0,'user_stated',?,0.9)")
       .run(place_name, lat, lng, iana_tz, nowIso());
   }
+
+  // ── Automatic location: Jarvis figures out where the owner is, on its own ─────────
+  // The server runs on the owner's own machine, so its public-IP geolocation ≈ where he actually
+  // is right now — no browser permission, no manual input, no hardcoded city. This is what makes
+  // "what's the weather" / "what time is it" just work from his REAL location. Refreshed on boot
+  // and every few hours; it outranks the seeded Boston fallback but yields to anything he states
+  // in words or a precise browser-GPS signal.
+  let ipLocation = null; // { placeName, ianaTz, lat, lon, at }
+  async function refreshIpLocation() {
+    for (const url of ["https://ipapi.co/json/", "http://ip-api.com/json/?fields=status,city,regionName,country,lat,lon,timezone"]) {
+      try {
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), 5000);
+        const resp = await fetch(url, { signal: controller.signal }).finally(() => clearTimeout(timer));
+        if (!resp.ok) continue;
+        const g = await resp.json();
+        // Normalize the two providers' field names.
+        const city = g.city || "";
+        const region = g.region || g.region_code || g.regionName || "";
+        const country = g.country_name || g.country || "";
+        const lat = Number(g.latitude ?? g.lat), lon = Number(g.longitude ?? g.lon);
+        const tz = g.timezone || null;
+        if (!Number.isFinite(lat) || !Number.isFinite(lon)) continue;
+        const placeName = [city, region && region !== city ? region : "", country && country !== "United States" && country !== "US" ? country : ""].filter(Boolean).join(", ") || city || "your area";
+        ipLocation = { placeName, ianaTz: tz, lat, lon, at: Date.now() };
+        return ipLocation;
+      } catch { /* try next provider */ }
+    }
+    return ipLocation; // keep last good value on total failure
+  }
+  function ipLocationFresh(maxAgeMs = 6 * 3600_000) {
+    if (!ipLocation) return null;
+    if (Date.now() - ipLocation.at > maxAgeMs) return null;
+    return ipLocation;
+  }
+  // Kick off on construction (non-blocking); refresh periodically.
+  void refreshIpLocation();
+  try { const iv = setInterval(() => { void refreshIpLocation(); }, 3 * 3600_000); if (iv.unref) iv.unref(); } catch { /* ignore */ }
   // ── Detecting "I am in X" ───────────────────────────────────────────────
   // Best-effort timezone for a stated place. This is deliberately a small lookup, not a
   // geocoder: getting the CITY right in answers matters more than the clock, and guessing a
@@ -275,12 +313,37 @@ function createUserContext({ runtimeDir, owner = "Dev" }) {
     return db.prepare("SELECT * FROM locations WHERE label='mentioned' AND valid_to IS NULL AND valid_from >= ? ORDER BY id DESC LIMIT 1").get(cutoff) || null;
   }
 
-  // Resolution order: explicit session mention → recent stated mention → browser tz → home →
-  // default. A stated location outranks the browser timezone: a VPN or a laptop that never had
-  // its clock changed should not override the owner saying, in words, where they are.
+  // ── Live device signal ─────────────────────────────────────────────────
+  // The owner's browser reports its real IANA timezone (free, no permission) and,
+  // when he grants it, real GPS coordinates reverse-geocoded to a city. This is the
+  // ONLY thing that knows where he actually is right now — the seeded "Boston" home
+  // was wrong every time he travelled. Set fresh each chat turn from clientContext;
+  // it expires so a closed browser doesn't pin a stale location forever.
+  let clientSignal = null; // { timezone, placeName, lat, lon, at }
+  function setClientSignal(sig) {
+    if (!sig || typeof sig !== "object") return;
+    const timezone = typeof sig.timezone === "string" && /^[A-Za-z]+\/[A-Za-z0-9_+\-]+$/.test(sig.timezone) ? sig.timezone : null;
+    const lat = Number.isFinite(Number(sig.lat)) ? Number(sig.lat) : null;
+    const lon = Number.isFinite(Number(sig.lon)) ? Number(sig.lon) : null;
+    const placeName = typeof sig.placeName === "string" && sig.placeName.trim() ? sig.placeName.trim().slice(0, 80) : null;
+    if (!timezone && lat == null && !placeName) return; // nothing usable
+    clientSignal = { timezone, placeName, lat, lon, at: Date.now() };
+  }
+  function liveClientSignal(maxAgeMs = 2 * 3600_000) {
+    if (!clientSignal) return null;
+    if (Date.now() - clientSignal.at > maxAgeMs) return null;
+    return clientSignal;
+  }
+
+  // Resolution order: explicit session mention → recent stated mention → live device signal →
+  // browser tz → home → default. A stated location ("I'm in Tokyo") outranks the device signal,
+  // since the owner's words beat a VPN or an un-updated clock; but the live device beats the
+  // seeded home, because a stale seed should never win over where the device actually is.
   function resolveLocation({ sessionMention = null, browserTz = null } = {}) {
+    const live = liveClientSignal();
+    const liveTz = browserTz || live?.timezone || null;
     if (sessionMention?.place_name) {
-      return { placeName: sessionMention.place_name, ianaTz: sessionMention.iana_tz || browserTz || homeLocation()?.timezone || "America/New_York", lat: sessionMention.lat ?? null, lon: sessionMention.lng ?? null, source: "session" };
+      return { placeName: sessionMention.place_name, ianaTz: sessionMention.iana_tz || liveTz || homeLocation()?.timezone || "America/New_York", lat: sessionMention.lat ?? null, lon: sessionMention.lng ?? null, source: "session" };
     }
     const home = homeLocation();
     // Recency decides between the two things the owner said. A transient "I'm in X right now"
@@ -288,10 +351,22 @@ function createUserContext({ runtimeDir, owner = "Dev" }) {
     // mention — otherwise the move is permanently shadowed by a stale passing remark.
     const stated = latestMention();
     if (stated && !(home && home.source !== "seed" && Date.parse(home.valid_from || 0) > Date.parse(stated.valid_from || 0))) {
-      return { placeName: stated.address, ianaTz: stated.timezone || browserTz || home?.timezone || "America/New_York", lat: stated.lat ?? null, lon: stated.lng ?? null, source: "stated" };
+      return { placeName: stated.address, ianaTz: stated.timezone || liveTz || home?.timezone || "America/New_York", lat: stated.lat ?? null, lon: stated.lng ?? null, source: "stated" };
     }
-    if (browserTz && (!home || home.timezone !== browserTz)) {
-      return { placeName: home?.address || "(unknown)", ianaTz: browserTz, lat: home?.lat ?? null, lon: home?.lng ?? null, source: "browser" };
+    // Live device signal — the owner's real location this session (browser GPS/timezone).
+    if (live && (live.placeName || live.lat != null)) {
+      const sameTzAsHome = liveTz && home && home.timezone === liveTz;
+      const placeName = live.placeName || (sameTzAsHome ? home.address : "your current location");
+      return { placeName, ianaTz: liveTz || home?.timezone || "America/New_York", lat: live.lat ?? (sameTzAsHome ? home?.lat : null) ?? null, lon: live.lon ?? (sameTzAsHome ? home?.lng : null) ?? null, source: "device" };
+    }
+    // Automatic IP geolocation — Jarvis knows where the machine is without asking. Outranks the
+    // seeded Boston, but not a home the owner explicitly set.
+    const ip = ipLocationFresh();
+    if (ip && (!home || home.source === "seed")) {
+      return { placeName: ip.placeName, ianaTz: liveTz || ip.ianaTz || home?.timezone || "America/New_York", lat: ip.lat, lon: ip.lon, source: "ip" };
+    }
+    if (liveTz && (!home || home.timezone !== liveTz)) {
+      return { placeName: home?.address || "(unknown)", ianaTz: liveTz, lat: home?.lat ?? null, lon: home?.lng ?? null, source: "browser" };
     }
     if (home) return { placeName: home.address, ianaTz: home.timezone, lat: home.lat, lon: home.lng, source: "home" };
     return { placeName: "(unknown)", ianaTz: "America/New_York", lat: null, lon: null, source: "default" };
@@ -342,6 +417,7 @@ function createUserContext({ runtimeDir, owner = "Dev" }) {
     setPreference, getPreferences,
     addGoal, activeGoals,
     homeLocation, setHome, noteMention, resolveLocation, latestMention, detectLocationStatement, recordLocationStatement,
+    setClientSignal, liveClientSignal, refreshIpLocation, ipLocationFresh,
     renderProfileBlock, localTime, situationalContext,
   };
 }

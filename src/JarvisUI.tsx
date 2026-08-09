@@ -15,6 +15,48 @@ import { LiveVoiceController } from "./liveVoice";
 import type { BrainResponse, JarvisActivityEvent, JarvisArtifact, JarvisContactCandidate, JarvisResponseCard, JarvisUiAction } from "./types";
 import "./JarvisUI.css";
 
+// ── Client location context ────────────────────────────────────────────────
+// The server only knows a seeded "home" (Boston), so weather / "near me" / local
+// time answers were wrong whenever Dev is somewhere else. The browser is the only
+// thing that actually knows where he is right now: its IANA timezone is free and
+// instant, and geolocation (with permission) gives real coordinates we reverse-
+// geocode to a city. We resolve this ONCE on load, cache it, and attach it to every
+// chat turn so the backend can answer from his real current location, not a guess.
+type ClientContext = { timezone?: string; placeName?: string; lat?: number; lon?: number; source?: string };
+let CLIENT_CONTEXT: ClientContext = {};
+try {
+  const cached = localStorage.getItem("jarvis.clientContext");
+  if (cached) CLIENT_CONTEXT = JSON.parse(cached);
+} catch { /* private mode / disabled storage — fine, we re-resolve below */ }
+
+async function resolveClientContext(): Promise<void> {
+  // Timezone is always available and needs no permission — set it immediately.
+  try {
+    const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    if (tz) CLIENT_CONTEXT = { ...CLIENT_CONTEXT, timezone: tz, source: CLIENT_CONTEXT.placeName ? CLIENT_CONTEXT.source : "timezone" };
+  } catch { /* ignore */ }
+  // Best-effort precise location. Permission-gated; if denied we keep the timezone.
+  if (typeof navigator !== "undefined" && navigator.geolocation) {
+    try {
+      const pos = await new Promise<GeolocationPosition>((resolve, reject) =>
+        navigator.geolocation.getCurrentPosition(resolve, reject, { timeout: 7000, maximumAge: 15 * 60 * 1000, enableHighAccuracy: false }));
+      const lat = pos.coords.latitude, lon = pos.coords.longitude;
+      CLIENT_CONTEXT = { ...CLIENT_CONTEXT, lat, lon, source: "geolocation" };
+      // Reverse-geocode to a human city name via a keyless, CORS-friendly service.
+      try {
+        const r = await fetch(`https://api.bigdatacloud.net/data/reverse-geocode-client?latitude=${lat}&longitude=${lon}&localityLanguage=en`);
+        if (r.ok) {
+          const g = await r.json();
+          const place = [g.city || g.locality, g.principalSubdivisionCode?.split("-").pop() || g.principalSubdivision, g.countryCode && g.countryCode !== "US" ? g.countryCode : ""].filter(Boolean).join(", ");
+          if (place) CLIENT_CONTEXT = { ...CLIENT_CONTEXT, placeName: place };
+        }
+      } catch { /* name is a nicety; coords already work for weather */ }
+    } catch { /* permission denied or timed out — timezone still applies */ }
+  }
+  try { localStorage.setItem("jarvis.clientContext", JSON.stringify(CLIENT_CONTEXT)); } catch { /* ignore */ }
+}
+if (typeof window !== "undefined") { void resolveClientContext(); }
+
 const PANEL_CSS = `
 /* Accent is themable per room: a room sets --jr-a (RGB triplet) + --jr-bg1/2 +
    --jr-tx on :root (inline) while mounted, which overrides these defaults.
@@ -580,7 +622,7 @@ export function JarvisUI() {
       const remainingAttachments = primaryInline ? preparedFiles.filter((file) => file !== primaryInline) : preparedFiles;
       const result = await streamPost<BrainResponse>(
         "/api/chat/stream",
-        { prompt: text, mode: primaryInline ? "vision" : "command", model, strength, deepResearch: research === "deep", imageData: primaryInline?.dataUrl, attachments: remainingAttachments },
+        { prompt: text, mode: primaryInline ? "vision" : "command", model, strength, deepResearch: research === "deep", imageData: primaryInline?.dataUrl, attachments: remainingAttachments, clientContext: CLIENT_CONTEXT },
         (delta) => { setActivity(""); setResponse((r) => r + delta); },
         (phase, message) => {
           setActivity(message);

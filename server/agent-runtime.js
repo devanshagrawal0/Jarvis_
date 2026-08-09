@@ -59,6 +59,14 @@ function createAgentRuntime({ getSettings, toolGateway, codeKnowledge, memorySto
     const privateAccount = kalshiAccountPrompt || /\b(my (kalshi|portfolio|positions?|bets?|orders?|fills?|balance)|latest (kalshi )?(bet|fill|order)|best (kalshi )?position)\b/.test(lower);
     const personal = privateAccount || /\b(i like|i prefer|my favorite|about me|remember|what do you know about me|always|never|when i ask)\b/.test(lower);
     const followUp = text.trim().split(/\s+/).length < 8 || /\b(that|it|them|those|earlier|previous|i meant|actually)\b/.test(lower);
+    // A "bigger question" — conceptual, decision, opinion, or teaching — is what Dev means by
+    // "bigger questions need longer responses". These deserve MORE ROOM to answer well (larger
+    // token budget, a step up in thinking) but NOT the slow Pro reasoning model, which is reserved
+    // for genuinely heavy multi-step work (code, deep research, analyze/design/strategy). Keeping
+    // bigAsk on the fast model means the answer stays rich AND arrives quickly, not after 60-120s.
+    // Kept narrow so a trivial "how do I exit vim" stays short — it needs a real conceptual/decision
+    // signal. Depth of the ANSWER is still calibrated by the system prompt; this just grants headroom.
+    const bigAsk = /\b(why (?:do|does|did|is|are|was|were|would|should|can'?t|isn'?t)|how (?:does|do|did|would) .{0,40}\bwork|what(?:'?s| is| are) the (?:difference|best|point|tradeoffs?|pros? and cons?|implications?|catch)|explain|walk me through|teach me|help me understand|should i\b|is it (?:worth|better|safe|a good idea)|pros and cons|trade-?offs|deep dive|in ?depth|break ?down|how (?:can|do) i (?:get better|improve|learn|approach|think about|decide))\b/.test(lower);
     const complex = code
       || workComposer
       || deepResearch
@@ -87,7 +95,8 @@ function createAgentRuntime({ getSettings, toolGateway, codeKnowledge, memorySto
       agentSwarm,
       skillAutopilot,
       complexity: complex ? "deep" : "fast",
-      thinkingLevel: complex ? "high" : action ? "medium" : "low",
+      bigAsk, // conceptual/decision/teaching question — richer answer on the FAST model (not Pro)
+      thinkingLevel: complex ? "high" : (bigAsk || action) ? "medium" : "low",
       mode,
     };
   }
@@ -161,6 +170,13 @@ function createAgentRuntime({ getSettings, toolGateway, codeKnowledge, memorySto
       });
       const parsed = JSON.parse(response.text || "{}");
       const guarded = { ...parsed, mode, classifier: "gemini", routerModelCalls: 1 };
+      // Carry the deterministic "bigger question" signal — the LLM router doesn't emit it, and it
+      // drives the richer answer budget. A conceptual/decision ask stays on the fast model but gets
+      // more room + a step up in thinking.
+      if (baseline.bigAsk) {
+        guarded.bigAsk = true;
+        if (guarded.thinkingLevel === "low") guarded.thinkingLevel = "medium";
+      }
       if (baseline.code || guarded.code) {
         guarded.intent = "self-knowledge";
         guarded.code = true;

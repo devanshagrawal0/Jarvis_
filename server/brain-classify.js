@@ -23,7 +23,9 @@ function needsFreshInfo(text) {
   // Bare time words (today/currently/current/right now/this week) are NOT live intent on their own —
   // "im tired today" is conversation, not a live-data request. Every topical signal below is kept;
   // only the standalone time words were removed.
-  return /\b(latest|live|online|breaking|news|headline|weather|forecast|temperature|score|standings|schedule|fixture|price|quote|fell|fall|falling|rose|rising|rally|crash|surge|surged|plunge|plunged|jumped|slump|earnings|results|dividend|recent|new video)\b/i.test(String(text || ""));
+  // Named market indices / major crypto are inherently "what's the current value" queries — unlike
+  // a bare "market" (as in "prediction market arbitrage"), the specific name IS the live signal.
+  return /\b(latest|live|online|breaking|news|headline|weather|forecast|temperature|score|standings|schedule|fixture|price|quote|fell|fall|falling|rose|rising|rally|crash|surge|surged|plunge|plunged|jumped|slump|earnings|results|dividend|recent|new video|nifty|sensex|nasdaq|bitcoin|ethereum)\b/i.test(String(text || ""));
 }
 
 module.exports = { rawUserMessage, needsFreshInfo };
