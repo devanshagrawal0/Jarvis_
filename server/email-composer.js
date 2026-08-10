@@ -24,7 +24,7 @@ function heuristicCompose(instruction, recipientName) {
 }
 
 function createEmailComposer({ getSettings, model } = {}) {
-  async function compose({ instruction, recipientName = "", attachmentText = "", ownerName = "" } = {}) {
+  async function compose({ instruction, recipientName = "", attachmentText = "", ownerName = "", context = "" } = {}) {
     const raw = String(instruction || "").trim();
     if (!raw) return { mode: "verbatim", subject: "", body: "" };
     const settings = (typeof getSettings === "function" ? getSettings() : {}) || {};
@@ -32,16 +32,19 @@ function createEmailComposer({ getSettings, model } = {}) {
     if (!apiKey) return heuristicCompose(raw, recipientName);
 
     const sys = [
-      "You compose emails on behalf of the owner. Return STRICT JSON only: {\"mode\":\"verbatim\"|\"compose\",\"subject\":string,\"body\":string}.",
+      `You compose emails on behalf of ${ownerName || "the owner"}, writing in the FIRST PERSON as them. Return STRICT JSON only: {\"mode\":\"verbatim\"|\"compose\",\"subject\":string,\"body\":string}.`,
       "Decide mode by grammar, not keywords:",
       "- VERBATIM: the instruction IS the message to relay word-for-word (direct speech), e.g. 'saying hi', 'say on my way', 'tell her: running late'. Put the EXACT words in body. Do NOT add greetings, sign-offs, or extra sentences. Subject may be empty or 2-4 words.",
       "- COMPOSE: the instruction DESCRIBES what to convey (reported speech), e.g. 'tell him the automation works', 'let her know I'll be late and to reschedule', 'ask about the invoice', or asks to use an attachment. Write a real, concise email.",
       "COMPOSE rules: subject descriptive and under 60 characters; body <= 5 sentences, roughly 50-125 words, courteous but brief (never abrupt/rude); open with a short greeting using the recipient's first name if given; match the tone of the instruction (casual stays casual); sign off simply" + (ownerName ? ` as ${ownerName}` : "") + ". Never pad a trivial message into paragraphs. If the owner asks to note that it was sent for them / by their assistant, add one short line for it.",
-      "Never invent facts, names, links, times, or numbers that the owner did not provide.",
+      "When the instruction refers to vague context ('the automation', 'what we're doing', 'the project', 'it', 'the update'), GROUND it in the Context block below — write concretely about what that context actually says, don't stay generic. If the Context doesn't cover it, write a brief honest update rather than inventing specifics.",
+      "Never invent facts, names, links, times, or numbers not present in the instruction, the attachment, or the Context.",
     ].join("\n");
 
     const user = [
+      ownerName ? `You are: ${ownerName}` : "",
       recipientName ? `Recipient: ${recipientName}` : "Recipient: (unknown)",
+      context ? `Context — the true current state of Jarvis/the system and recent work; use it to ground the email in reality:\n"""${String(context).slice(0, 6000)}"""` : "",
       attachmentText ? `Attached content to use:\n"""${String(attachmentText).slice(0, 6000)}"""` : "",
       `Owner's instruction: ${raw}`,
       "Return only the JSON object.",

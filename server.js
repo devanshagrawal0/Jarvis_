@@ -129,6 +129,56 @@ async function extractAttachmentText(att) {
   if (/^text\//i.test(mime) || /\.(txt|md|csv|json|log)$/i.test(att.name || "")) return buf.toString("utf8").slice(0, 12000);
   return "";
 }
+
+// The owner's own email — for "email me / send it to my address". Prefers an explicit from-address,
+// then the connected Google account (fetched once and remembered), so "me" resolves without asking.
+let _ownerEmailCache = "";
+async function getOwnerEmail() {
+  const s = loadSettings();
+  if (s.googleFromEmail) return s.googleFromEmail;
+  if (s.googleAccountEmail) return s.googleAccountEmail;
+  if (_ownerEmailCache) return _ownerEmailCache;
+  try {
+    const token = await providers.google.accessToken();
+    const r = await fetch("https://gmail.googleapis.com/gmail/v1/users/me/profile", { headers: { authorization: `Bearer ${token}` } });
+    if (r.ok) { const d = await r.json(); if (d.emailAddress) { _ownerEmailCache = d.emailAddress; try { saveSettings({ googleAccountEmail: d.emailAddress }); } catch { /* best effort */ } return d.emailAddress; } }
+  } catch { /* not connected / offline */ }
+  return "";
+}
+function ownerDisplayName() { try { return (userContext && userContext.getIdentity && (userContext.getIdentity().name || userContext.getIdentity().preferredName)) || ""; } catch { return ""; } }
+
+// Jarvis's real, current self-knowledge — assembled from live sources, never hardcoded:
+//  • which services are actually connected (provider health),
+//  • what it can do (capability count + notable capabilities),
+//  • what genuinely changed recently (real git commit subjects).
+// Fed to the email composer as context so "tell AJ how the automation works now" is grounded in the
+// true state of the system instead of generic filler.
+let _selfKnowledgeCache = { at: 0, text: "" };
+function getSystemSelfSummary() {
+  if (Date.now() - _selfKnowledgeCache.at < 20_000 && _selfKnowledgeCache.text) return _selfKnowledgeCache.text;
+  const lines = [];
+  try {
+    const ph = providerHealthPayload();
+    const on = Object.values(ph).filter((p) => p && p.connected).map((p) => p.label).filter(Boolean);
+    const off = Object.entries(ph).filter(([, p]) => p && !p.connected).map(([k, p]) => p.label || k);
+    if (on.length) lines.push(`Connected & working: ${on.join(", ")}.`);
+    if (off.length) lines.push(`Not connected: ${off.join(", ")}.`);
+    const g = ph.google && ph.google.services;
+    if (g) lines.push(`Google — Gmail: ${g.gmail?.canSend ? "send" : "no-send"}/${g.gmail?.canRead ? "read" : "no-read"}; Calendar: ${g.calendar?.canRead ? "read" : "no-read"}/${g.calendar?.canWrite ? "write" : "no-write"}.`);
+  } catch { /* provider health unavailable */ }
+  try {
+    const caps = (capabilityEngine && capabilityEngine.definitions) ? capabilityEngine.definitions.length : 0;
+    if (caps) lines.push(`${caps} capabilities available (email, calendar, tasks/reminders capture, contacts, browser, research, etc.).`);
+  } catch { /* engine not ready */ }
+  try {
+    const out = require("child_process").execFileSync("git", ["-C", __dirname, "log", "--oneline", "--no-decorate", "-18"], { encoding: "utf8", timeout: 3500 });
+    const commits = out.trim().split("\n").map((l) => l.replace(/^[0-9a-f]+\s+/, "").trim()).filter(Boolean).slice(0, 18);
+    if (commits.length) lines.push(`Recent changes (newest first):\n- ${commits.join("\n- ")}`);
+  } catch { /* not a git checkout or git missing */ }
+  const text = lines.join("\n");
+  _selfKnowledgeCache = { at: Date.now(), text };
+  return text;
+}
 const contactAvatars = createAvatarCache({ runtimeDir: RUNTIME_DIR });
 
 // What the UI needs that the stored record does not literally contain: whether a face is actually
@@ -6912,8 +6962,13 @@ async function handleApi(req, res, pathname, url) {
       // The owner's full ask about the email (e.g. "saying hi" or "tell him the automation works").
       const instruction = String(d.instruction || d.body || "").trim();
       if (!rawTo || !instruction) { sendJson(res, 400, { ok: false, error: "A recipient and something to say are required." }); return; }
-      let email = "", contact = null, name = "";
-      if (EMAIL_RE.test(rawTo)) { email = rawTo; name = String(d.saveAs || "").trim(); }
+      let email = "", contact = null, name = "", toSelf = false;
+      if (/^(me|myself|my ?self|self|my ?email|my ?address|my ?inbox)$/i.test(rawTo)) {
+        toSelf = true;
+        email = await getOwnerEmail();
+        name = ownerDisplayName() || "you";
+        if (!email) { sendJson(res, 200, { ok: true, sent: false, status: "recipient_unknown", name: "you", instruction, message: "I don't know your own email address yet — what is it? (I'll remember it as your 'from' address.)" }); return; }
+      } else if (EMAIL_RE.test(rawTo)) { email = rawTo; name = String(d.saveAs || "").trim(); }
       else {
         name = rawTo;
         contact = contactStore.find(rawTo, { channel: "email" });
@@ -6921,9 +6976,17 @@ async function handleApi(req, res, pathname, url) {
         else if (d.email && EMAIL_RE.test(String(d.email).trim())) email = String(d.email).trim();
       }
       if (!email) { sendJson(res, 200, { ok: true, sent: false, status: "recipient_unknown", name, instruction, message: `I don't have an email for ${name || "that person"}. What's the address? Tell me once and I'll save it.` }); return; }
-      // Compose: decide verbatim vs write, summarizing any attached file, and generate subject + body.
+      // Compose: decide verbatim vs write, grounded in the owner's identity + current context, and
+      // summarizing any attached file.
       const attachmentText = String(d.attachmentText || "") || await extractAttachmentText(d.attachment);
-      const composed = await emailComposer.compose({ instruction, recipientName: contact ? contact.name : name, attachmentText });
+      const composed = await emailComposer.compose({
+        instruction,
+        recipientName: toSelf ? "" : (contact ? contact.name : name),
+        attachmentText,
+        ownerName: ownerDisplayName(),
+        // Real self-knowledge (what's connected + what changed) first, then any conversation context.
+        context: [getSystemSelfSummary(), String(d.context || "")].filter(Boolean).join("\n\n"),
+      });
       const subject = (composed.subject || "").trim() || "(no subject)";
       const body = (composed.body || "").trim();
       if (!body) { sendJson(res, 400, { ok: false, error: "I couldn't work out what to write — tell me what to say." }); return; }
