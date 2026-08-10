@@ -521,7 +521,7 @@ export function JarvisUI() {
   // reference the other before initialisation.
   const decideApprovalRef = useRef<((approval: ApprovalRequest, decision: "approve" | "deny") => Promise<void>) | null>(null);
   // Smart email follow-up state: either waiting for a missing address, or offering to save a new one.
-  const pendingEmailRef = useRef<{ kind: "need-recipient"; name: string; body: string; subject: string } | { kind: "offer-save"; name: string | null; email: string } | null>(null);
+  const pendingEmailRef = useRef<{ kind: "need-recipient"; name: string; instruction: string } | { kind: "offer-save"; name: string | null; email: string } | null>(null);
 
   const handleSubmit = useCallback(async (text: string, files: File[] = []) => {
     // Forgiving room-entry matcher — tolerates casing, trailing punctuation
@@ -574,24 +574,32 @@ export function JarvisUI() {
     // → send, then offer to save. The brain is too unreliable at picking the one-step send tool.
     {
       const emailIsh = "[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}";
-      const sendSmart = async (payload: { recipient: string; email?: string; body: string; subject?: string }) => {
-        setResponse(""); setActivity(""); setActivityEvents([]); setHasError(false); setApprovals([]); setVisible(true);
+      const showComposed = (d: any) => {
+        // Show what actually went out — subject + body — so an AI-written email is never hidden.
+        const lines = [d.message || "Sent."];
+        if (d.subject && d.subject !== "(no subject)") lines.push(`\n**Subject:** ${d.subject}`);
+        if (d.body) lines.push(`\n${d.body}`);
+        setResponse(lines.join("\n"));
+      };
+      const sendSmart = async (payload: { recipient: string; email?: string; instruction: string }) => {
+        setResponse(""); setActivity("Composing…"); setActivityEvents([]); setHasError(false); setApprovals([]); setVisible(true);
         try {
           const r = await fetch("/api/email/smart", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
           const d = await r.json().catch(() => ({}));
+          setActivity("");
           if (d?.ok && d.sent) {
-            setResponse(d.message || "Sent.");
+            showComposed(d);
             pendingEmailRef.current = d.saveSuggestion ? { kind: "offer-save", name: d.saveSuggestion.name ?? null, email: d.saveSuggestion.email } : null;
           } else if (d?.status === "recipient_unknown") {
-            pendingEmailRef.current = { kind: "need-recipient", name: d.name || payload.recipient, body: payload.body, subject: payload.subject || "" };
+            pendingEmailRef.current = { kind: "need-recipient", name: d.name || payload.recipient, instruction: payload.instruction };
             setResponse(d.message || `I don't have an email for ${payload.recipient}. What's the address?`);
           } else { setResponse(d?.error || "I couldn't send that email."); setHasError(true); }
-        } catch { setResponse("I couldn't reach the mail service."); setHasError(true); }
+        } catch { setActivity(""); setResponse("I couldn't reach the mail service."); setHasError(true); }
       };
       const pend = pendingEmailRef.current;
       if (pend?.kind === "need-recipient") {
         const em = text.match(new RegExp(emailIsh));
-        if (em) { const p = pend; pendingEmailRef.current = null; await sendSmart({ recipient: p.name, email: em[0], body: p.body, subject: p.subject }); return; }
+        if (em) { const p = pend; pendingEmailRef.current = null; await sendSmart({ recipient: p.name, email: em[0], instruction: p.instruction }); return; }
         if (/^\s*(no|nvm|never ?mind|cancel|forget it|drop it)\b/i.test(text)) { pendingEmailRef.current = null; setResponse("Okay — didn't send it."); setVisible(true); return; }
       }
       if (pend?.kind === "offer-save") {
@@ -604,16 +612,17 @@ export function JarvisUI() {
         }
         if (/^\s*(no|nope|nah|don'?t|skip|leave it)\b/i.test(text)) { pendingEmailRef.current = null; setResponse("No problem — won't save it."); setVisible(true); return; }
       }
-      // fresh send command
-      if (/\b(e-?mail|mail)\b/i.test(text) && !(/\b(read|check|show|any|summar|inbox|unread|latest|search)\b/i.test(text) && !/\b(send|write|shoot|compose|drop|reply|respond)\b/i.test(text))) {
-        const bodyM = text.match(/\b(?:saying|that says?|which says?|telling (?:them|him|her)(?:\s+that)?|to say|message[:]?|body[:]?)\s+([\s\S]+)$/i);
-        const body = bodyM ? bodyM[1].trim().replace(/^["']|["']$/g, "") : "";
-        const head = bodyM ? text.slice(0, bodyM.index) : text;
-        const rm = head.match(new RegExp(`\\bto\\s+(${emailIsh}|[A-Za-z][A-Za-z0-9._-]*)\\s*$`, "i"))
-          || head.match(new RegExp(`\\b(?:e-?mail|mail)\\s+(?:to\\s+)?(${emailIsh}|[A-Za-z][A-Za-z0-9._-]*)\\s*$`, "i"));
-        const recipient = rm ? rm[1].trim() : "";
-        const sm = text.match(/\bsubject\s*(?:is|:)?\s*["']?([^"'\n]+?)["']?(?=\s+(?:and\b|saying\b|body\b|,)|$)/i);
-        if (recipient && body) { await sendSmart({ recipient, body, subject: sm ? sm[1].trim() : "" }); return; }
+      // fresh send command → extract the recipient, pass the WHOLE instruction to the composer
+      if (/\b(e-?mail|mail)\b/i.test(text) && !(/\b(read|check|show|any|summar(?:y|ise|ize)|inbox|unread|latest|search)\b/i.test(text) && !/\b(send|write|shoot|compose|drop|reply|respond)\b/i.test(text))) {
+        const NAME = `${emailIsh}|[A-Za-z][A-Za-z0-9._-]*(?:\\s+[A-Z][A-Za-z0-9._-]*)?`;
+        // "send AJ an email ...", "send AJ a note saying ..."
+        let m = text.match(new RegExp(`\\bsend\\s+(${NAME})\\s+(?:an?\\s+)?(?:e-?mail|mail|note|message)\\b([\\s\\S]*)$`, "i"));
+        // "send an email to AJ ...", "email to AJ ...", "email AJ ..."
+        if (!m) m = text.match(new RegExp(`\\b(?:e-?mail|mail)\\s+(?:an?\\s+(?:e-?mail|mail|note|message)\\s+)?(?:to\\s+)?(${NAME})\\b([\\s\\S]*)$`, "i"));
+        if (!m) m = text.match(new RegExp(`\\bto\\s+(${NAME})\\b([\\s\\S]*)$`, "i"));
+        const recipient = m ? m[1].trim() : "";
+        const instruction = m ? (m[2] || "").trim() : "";
+        if (recipient && instruction) { await sendSmart({ recipient, instruction }); return; }
       }
     }
 

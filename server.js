@@ -10,6 +10,7 @@ const { createCapabilityEngine } = require("./server/capability-engine");
 const { createSecretStore } = require("./server/secret-store");
 const { classifyToolResults, summaryPrefix } = require("./server/tool-result-honesty");
 const { createContactStore } = require("./server/contacts");
+const { createEmailComposer } = require("./server/email-composer");
 const { createAvatarCache } = require("./server/contact-avatars");
 const { createRequestTrust } = require("./server/request-trust");
 // Cortex v4 — single Gemini model registry (verified available on this key).
@@ -112,6 +113,7 @@ const CONFIG_DIR = path.join(ROOT, "config");
 const RUNTIME_DIR = path.resolve(process.env.JARVIS_RUNTIME_DIR || path.join(ROOT, "runtime"));
 const SETTINGS_PATH = path.join(RUNTIME_DIR, "settings.json");
 const contactStore = createContactStore({ runtimeDir: RUNTIME_DIR });
+const emailComposer = createEmailComposer({ getSettings: () => loadSettings() });
 const contactAvatars = createAvatarCache({ runtimeDir: RUNTIME_DIR });
 
 // What the UI needs that the stored record does not literally contain: whether a face is actually
@@ -6892,9 +6894,9 @@ async function handleApi(req, res, pathname, url) {
       const d = await parseRequestData(req);
       const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
       const rawTo = String(d.recipient || "").trim();
-      const body = String(d.body || "").trim();
-      const subject = String(d.subject || "").trim() || "(no subject)";
-      if (!rawTo || !body) { sendJson(res, 400, { ok: false, error: "A recipient and a body are required." }); return; }
+      // The owner's full ask about the email (e.g. "saying hi" or "tell him the automation works").
+      const instruction = String(d.instruction || d.body || "").trim();
+      if (!rawTo || !instruction) { sendJson(res, 400, { ok: false, error: "A recipient and something to say are required." }); return; }
       let email = "", contact = null, name = "";
       if (EMAIL_RE.test(rawTo)) { email = rawTo; name = String(d.saveAs || "").trim(); }
       else {
@@ -6903,10 +6905,15 @@ async function handleApi(req, res, pathname, url) {
         if (contact) email = contact.channels.email.address;
         else if (d.email && EMAIL_RE.test(String(d.email).trim())) email = String(d.email).trim();
       }
-      if (!email) { sendJson(res, 200, { ok: true, sent: false, status: "recipient_unknown", name, message: `I don't have an email for ${name || "that person"}. What's the address? Tell me once and I'll save it.` }); return; }
+      if (!email) { sendJson(res, 200, { ok: true, sent: false, status: "recipient_unknown", name, instruction, message: `I don't have an email for ${name || "that person"}. What's the address? Tell me once and I'll save it.` }); return; }
+      // Compose: decide verbatim vs write, and generate subject + body.
+      const composed = await emailComposer.compose({ instruction, recipientName: contact ? contact.name : name, attachmentText: String(d.attachmentText || "") });
+      const subject = (composed.subject || "").trim() || "(no subject)";
+      const body = (composed.body || "").trim();
+      if (!body) { sendJson(res, 400, { ok: false, error: "I couldn't work out what to write — tell me what to say." }); return; }
       const result = await providers.google.sendEmail({ recipient: email, subject, body });
       if (contact) { try { contactStore.touch(contact.id); } catch { /* best effort */ } }
-      const out = { ok: true, sent: true, to: email, subject, contact: contact ? contact.name : null, providerMessageId: result.providerMessageId, message: `Sent to ${contact ? contact.name : email}.` };
+      const out = { ok: true, sent: true, to: email, subject, body, mode: composed.mode, contact: contact ? contact.name : null, providerMessageId: result.providerMessageId, message: `Sent to ${contact ? contact.name : email}.` };
       if (!contact) {
         out.saveSuggestion = { name: name || null, email };
         out.message = name ? `Sent to ${email}. Want me to save ${email} as ${name}'s email so I remember next time?` : `Sent to ${email}. Want me to save this address to a contact?`;
