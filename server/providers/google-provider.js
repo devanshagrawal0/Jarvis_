@@ -19,8 +19,12 @@ function createGoogleProvider({
   const stateStore = createOAuthStateStore(runtimeDir);
 
   function redirectUri(settings = getSettings()) {
+    // googleRedirectBase pins the OAuth callback origin (e.g. http://localhost:8799) independent of
+    // webhookBaseUrl — needed because webhookBaseUrl points at an ephemeral tunnel that won't match a
+    // stable redirect URI registered in the Google console.
+    const override = cleanString(settings.googleRedirectBase, 500).replace(/\/+$/, "");
     const configured = cleanString(settings.webhookBaseUrl, 500).replace(/\/+$/, "");
-    const base = configured || localBaseUrl;
+    const base = override || configured || localBaseUrl;
     const url = new URL("/api/oauth/google/callback", `${base}/`);
     if (!["http:", "https:"].includes(url.protocol)) throw errorWithStatus("Google OAuth callback must use HTTP or HTTPS", 412);
     if (url.protocol === "http:" && !["127.0.0.1", "localhost"].includes(url.hostname)) {
