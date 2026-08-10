@@ -11,6 +11,7 @@ import { ApexRoom } from "./rooms/ApexRoom";
 import { ArbiterRoom } from "./rooms/ArbiterRoom";
 import { SynapseRoom } from "./rooms/synapse/SynapseRoom";
 import { api, post, resolveOwnerChallenge, streamPost } from "./api";
+import { detectMessageIntent } from "./lib/messageIntent";
 import { LiveVoiceController } from "./liveVoice";
 import type { BrainResponse, JarvisActivityEvent, JarvisArtifact, JarvisContactCandidate, JarvisResponseCard, JarvisUiAction } from "./types";
 import "./JarvisUI.css";
@@ -612,22 +613,19 @@ export function JarvisUI() {
         }
         if (/^\s*(no|nope|nah|don'?t|skip|leave it)\b/i.test(text)) { pendingEmailRef.current = null; setResponse("No problem — won't save it."); setVisible(true); return; }
       }
-      // fresh send command → extract the recipient, pass the WHOLE instruction to the composer
-      if (/\b(e-?mail|mail)\b/i.test(text) && !(/\b(read|check|show|any|summar(?:y|ise|ize)|inbox|unread|latest|search)\b/i.test(text) && !/\b(send|write|shoot|compose|drop|reply|respond)\b/i.test(text))) {
-        const NAME = `${emailIsh}|[A-Za-z][A-Za-z0-9._-]*(?:\\s+[A-Z][A-Za-z0-9._-]*)?`;
-        // "send AJ an email ...", "send AJ a note saying ..."
-        let m = text.match(new RegExp(`\\bsend\\s+(${NAME})\\s+(?:an?\\s+)?(?:e-?mail|mail|note|message)\\b([\\s\\S]*)$`, "i"));
-        // "send an email to AJ ...", "email to AJ ...", "email AJ ..."
-        if (!m) m = text.match(new RegExp(`\\b(?:e-?mail|mail)\\s+(?:an?\\s+(?:e-?mail|mail|note|message)\\s+)?(?:to\\s+)?(${NAME})\\b([\\s\\S]*)$`, "i"));
-        if (!m) m = text.match(new RegExp(`\\bto\\s+(${NAME})\\b([\\s\\S]*)$`, "i"));
-        const recipient = m ? m[1].trim() : "";
-        if (recipient) {
-          // Pass the WHOLE instruction (the composer handles the framing) + any attached file to summarize.
-          let attachment: any = null;
-          if (files?.length) { try { attachment = (await prepareAttachments(files.slice(0, 1)))[0] || null; } catch { /* unreadable file — send without it */ } }
-          await sendSmart({ recipient, instruction: text.trim(), attachment });
-          return;
-        }
+      // fresh send command → a broad, unit-tested detector (src/lib/messageIntent) decides if this is a
+      // "send a message/email to <someone>" intent and pulls out a recipient guess. It fires on plenty of
+      // phrasings that never say "email" ("shoot AJ a note that…", "drop Bob a line about…", "tell her I'll
+      // be late") and deliberately stays silent on report-writing, reminders, inbox reads, and other
+      // channels (Instagram/WhatsApp). The backend /api/email/smart resolves the recipient (known contact /
+      // raw address / "me"), so an unknown name just prompts for the address — it never fabricates one.
+      const mi = detectMessageIntent(text);
+      if (mi) {
+        // Pass the WHOLE instruction (the composer handles the framing) + any attached file to summarize.
+        let attachment: any = null;
+        if (files?.length) { try { attachment = (await prepareAttachments(files.slice(0, 1)))[0] || null; } catch { /* unreadable file — send without it */ } }
+        await sendSmart({ recipient: mi.recipient, instruction: text.trim(), attachment });
+        return;
       }
     }
 
