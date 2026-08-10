@@ -137,7 +137,24 @@ function createGoogleProvider({
       googleTokenExpiry: tokens.expiry_date ? String(tokens.expiry_date) : "",
       googleScopes: tokens.scope || GOOGLE_SCOPES.join(" "),
     });
-    return test();
+    return verify();
+  }
+
+  // Service-aware post-connect check: probe ONLY the services the owner actually granted, and never
+  // throw if one is missing — so connecting just Calendar doesn't blow up on a Gmail-scope 403.
+  async function verify() {
+    const token = await accessToken();
+    const health = scopeModel.serviceHealth(getSettings().googleScopes);
+    const out = { connected: true, scopes: status().scopes, services: {} };
+    if (health.gmail.canSend || health.gmail.canDraft || health.gmail.canRead) {
+      try { const { data } = await fetchJson(fetchImpl, "https://gmail.googleapis.com/gmail/v1/users/me/profile", { headers: { authorization: `Bearer ${token}` } }); out.emailAddress = data.emailAddress || ""; out.services.gmail = { ok: true }; }
+      catch (e) { out.services.gmail = { ok: false, error: String(e && e.message || e) }; }
+    }
+    if (health.calendar.connected) {
+      try { const { data } = await fetchJson(fetchImpl, "https://www.googleapis.com/calendar/v3/users/me/calendarList?maxResults=1", { headers: { authorization: `Bearer ${token}` } }); out.services.calendar = { ok: true, calendars: (data.items || []).length }; }
+      catch (e) { out.services.calendar = { ok: false, error: String(e && e.message || e) }; }
+    }
+    return out;
   }
 
   async function accessToken() {
@@ -299,7 +316,7 @@ function createGoogleProvider({
     return { disconnected: true };
   }
 
-  return { accessToken, callback, createDraft, deleteDraft, disconnect, getDraft, redirectUri, requireCapability, sendDraft, sendEmail, start, status, test };
+  return { accessToken, callback, createDraft, deleteDraft, disconnect, getDraft, redirectUri, requireCapability, sendDraft, sendEmail, start, status, test, verify };
 }
 
 module.exports = { createGoogleProvider, GOOGLE_SCOPES };

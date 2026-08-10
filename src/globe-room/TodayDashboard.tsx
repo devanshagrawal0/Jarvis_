@@ -147,8 +147,8 @@ export function TodayDashboard({ data, loading, onExpand, onRefresh }: { data: a
   // upcoming agenda = today's events + pending reminders, merged and time-sorted, each cancelable
   const reminders: any[] = data?.reminders || [];
   const agenda = [
-    ...timeline.map((e: any) => ({ kind: "event", id: e.id, title: e.title, at: e.startAt, loc: e.location })),
-    ...reminders.map((r: any) => ({ kind: "reminder", id: r.id, title: r.title, at: r.fireAt, loc: null })),
+    ...timeline.map((e: any) => ({ kind: "event", id: e.id, title: e.title, at: e.startAt, loc: e.location, google: e.source?.kind === "google" || String(e.id).startsWith("gcal_") })),
+    ...reminders.map((r: any) => ({ kind: "reminder", id: r.id, title: r.title, at: r.fireAt, loc: null, google: false })),
   ].sort((a, b) => String(a.at).localeCompare(String(b.at)));
 
   const stat = (cls: string, ic: ReactNode, label: string, num: number | string, foot: string, a: string) => (
@@ -292,8 +292,10 @@ export function TodayDashboard({ data, loading, onExpand, onRefresh }: { data: a
               {agenda.length ? agenda.slice(0, 4).map((it) => (
                 <div className={`td-agenda-row ${pending.has(it.id) ? "is-busy" : ""}`} key={`${it.kind}-${it.id}`}>
                   <span className={`td-agenda-ic ${it.kind}`}>{it.kind === "event" ? "◈" : "⏰"}</span>
-                  <div className="td-agenda-main">{editing?.id === it.id ? editBox(it.id, it.kind as "event" | "reminder", it.title) : <strong onDoubleClick={() => startEdit(it.id, it.kind as "event" | "reminder", it.title)} title="Double-click to rename">{it.title}</strong>}<small>{clockOf(it.at, tz)}{it.loc ? ` · ${it.loc}` : it.kind === "reminder" ? " · reminder" : ""}</small></div>
-                  <button className="td-icon-btn" title={it.kind === "event" ? "Remove event" : "Cancel reminder"} onClick={() => it.kind === "event" ? removeEvent(it.id) : cancelReminder(it.id)}>✕</button>
+                  <div className="td-agenda-main">{!it.google && editing?.id === it.id ? editBox(it.id, it.kind as "event" | "reminder", it.title) : <strong onDoubleClick={() => { if (!it.google) startEdit(it.id, it.kind as "event" | "reminder", it.title); }} title={it.google ? "From Google Calendar" : "Double-click to rename"}>{it.title}</strong>}<small>{clockOf(it.at, tz)}{it.loc ? ` · ${it.loc}` : it.google ? " · Google Calendar" : it.kind === "reminder" ? " · reminder" : ""}</small></div>
+                  {it.google
+                    ? <span className="td-agenda-badge" title="Read-only — from Google Calendar">G</span>
+                    : <button className="td-icon-btn" title={it.kind === "event" ? "Remove event" : "Cancel reminder"} onClick={() => it.kind === "event" ? removeEvent(it.id) : cancelReminder(it.id)}>✕</button>}
                 </div>
               )) : <div className="td-empty">Nothing coming up. Capture a reminder or event above.</div>}
             </div>

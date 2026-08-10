@@ -83,6 +83,7 @@ const { createUserContext } = require("./server/user-context");
 const { createAtlasStore } = require("./server/atlas/atlas-store");           // ATLAS Wave 1 — day-model store
 const { createAtlasScheduler } = require("./server/atlas/atlas-scheduler");   // ATLAS Wave 1 — reminder tick
 const atlasCapture = require("./server/atlas/atlas-capture");                 // ATLAS Wave 2 — NL quick capture
+const { createGoogleCalendar } = require("./server/atlas/google-calendar");   // ATLAS Wave 5 — Google Calendar read model
 // DM-1: Cloudflare Quick Tunnel — phones can reach Jarvis from any network
 const { startTunnel, stopTunnel, getTunnelUrl, isTunnelActive, getTunnelStatus } = require("./server/tunnel-manager");
 // DM-3: WebSocket Hub — real-time backbone replacing all HTTP polling
@@ -226,6 +227,16 @@ let userContext;
 let costMeter;
 let atlasStore;       // ATLAS Wave 1 — operational day-model (tasks/events/reminders/people/notes)
 let atlasScheduler;   // ATLAS Wave 1 — durable fire-once reminder tick
+let atlasGoogleCalendar; // ATLAS Wave 5 — lazily created Google Calendar reader (see getAtlasGoogleCalendar)
+function getAtlasGoogleCalendar() {
+  if (atlasGoogleCalendar) return atlasGoogleCalendar;
+  if (!providers || !providers.google) return null;
+  atlasGoogleCalendar = createGoogleCalendar({
+    getAccessToken: () => providers.google.accessToken(),
+    isConnected: () => { try { return Boolean(providers.google.status().services?.calendar?.connected); } catch { return false; } },
+  });
+  return atlasGoogleCalendar;
+}
 let reactExecutor;
 let activityGraph;
 let proactiveIntelligence;
@@ -6824,7 +6835,16 @@ async function handleApi(req, res, pathname, url) {
       const tz = loc.ianaTz || "America/New_York";
       const { startIso, endIso } = atlasLocalDayBounds(tz);
       const nowIso = new Date().toISOString();
-      const events = atlasStore.eventsBetween(startIso, endIso);
+      const localEvents = atlasStore.eventsBetween(startIso, endIso);
+      // Wave 5 — merge the owner's real Google Calendar events for today (read-only, cached).
+      let googleEvents = [];
+      let calendarSource = "local";
+      const gcal = getAtlasGoogleCalendar();
+      if (gcal) {
+        try { googleEvents = await gcal.eventsBetween(startIso, endIso); if (googleEvents.length) calendarSource = "google+local"; }
+        catch (e) { console.error("[atlas] google calendar fetch failed:", e.message); }
+      }
+      const events = [...localEvents, ...googleEvents].sort((a, b) => String(a.startAt).localeCompare(String(b.startAt)));
       const nextEvent = events.find((e) => e.startAt > nowIso) || null;
       const nowEvent = events.find((e) => e.startAt <= nowIso && (!e.endAt || e.endAt > nowIso)) || null;
       const openTasks = atlasStore.listTasks({ status: "open" });
@@ -6835,6 +6855,7 @@ async function handleApi(req, res, pathname, url) {
       sendJson(res, 200, {
         available: true,
         place: loc.placeName || "", tz, now: nowIso,
+        calendarSource,
         nowNext: { now: nowEvent, next: nextEvent },
         timeline: events,
         topOfMind,
