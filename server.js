@@ -4534,7 +4534,9 @@ async function callGemini({ prompt, imageData, attachments = [], mode, sessionId
         const sendFns = !useGrounding && !useCompute && !useMaps && functionDeclarations.length > 0;
         // Set by the execution-lane router when the prompt names a commit verb and a surface. It is
         // a deterministic classification, not the model's opinion, so it is the right thing to make
-        // the tool call mandatory on the opening turn.
+        // the tool call mandatory on the opening turn. (Forcing must key ONLY on this deterministic
+        // lane — never on model-derived signals like route.action, which the router can source from
+        // the LLM. Widening WHICH prompts get an email lane belongs in emailIntent(), not here.)
         const forceToolCall = Boolean(prepared.route?.executionLane) && prepared.route.executionLane.lane !== "none";
         const tools = [];
         if (useCompute) tools.push({ code_execution: {} });

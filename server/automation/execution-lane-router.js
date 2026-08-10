@@ -34,12 +34,20 @@ function siteFor(text) {
 
 function emailIntent(text) {
   const value = String(text || "");
-  const requested = /\b(email|e-mail|gmail)\b/i.test(value) && /\b(send|write|draft|compose|reply|forward)\b/i.test(value);
-  if (!requested) return null;
   const recipientEmail = value.match(/\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/i)?.[0] || null;
+  // An explicit "email/gmail" word OR a real recipient address is an unambiguous email signal — the
+  // address alone is enough, so "fire off a note to sam@x.com" routes to the mail lane even without
+  // the word "email". Send verbs are broadened (shoot / fire off / drop a line / mail) but we do NOT
+  // treat a bare "message/ping <name>" as email — that's an ambiguous channel handled elsewhere.
+  const hasEmailWord = /\b(email|e-?mail|gmail)\b/i.test(value);
+  const FIRE = "fire\\s+(?:it|them|this|that|off)?\\s*off"; // "fire off", "fire it off", "fire them off"
+  const SEND_OFF = "send\\s+(?:it|them|this|that)?\\s*off";
+  const hasSendVerb = new RegExp(`\\b(send|write|draft|compose|reply|forward|shoot|${FIRE}|${SEND_OFF}|drop\\s+(?:a\\s+)?(?:line|note|mail)|mail)\\b`, "i").test(value);
+  const requested = (hasEmailWord || recipientEmail) && hasSendVerb;
+  if (!requested) return null;
   return {
     requested: true,
-    commit: /\b(send|reply|forward)\b/i.test(value) && !/\b(draft only|don'?t send|do not send|prepare only)\b/i.test(value),
+    commit: new RegExp(`\\b(send|reply|forward|shoot|${FIRE}|${SEND_OFF})\\b`, "i").test(value) && !/\b(draft only|don'?t send|do not send|prepare only)\b/i.test(value),
     recipientEmail,
   };
 }
