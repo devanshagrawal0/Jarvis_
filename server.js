@@ -11,6 +11,7 @@ const { createSecretStore } = require("./server/secret-store");
 const { classifyToolResults, summaryPrefix } = require("./server/tool-result-honesty");
 const { createContactStore } = require("./server/contacts");
 const { createEmailComposer } = require("./server/email-composer");
+const { createAttachmentReader } = require("./server/attachment-reader");
 const { createAvatarCache } = require("./server/contact-avatars");
 const { createRequestTrust } = require("./server/request-trust");
 // Cortex v4 — single Gemini model registry (verified available on this key).
@@ -114,21 +115,10 @@ const RUNTIME_DIR = path.resolve(process.env.JARVIS_RUNTIME_DIR || path.join(ROO
 const SETTINGS_PATH = path.join(RUNTIME_DIR, "settings.json");
 const contactStore = createContactStore({ runtimeDir: RUNTIME_DIR });
 const emailComposer = createEmailComposer({ getSettings: () => loadSettings() });
-// Pull plain text out of an attachment for the email composer to summarize. Text is passed through;
-// PDFs are parsed; images/docx aren't supported yet (they return "" so the composer just ignores them).
-async function extractAttachmentText(att) {
-  if (!att || typeof att !== "object") return "";
-  if (att.text) return String(att.text).slice(0, 12000);
-  const m = /^data:([^;]+);base64,(.*)$/s.exec(String(att.dataUrl || ""));
-  if (!m) return "";
-  const mime = m[1] || "";
-  let buf; try { buf = Buffer.from(m[2], "base64"); } catch { return ""; }
-  if (/pdf/i.test(mime) || /\.pdf$/i.test(att.name || "")) {
-    try { const pdfParse = require("pdf-parse"); const r = await pdfParse(buf); return String(r.text || "").replace(/\n{3,}/g, "\n\n").slice(0, 12000); } catch { return ""; }
-  }
-  if (/^text\//i.test(mime) || /\.(txt|md|csv|json|log)$/i.test(att.name || "")) return buf.toString("utf8").slice(0, 12000);
-  return "";
-}
+// Reads text out of an email attachment (text / PDF / .docx / image) for the composer to summarize.
+// Lives in server/attachment-reader.js so its dispatch + docx/text paths are unit-testable offline.
+const attachmentReader = createAttachmentReader({ getSettings: () => loadSettings() });
+const extractAttachmentText = attachmentReader.extractAttachmentText;
 
 // The owner's own email — for "email me / send it to my address". Prefers an explicit from-address,
 // then the connected Google account (fetched once and remembered), so "me" resolves without asking.

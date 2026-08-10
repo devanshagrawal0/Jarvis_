@@ -85,12 +85,21 @@ test("B-04 — the scenario the owner hit: look something up, then write a file"
     "write_file was denied after a harmless lookup — the exact false 'I have no file tool' refusal");
 });
 
-test("B-04 — reading a web page DOES still taint the turn", () => {
+test("B-04 — inbound reads taint the turn; drafting the owner's own email does not", () => {
   const UNTRUSTED = new RegExp(sliceBlock(serverSource, "const UNTRUSTED_CONTENT_TOOL = /", "/i;").replace("const UNTRUSTED_CONTENT_TOOL = /", ""), "i");
-  for (const tool of ["url_read", "web_research", "browser_extract", "screen_capture", "computer_use", "read_clipboard", "gmail_prepare_email"]) {
+  // Tools that pull content the owner didn't write MUST taint — including READING inbound gmail.
+  for (const tool of ["url_read", "web_research", "browser_extract", "screen_capture", "computer_use", "read_clipboard", "gmail_read", "gmail_search", "gmail_thread", "gmail_message"]) {
     assert.equal(UNTRUSTED.test(tool), true, `${tool} pulls external content and must raise the taint flag`);
   }
-  // …and once tainted, a side-effecting tool is still refused. The guard must keep guarding.
+  // gmail_prepare_email / gmail_send_prepared act on the owner's OWN draft — the recipient/subject/body
+  // are fields the owner (or the model on their behalf) supplied, and the "read back" is of that same
+  // draft, not an inbound message. They ingest nothing untrusted, so they must NOT taint. If they did,
+  // the send in the same turn would be denied as "indirect" before an approval card could appear — the
+  // real prepare→send failure this guard once caused. The trust line is inbound-read, not gmail-prefix.
+  for (const tool of ["gmail_prepare_email", "gmail_send_prepared"]) {
+    assert.equal(UNTRUSTED.test(tool), false, `${tool} works on the owner's own draft and must NOT taint the turn`);
+  }
+  // …and once a real inbound read tainted the turn, a side-effecting tool is still refused. Guard on.
   assert.equal(indirectBlocked({ tool: "write_file", risk: "commit", indirect: true }), true,
     "after untrusted content entered the loop, write_file must still be denied");
   assert.equal(indirectBlocked({ tool: "run_command", risk: "execute", indirect: true }), true);
