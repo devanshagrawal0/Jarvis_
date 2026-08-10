@@ -521,7 +521,7 @@ export function JarvisUI() {
   // reference the other before initialisation.
   const decideApprovalRef = useRef<((approval: ApprovalRequest, decision: "approve" | "deny") => Promise<void>) | null>(null);
   // Smart email follow-up state: either waiting for a missing address, or offering to save a new one.
-  const pendingEmailRef = useRef<{ kind: "need-recipient"; name: string; instruction: string } | { kind: "offer-save"; name: string | null; email: string } | null>(null);
+  const pendingEmailRef = useRef<{ kind: "need-recipient"; name: string; instruction: string; attachment?: any } | { kind: "offer-save"; name: string | null; email: string } | null>(null);
 
   const handleSubmit = useCallback(async (text: string, files: File[] = []) => {
     // Forgiving room-entry matcher — tolerates casing, trailing punctuation
@@ -581,8 +581,8 @@ export function JarvisUI() {
         if (d.body) lines.push(`\n${d.body}`);
         setResponse(lines.join("\n"));
       };
-      const sendSmart = async (payload: { recipient: string; email?: string; instruction: string }) => {
-        setResponse(""); setActivity("Composing…"); setActivityEvents([]); setHasError(false); setApprovals([]); setVisible(true);
+      const sendSmart = async (payload: { recipient: string; email?: string; instruction: string; attachment?: any }) => {
+        setResponse(""); setActivity(payload.attachment ? "Reading the file & composing…" : "Composing…"); setActivityEvents([]); setHasError(false); setApprovals([]); setVisible(true);
         try {
           const r = await fetch("/api/email/smart", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
           const d = await r.json().catch(() => ({}));
@@ -591,7 +591,7 @@ export function JarvisUI() {
             showComposed(d);
             pendingEmailRef.current = d.saveSuggestion ? { kind: "offer-save", name: d.saveSuggestion.name ?? null, email: d.saveSuggestion.email } : null;
           } else if (d?.status === "recipient_unknown") {
-            pendingEmailRef.current = { kind: "need-recipient", name: d.name || payload.recipient, instruction: payload.instruction };
+            pendingEmailRef.current = { kind: "need-recipient", name: d.name || payload.recipient, instruction: payload.instruction, attachment: payload.attachment };
             setResponse(d.message || `I don't have an email for ${payload.recipient}. What's the address?`);
           } else { setResponse(d?.error || "I couldn't send that email."); setHasError(true); }
         } catch { setActivity(""); setResponse("I couldn't reach the mail service."); setHasError(true); }
@@ -599,7 +599,7 @@ export function JarvisUI() {
       const pend = pendingEmailRef.current;
       if (pend?.kind === "need-recipient") {
         const em = text.match(new RegExp(emailIsh));
-        if (em) { const p = pend; pendingEmailRef.current = null; await sendSmart({ recipient: p.name, email: em[0], instruction: p.instruction }); return; }
+        if (em) { const p = pend; pendingEmailRef.current = null; await sendSmart({ recipient: p.name, email: em[0], instruction: p.instruction, attachment: p.attachment }); return; }
         if (/^\s*(no|nvm|never ?mind|cancel|forget it|drop it)\b/i.test(text)) { pendingEmailRef.current = null; setResponse("Okay — didn't send it."); setVisible(true); return; }
       }
       if (pend?.kind === "offer-save") {
@@ -621,8 +621,13 @@ export function JarvisUI() {
         if (!m) m = text.match(new RegExp(`\\b(?:e-?mail|mail)\\s+(?:an?\\s+(?:e-?mail|mail|note|message)\\s+)?(?:to\\s+)?(${NAME})\\b([\\s\\S]*)$`, "i"));
         if (!m) m = text.match(new RegExp(`\\bto\\s+(${NAME})\\b([\\s\\S]*)$`, "i"));
         const recipient = m ? m[1].trim() : "";
-        const instruction = m ? (m[2] || "").trim() : "";
-        if (recipient && instruction) { await sendSmart({ recipient, instruction }); return; }
+        if (recipient) {
+          // Pass the WHOLE instruction (the composer handles the framing) + any attached file to summarize.
+          let attachment: any = null;
+          if (files?.length) { try { attachment = (await prepareAttachments(files.slice(0, 1)))[0] || null; } catch { /* unreadable file — send without it */ } }
+          await sendSmart({ recipient, instruction: text.trim(), attachment });
+          return;
+        }
       }
     }
 

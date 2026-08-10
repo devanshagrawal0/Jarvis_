@@ -114,6 +114,21 @@ const RUNTIME_DIR = path.resolve(process.env.JARVIS_RUNTIME_DIR || path.join(ROO
 const SETTINGS_PATH = path.join(RUNTIME_DIR, "settings.json");
 const contactStore = createContactStore({ runtimeDir: RUNTIME_DIR });
 const emailComposer = createEmailComposer({ getSettings: () => loadSettings() });
+// Pull plain text out of an attachment for the email composer to summarize. Text is passed through;
+// PDFs are parsed; images/docx aren't supported yet (they return "" so the composer just ignores them).
+async function extractAttachmentText(att) {
+  if (!att || typeof att !== "object") return "";
+  if (att.text) return String(att.text).slice(0, 12000);
+  const m = /^data:([^;]+);base64,(.*)$/s.exec(String(att.dataUrl || ""));
+  if (!m) return "";
+  const mime = m[1] || "";
+  let buf; try { buf = Buffer.from(m[2], "base64"); } catch { return ""; }
+  if (/pdf/i.test(mime) || /\.pdf$/i.test(att.name || "")) {
+    try { const pdfParse = require("pdf-parse"); const r = await pdfParse(buf); return String(r.text || "").replace(/\n{3,}/g, "\n\n").slice(0, 12000); } catch { return ""; }
+  }
+  if (/^text\//i.test(mime) || /\.(txt|md|csv|json|log)$/i.test(att.name || "")) return buf.toString("utf8").slice(0, 12000);
+  return "";
+}
 const contactAvatars = createAvatarCache({ runtimeDir: RUNTIME_DIR });
 
 // What the UI needs that the stored record does not literally contain: whether a face is actually
@@ -6906,8 +6921,9 @@ async function handleApi(req, res, pathname, url) {
         else if (d.email && EMAIL_RE.test(String(d.email).trim())) email = String(d.email).trim();
       }
       if (!email) { sendJson(res, 200, { ok: true, sent: false, status: "recipient_unknown", name, instruction, message: `I don't have an email for ${name || "that person"}. What's the address? Tell me once and I'll save it.` }); return; }
-      // Compose: decide verbatim vs write, and generate subject + body.
-      const composed = await emailComposer.compose({ instruction, recipientName: contact ? contact.name : name, attachmentText: String(d.attachmentText || "") });
+      // Compose: decide verbatim vs write, summarizing any attached file, and generate subject + body.
+      const attachmentText = String(d.attachmentText || "") || await extractAttachmentText(d.attachment);
+      const composed = await emailComposer.compose({ instruction, recipientName: contact ? contact.name : name, attachmentText });
       const subject = (composed.subject || "").trim() || "(no subject)";
       const body = (composed.body || "").trim();
       if (!body) { sendJson(res, 400, { ok: false, error: "I couldn't work out what to write — tell me what to say." }); return; }
