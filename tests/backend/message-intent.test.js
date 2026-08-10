@@ -5,7 +5,7 @@
 // Run: node --test tests/backend/message-intent.test.js
 const { test } = require("node:test");
 const assert = require("node:assert");
-const { detectMessageIntent } = require("../../src/lib/messageIntent");
+const { detectMessageIntent, detectInboxRead } = require("../../src/lib/messageIntent");
 
 function fires(text, expectRecipient) {
   const r = detectMessageIntent(text);
@@ -94,4 +94,38 @@ test("empty / junk input is silent", () => {
   silent("   ");
   silent("hello there");
   silent("what is 17 times 23");
+});
+
+test("detectInboxRead fires on inbox-triage phrasings", () => {
+  for (const t of [
+    "check my inbox",
+    "summarize my unread emails",
+    "what's new in my mail",
+    "read my latest emails",
+    "go through my inbox",
+    "what do I need to reply to",
+    "which emails need a reply",
+    "any replies I owe",
+  ]) {
+    assert.ok(detectInboxRead(t), `should read inbox: ${t}`);
+  }
+});
+
+test("detectInboxRead stays silent on sends and unrelated asks", () => {
+  for (const t of [
+    "email Bob the agenda",
+    "shoot AJ a note that it works",
+    "reply to Priya saying hi",   // an actual send, not triage
+    "what is the weather",
+    "remind me to call mom",
+    "send this to mom saying I'll be late",
+  ]) {
+    assert.equal(detectInboxRead(t), null, `should NOT read inbox: ${t}`);
+  }
+});
+
+test("inbox-read requests are not mistaken for sends (detectMessageIntent stays silent)", () => {
+  for (const t of ["check my inbox", "summarize my unread emails", "what do I need to reply to"]) {
+    assert.equal(detectMessageIntent(t), null, `send-detector must ignore inbox read: ${t}`);
+  }
 });

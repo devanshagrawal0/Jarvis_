@@ -11,7 +11,7 @@ import { ApexRoom } from "./rooms/ApexRoom";
 import { ArbiterRoom } from "./rooms/ArbiterRoom";
 import { SynapseRoom } from "./rooms/synapse/SynapseRoom";
 import { api, post, resolveOwnerChallenge, streamPost } from "./api";
-import { detectMessageIntent } from "./lib/messageIntent";
+import { detectMessageIntent, detectInboxRead } from "./lib/messageIntent";
 import { LiveVoiceController } from "./liveVoice";
 import type { BrainResponse, JarvisActivityEvent, JarvisArtifact, JarvisContactCandidate, JarvisResponseCard, JarvisUiAction } from "./types";
 import "./JarvisUI.css";
@@ -613,6 +613,28 @@ export function JarvisUI() {
         }
         if (/^\s*(no|nope|nah|don'?t|skip|leave it)\b/i.test(text)) { pendingEmailRef.current = null; setResponse("No problem — won't save it."); setVisible(true); return; }
       }
+      // read-the-inbox command → summarize unread + flag replies owed, deterministically, before the
+      // brain. Read-only. If the "Read email" scope isn't granted the server returns a connect hint.
+      if (!files.length && detectInboxRead(text)) {
+        const ir = detectInboxRead(text)!;
+        setResponse(""); setActivity("Reading your inbox…"); setActivityEvents([]); setHasError(false); setApprovals([]); setVisible(true);
+        try {
+          const r = await fetch("/api/email/inbox", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ unreadOnly: ir.unreadOnly, max: 12 }) });
+          const d = await r.json().catch(() => ({}));
+          setActivity("");
+          if (d?.ok) {
+            const lines = [d.message || d.overview || "Here's your inbox."];
+            for (const it of (d.items || [])) {
+              lines.push(`\n${it.needsReply ? "↩︎ " : "• "}**${it.from}** — ${it.subject}${it.gist ? `\n   ${it.gist}` : ""}`);
+            }
+            setResponse(lines.join("\n"));
+          } else if (d?.status === "scope_missing") {
+            setResponse(d.message || "I need the Read email scope first — grant it from Connections.");
+          } else { setResponse(d?.error || "I couldn't read your inbox."); setHasError(true); }
+        } catch { setActivity(""); setResponse("I couldn't reach the mail service."); setHasError(true); }
+        return;
+      }
+
       // fresh send command → a broad, unit-tested detector (src/lib/messageIntent) decides if this is a
       // "send a message/email to <someone>" intent and pulls out a recipient guess. It fires on plenty of
       // phrasings that never say "email" ("shoot AJ a note that…", "drop Bob a line about…", "tell her I'll

@@ -12,6 +12,7 @@ const { classifyToolResults, summaryPrefix } = require("./server/tool-result-hon
 const { createContactStore } = require("./server/contacts");
 const { createEmailComposer } = require("./server/email-composer");
 const { createAttachmentReader } = require("./server/attachment-reader");
+const { createGmailReader } = require("./server/gmail-reader");
 const { createAvatarCache } = require("./server/contact-avatars");
 const { createRequestTrust } = require("./server/request-trust");
 // Cortex v4 — single Gemini model registry (verified available on this key).
@@ -307,6 +308,7 @@ let sharedBrowserService;
 let shadowBrowserService;
 let desktopTakeover;
 let providers;
+let gmailReader;
 let previousCpuSample;
 const localSessions = new Map();
 const pendingPairTokens = new Map();
@@ -7009,6 +7011,31 @@ async function handleApi(req, res, pathname, url) {
     } catch (e) { sendJson(res, 400, { ok: false, error: String(e && e.message || e) }); }
     return;
   }
+  // Read + summarize the inbox (read-only). Owner-session gated by validateMutationRequest (POST).
+  // Needs the "Read email" scope; without it providers.google throws 412 and we return a connect hint.
+  if (pathname === "/api/email/inbox" && req.method === "POST") {
+    try {
+      if (!gmailReader) { sendJson(res, 200, { ok: false, error: "Inbox reading isn't available." }); return; }
+      const d = await parseRequestData(req).catch(() => ({}));
+      const unreadOnly = d.unreadOnly !== false; // default: unread only
+      const max = Math.max(1, Math.min(25, Number(d.max) || 10));
+      const query = typeof d.query === "string" ? d.query.slice(0, 200) : "";
+      const summary = await gmailReader.summarizeInbox({ unreadOnly, max, query });
+      const replies = summary.items.filter((i) => i.needsReply);
+      const message = summary.count === 0
+        ? summary.overview
+        : `${summary.overview}${replies.length ? ` ${replies.length} look${replies.length === 1 ? "s" : ""} like ${replies.length === 1 ? "it needs" : "they need"} a reply.` : ""}`;
+      sendJson(res, 200, { ok: true, ...summary, repliesOwed: replies.length, message });
+    } catch (e) {
+      const status = e && e.statusCode;
+      if (status === 412) {
+        sendJson(res, 200, { ok: false, status: "scope_missing", message: "I can't read your inbox yet — grant the “Read email” scope from Connections, then ask again." });
+        return;
+      }
+      sendJson(res, 400, { ok: false, error: String((e && e.message) || e) });
+    }
+    return;
+  }
   if (pathname === "/api/atlas/tasks" && req.method === "GET") {
     if (!atlasStore) { sendJson(res, 200, { tasks: [] }); return; }
     const url = new URL(req.url, "http://x");
@@ -13340,6 +13367,9 @@ providers = {
   }),
   kalshi: createKalshiProvider({ getSettings: loadSettings }),
 };
+// Inbox reader (gmail.readonly). Read-only; summarizes unread + flags replies owed. Needs the owner to
+// grant the "Read email" scope from Connections before it returns anything.
+gmailReader = createGmailReader({ provider: providers.google, getSettings: loadSettings });
 startupCheckpoint("provider construction");
 
 // ── Arbiter (Kalshi × Polymarket divergence engine) ──────────────────────

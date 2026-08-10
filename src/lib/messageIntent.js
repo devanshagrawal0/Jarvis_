@@ -110,4 +110,22 @@ function detectMessageIntent(text) {
   return null;
 }
 
-module.exports = { detectMessageIntent };
+// Detects a READ-the-inbox request ("check my inbox", "summarize my unread", "what do I need to reply
+// to?") so JarvisUI can hit /api/email/inbox deterministically. Returns { unreadOnly } or null. Must
+// NOT fire on a send ("email Bob…") — those are detectMessageIntent's job.
+function detectInboxRead(text) {
+  const t = String(text || "").trim();
+  if (!t) return null;
+  // A send verb means this is composing, not reading.
+  if (/\b(send|write|draft|compose|shoot|forward|reply to|respond to|drop|fire\s+\w*\s*off)\b/i.test(t)) {
+    // "what do I need to reply to" is a READ (triage) even though it contains "reply" — allow it.
+    if (!/\b(what|which|anything|any(?:thing)?)\b.*\breply\b/i.test(t)) return null;
+  }
+  const readVerb = /\b(read|check|show|see|summar(?:y|ise|ize)|go through|catch me up|what'?s|whats|what is|any(?:thing)?|list|triage|review)\b/i.test(t);
+  const inboxNoun = /\b(inbox|unread|new (?:mail|emails?|messages?)|my (?:mail|email|emails|inbox|messages)|latest (?:mail|emails?))\b/i.test(t);
+  const replyTriage = /\b(what|which|anything)\b[\s\S]*\b(reply|replies|respond|get back to|follow up)\b/i.test(t) || /\breplies?\s+i\s+owe\b/i.test(t);
+  if ((readVerb && inboxNoun) || replyTriage) return { unreadOnly: !/\ball\b|\beverything\b|\bwhole inbox\b/i.test(t) };
+  return null;
+}
+
+module.exports = { detectMessageIntent, detectInboxRead };

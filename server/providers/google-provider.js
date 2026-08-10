@@ -300,6 +300,29 @@ function createGoogleProvider({
     };
   }
 
+  // ── Reading (gmail.readonly) ───────────────────────────────────────────────
+  // List message ids matching a Gmail search query (e.g. "is:unread", "newer_than:2d"). Read-only.
+  async function listMessages({ query = "", maxResults = 10 } = {}) {
+    requireCapability("gmail_read", "reading email");
+    const token = await accessToken();
+    const url = new URL("https://gmail.googleapis.com/gmail/v1/users/me/messages");
+    if (query) url.searchParams.set("q", String(query));
+    url.searchParams.set("maxResults", String(Math.max(1, Math.min(50, Number(maxResults) || 10))));
+    const { data } = await fetchJson(fetchImpl, url.toString(), { headers: { authorization: `Bearer ${token}` } });
+    return { messages: Array.isArray(data.messages) ? data.messages : [], resultSizeEstimate: data.resultSizeEstimate ?? null };
+  }
+
+  // Fetch one message's full payload (headers + parts) so the caller can parse sender/subject/body.
+  async function getMessage(id, { format = "full" } = {}) {
+    requireCapability("gmail_read", "reading email");
+    const token = await accessToken();
+    const safeId = encodeURIComponent(String(id || ""));
+    const { data } = await fetchJson(fetchImpl, `https://gmail.googleapis.com/gmail/v1/users/me/messages/${safeId}?format=${encodeURIComponent(format)}`, {
+      headers: { authorization: `Bearer ${token}` },
+    });
+    return data;
+  }
+
   async function disconnect() {
     const settings = getSettings();
     const token = settings.googleRefreshToken || settings.googleAccessToken || process.env.GOOGLE_REFRESH_TOKEN || process.env.GOOGLE_ACCESS_TOKEN;
@@ -316,7 +339,7 @@ function createGoogleProvider({
     return { disconnected: true };
   }
 
-  return { accessToken, callback, createDraft, deleteDraft, disconnect, getDraft, redirectUri, requireCapability, sendDraft, sendEmail, start, status, test, verify };
+  return { accessToken, callback, createDraft, deleteDraft, disconnect, getDraft, getMessage, listMessages, redirectUri, requireCapability, sendDraft, sendEmail, start, status, test, verify };
 }
 
 module.exports = { createGoogleProvider, GOOGLE_SCOPES };
