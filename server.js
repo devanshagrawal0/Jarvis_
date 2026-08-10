@@ -4417,7 +4417,11 @@ async function callGemini({ prompt, imageData, attachments = [], mode, sessionId
     // Trust now follows provenance: the flag is raised only once a tool has actually pulled
     // external content into the loop (a web page, a screen, a clipboard, an inbox). A memory
     // lookup or a status read is the owner's own data and taints nothing.
-    const UNTRUSTED_CONTENT_TOOL = /^(?:url_read|web_research|web_research_deep|research_v2|browser_|screen_|computer_use|read_clipboard|gmail_|instagram_|canvas_|news_headlines|device_files|device_latest_image)/i;
+    // Marks tools whose OUTPUT is untrusted external content (which then must not authorize a later
+    // commit). gmail_prepare_email / gmail_send_prepared are WRITE actions on the owner's own draft —
+    // they ingest nothing untrusted — so they must NOT trip this, or the send in the same turn is
+    // denied as "indirect" before an approval card can even appear. Only gmail READ tools belong here.
+    const UNTRUSTED_CONTENT_TOOL = /^(?:url_read|web_research|web_research_deep|research_v2|browser_|screen_|computer_use|read_clipboard|gmail_(?:read|list|search|thread|message|get)|instagram_|canvas_|news_headlines|device_files|device_latest_image)/i;
     let untrustedContentInLoop = false;
     for (let turn = 0; turn < maxToolTurns; turn += 1) {
       let data = {};
@@ -6877,6 +6881,53 @@ async function handleApi(req, res, pathname, url) {
       const result = atlasCapture.capture(atlasStore, d.text, { tz, sourceKind: d.sourceKind || "owner", sourceRef: "capture" });
       if (result.ok) { try { if (typeof wsHub !== "undefined" && wsHub && wsHub.broadcast) wsHub.broadcast({ type: "atlas.changed", kind: result.kind }); } catch {} }
       sendJson(res, result.ok ? 201 : 200, result);
+    } catch (e) { sendJson(res, 400, { ok: false, error: String(e && e.message || e) }); }
+    return;
+  }
+  // Smart contact-aware email send (deterministic, no brain) — resolve a saved contact by name and
+  // send in one step; if the address isn't on file, don't send and say so. Runs the same email_smart
+  // capability the brain has, but reliably from the owner's direct command.
+  if (pathname === "/api/email/smart" && req.method === "POST") {
+    try {
+      const d = await parseRequestData(req);
+      const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
+      const rawTo = String(d.recipient || "").trim();
+      const body = String(d.body || "").trim();
+      const subject = String(d.subject || "").trim() || "(no subject)";
+      if (!rawTo || !body) { sendJson(res, 400, { ok: false, error: "A recipient and a body are required." }); return; }
+      let email = "", contact = null, name = "";
+      if (EMAIL_RE.test(rawTo)) { email = rawTo; name = String(d.saveAs || "").trim(); }
+      else {
+        name = rawTo;
+        contact = contactStore.find(rawTo, { channel: "email" });
+        if (contact) email = contact.channels.email.address;
+        else if (d.email && EMAIL_RE.test(String(d.email).trim())) email = String(d.email).trim();
+      }
+      if (!email) { sendJson(res, 200, { ok: true, sent: false, status: "recipient_unknown", name, message: `I don't have an email for ${name || "that person"}. What's the address? Tell me once and I'll save it.` }); return; }
+      const result = await providers.google.sendEmail({ recipient: email, subject, body });
+      if (contact) { try { contactStore.touch(contact.id); } catch { /* best effort */ } }
+      const out = { ok: true, sent: true, to: email, subject, contact: contact ? contact.name : null, providerMessageId: result.providerMessageId, message: `Sent to ${contact ? contact.name : email}.` };
+      if (!contact) {
+        out.saveSuggestion = { name: name || null, email };
+        out.message = name ? `Sent to ${email}. Want me to save ${email} as ${name}'s email so I remember next time?` : `Sent to ${email}. Want me to save this address to a contact?`;
+      }
+      sendJson(res, 200, out);
+    } catch (e) { sendJson(res, 400, { ok: false, error: String(e && e.message || e) }); }
+    return;
+  }
+  if (pathname === "/api/contact/email" && req.method === "POST") {
+    try {
+      const d = await parseRequestData(req);
+      const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
+      const name = String(d.name || "").trim();
+      const email = String(d.email || "").trim();
+      if (!name) { sendJson(res, 400, { ok: false, error: "A name is required to save the email under." }); return; }
+      if (!EMAIL_RE.test(email)) { sendJson(res, 400, { ok: false, error: `"${email}" isn't an email address.` }); return; }
+      const existing = contactStore.find(name, {});
+      const saved = existing
+        ? contactStore.save({ id: existing.id, name: existing.name, channels: { email: { address: email } } })
+        : contactStore.save({ name, channels: { email: { address: email } } });
+      sendJson(res, 200, { ok: true, saved: true, name: saved.name, email, message: `Saved — ${saved.name}: ${email}. I'll use it next time.` });
     } catch (e) { sendJson(res, 400, { ok: false, error: String(e && e.message || e) }); }
     return;
   }

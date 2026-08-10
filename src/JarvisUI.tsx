@@ -520,6 +520,8 @@ export function JarvisUI() {
   // on exactly the same path as clicking; a latest-ref avoids an ordering where one const would
   // reference the other before initialisation.
   const decideApprovalRef = useRef<((approval: ApprovalRequest, decision: "approve" | "deny") => Promise<void>) | null>(null);
+  // Smart email follow-up state: either waiting for a missing address, or offering to save a new one.
+  const pendingEmailRef = useRef<{ kind: "need-recipient"; name: string; body: string; subject: string } | { kind: "offer-save"; name: string | null; email: string } | null>(null);
 
   const handleSubmit = useCallback(async (text: string, files: File[] = []) => {
     // Forgiving room-entry matcher — tolerates casing, trailing punctuation
@@ -564,6 +566,55 @@ export function JarvisUI() {
     if (/^(?:(?:go to|open|launch|enter|show|take me to)\s+)?synapse(?:\s+room)?$/.test(norm)) {
       setSynapseOpen(true);
       return;
+    }
+
+    // ── Smart contact-aware email — deterministic, before the brain ─────────────────────────────
+    // "email AJ saying hi" → resolve the saved contact and send in one step (no approval prompt).
+    // Missing address → ask, and remember so the next message (an address) completes it. New address
+    // → send, then offer to save. The brain is too unreliable at picking the one-step send tool.
+    {
+      const emailIsh = "[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}";
+      const sendSmart = async (payload: { recipient: string; email?: string; body: string; subject?: string }) => {
+        setResponse(""); setActivity(""); setActivityEvents([]); setHasError(false); setApprovals([]); setVisible(true);
+        try {
+          const r = await fetch("/api/email/smart", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
+          const d = await r.json().catch(() => ({}));
+          if (d?.ok && d.sent) {
+            setResponse(d.message || "Sent.");
+            pendingEmailRef.current = d.saveSuggestion ? { kind: "offer-save", name: d.saveSuggestion.name ?? null, email: d.saveSuggestion.email } : null;
+          } else if (d?.status === "recipient_unknown") {
+            pendingEmailRef.current = { kind: "need-recipient", name: d.name || payload.recipient, body: payload.body, subject: payload.subject || "" };
+            setResponse(d.message || `I don't have an email for ${payload.recipient}. What's the address?`);
+          } else { setResponse(d?.error || "I couldn't send that email."); setHasError(true); }
+        } catch { setResponse("I couldn't reach the mail service."); setHasError(true); }
+      };
+      const pend = pendingEmailRef.current;
+      if (pend?.kind === "need-recipient") {
+        const em = text.match(new RegExp(emailIsh));
+        if (em) { const p = pend; pendingEmailRef.current = null; await sendSmart({ recipient: p.name, email: em[0], body: p.body, subject: p.subject }); return; }
+        if (/^\s*(no|nvm|never ?mind|cancel|forget it|drop it)\b/i.test(text)) { pendingEmailRef.current = null; setResponse("Okay — didn't send it."); setVisible(true); return; }
+      }
+      if (pend?.kind === "offer-save") {
+        if (/^\s*(y|yes|yea|yeah|yep|sure|ok|okay|save|do it|please|go)\b/i.test(text)) {
+          const nm = pend.name || text.match(/\bas\s+([A-Za-z][\w.-]*)/i)?.[1] || text.trim().match(/^([A-Za-z][\w.-]*)$/)?.[1] || "";
+          const email = pend.email; pendingEmailRef.current = null;
+          if (nm) { try { const r = await fetch("/api/contact/email", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: nm, email }) }); const j = await r.json().catch(() => ({})); setResponse(j.message || `Saved ${email} as ${nm}.`); } catch { setResponse("Couldn't save that contact."); } }
+          else { pendingEmailRef.current = { kind: "offer-save", name: null, email }; setResponse(`What name should I save ${email} under?`); }
+          setVisible(true); return;
+        }
+        if (/^\s*(no|nope|nah|don'?t|skip|leave it)\b/i.test(text)) { pendingEmailRef.current = null; setResponse("No problem — won't save it."); setVisible(true); return; }
+      }
+      // fresh send command
+      if (/\b(e-?mail|mail)\b/i.test(text) && !(/\b(read|check|show|any|summar|inbox|unread|latest|search)\b/i.test(text) && !/\b(send|write|shoot|compose|drop|reply|respond)\b/i.test(text))) {
+        const bodyM = text.match(/\b(?:saying|that says?|which says?|telling (?:them|him|her)(?:\s+that)?|to say|message[:]?|body[:]?)\s+([\s\S]+)$/i);
+        const body = bodyM ? bodyM[1].trim().replace(/^["']|["']$/g, "") : "";
+        const head = bodyM ? text.slice(0, bodyM.index) : text;
+        const rm = head.match(new RegExp(`\\bto\\s+(${emailIsh}|[A-Za-z][A-Za-z0-9._-]*)\\s*$`, "i"))
+          || head.match(new RegExp(`\\b(?:e-?mail|mail)\\s+(?:to\\s+)?(${emailIsh}|[A-Za-z][A-Za-z0-9._-]*)\\s*$`, "i"));
+        const recipient = rm ? rm[1].trim() : "";
+        const sm = text.match(/\bsubject\s*(?:is|:)?\s*["']?([^"'\n]+?)["']?(?=\s+(?:and\b|saying\b|body\b|,)|$)/i);
+        if (recipient && body) { await sendSmart({ recipient, body, subject: sm ? sm[1].trim() : "" }); return; }
+      }
     }
 
     // ATLAS quick capture — a task / reminder / event / note said in plain words lands in Today

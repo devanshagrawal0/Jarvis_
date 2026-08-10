@@ -379,6 +379,8 @@ function createCapabilityEngine({
     ["apex_health_apply", "Apply the data-source fixes proposed by the last apex_health_check (after the user approves), hot-reload the ingestion governor WITHOUT restarting the server, then re-verify and report the new health. Optionally pass specific source ids to apply only those.", "execute", false],
     ["apex_brief", "Get a data-grounded market brief assembled from live APEX data: a headline, a narrative paragraph, index session (yesterday close→today open→gap→range), top movers, sector leaders/laggards, macro, top news, and 'things to watch'. type can be now, morning, or eod. Use to brief the user on the market.", "observe", false],
     ["atlas_capture", "Capture the owner's task, reminder, calendar event, or note from one natural sentence and save it to their day (ATLAS/Today). Use whenever the owner wants to remember, be reminded, add a to-do, schedule something, or jot a note — e.g. 'remind me to call the bank at 5', 'add a task file taxes', 'lunch with Priya tomorrow at 1', 'note: parking is B12'. Pass the owner's own sentence as text; the tool parses the time and kind itself and lands it in Today.", "execute", false],
+    ["email_smart", "PREFERRED one-step email sender. Send an email to a saved contact BY NAME (or to a raw email address) in a single step — no separate draft, no extra approval prompt. Use for casual requests like 'email AJ that I'm running late' or 'send TG a note saying dinner at 8'. If an email is on file for that name it sends immediately and returns sent:true. If NO email is on file it does NOT send and returns status:recipient_unknown — then ask the owner for the address. If the owner supplies a new address (pass it as `email`), it sends and returns a saveSuggestion so you can offer to remember it. Prefer this over gmail_prepare_email/gmail_send_prepared for everyday sends to people.", "execute", false],
+    ["contact_add_email", "Save or update a person's email address so future 'email <name>' sends resolve on their own. Use right after email_smart returns a saveSuggestion and the owner agrees, or when the owner says 'save X's email as …'.", "execute", false],
   ].map(([name, description, risk, confirmationRequired]) => ({
     name,
     description,
@@ -637,6 +639,16 @@ function createCapabilityEngine({
     { name: "gmail_prepare_email", description: description("gmail_prepare_email"), parameters: { type: "OBJECT", properties: { recipient: { type: "STRING" }, subject: { type: "STRING" }, body: { type: "STRING" } }, required: ["recipient", "subject", "body"] } },
     { name: "gmail_send_prepared", description: description("gmail_send_prepared"), parameters: { type: "OBJECT", properties: { draftId: { type: "STRING" }, expectedRecipient: { type: "STRING" }, expectedSubject: { type: "STRING" }, expectedBodyHash: { type: "STRING" } }, required: ["draftId", "expectedRecipient", "expectedSubject", "expectedBodyHash"] } },
     { name: "send_email", description: description("send_email"), parameters: { type: "OBJECT", properties: { recipient: { type: "STRING" }, subject: { type: "STRING" }, body: { type: "STRING" } }, required: ["recipient", "subject", "body"] } },
+    { name: "email_smart", description: description("email_smart"), parameters: { type: "OBJECT", properties: {
+      recipient: { type: "STRING", description: "A saved contact's name (e.g. 'AJ', 'TG') OR a full email address." },
+      email: { type: "STRING", description: "Optional explicit email address to use when the owner supplies one for a name that isn't saved yet." },
+      subject: { type: "STRING", description: "Optional subject; defaults to a short placeholder if omitted." },
+      body: { type: "STRING", description: "The message body." },
+    }, required: ["recipient", "body"] } },
+    { name: "contact_add_email", description: description("contact_add_email"), parameters: { type: "OBJECT", properties: {
+      name: { type: "STRING", description: "The person's name to save this email under." },
+      email: { type: "STRING", description: "Their email address." },
+    }, required: ["name", "email"] } },
     { name: "browser_search", description: description("browser_search"), parameters: { type: "OBJECT", properties: { query: { type: "STRING" } }, required: ["query"] } },
     { name: "browser_status", description: description("browser_status"), parameters: { type: "OBJECT", properties: {} } },
     { name: "browser_login_handoff", description: description("browser_login_handoff"), parameters: { type: "OBJECT", properties: { url: { type: "STRING", description: "Optional HTTP or HTTPS URL to open before checking for login." }, selector: { type: "STRING" }, limit: { type: "INTEGER" }, timeoutMs: { type: "INTEGER" } } } },
@@ -2483,6 +2495,51 @@ function createCapabilityEngine({
       expectedBodyHash: cleanString(args.expectedBodyHash, 128),
     }),
     send_email: async (args) => providers.google.sendEmail((await draftEmail(args)).draft),
+    // Contact-aware one-step send: resolve a name -> saved email and send with no extra approval;
+    // if nothing is on file, don't send — say so; if a new address is given, send then offer to save.
+    email_smart: async (args) => {
+      const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
+      const rawTo = cleanString(args.recipient || args.to || args.name, 320);
+      const body = cleanString(args.body, 10000);
+      const subject = cleanString(args.subject, 200) || "(no subject)";
+      if (!rawTo) throw errorWithStatus("Who should this go to?", 400);
+      if (!body) throw errorWithStatus("The email needs something in the body.", 400);
+      let email = "", contact = null, name = "";
+      if (EMAIL_RE.test(rawTo)) {
+        email = rawTo;
+        name = cleanString(args.saveAs || args.contactName || "", 120);
+      } else {
+        name = rawTo;
+        contact = contacts.find(rawTo, { channel: "email" });
+        if (contact) email = contact.channels.email.address;
+        else if (args.email && EMAIL_RE.test(cleanString(args.email, 320))) email = cleanString(args.email, 320);
+      }
+      if (!email) {
+        return { ok: false, sent: false, status: "recipient_unknown", name, message: `I don't have an email on file for ${name || "that person"}. What's the address? Tell me once and I'll remember it.` };
+      }
+      const result = await providers.google.sendEmail({ recipient: email, subject, body });
+      if (contact) { try { contacts.touch(contact.id); } catch { /* touch is best-effort */ } }
+      const out = { ok: true, sent: true, to: email, subject, contact: contact ? contact.name : null, providerMessageId: result.providerMessageId, message: `Sent to ${contact ? contact.name : email}.` };
+      if (!contact) {
+        out.saveSuggestion = { name: name || null, email };
+        out.message = name
+          ? `Sent to ${email}. Want me to save ${email} as ${name}'s email so I remember next time?`
+          : `Sent to ${email}. Want me to save this address to a contact?`;
+      }
+      return out;
+    },
+    contact_add_email: async (args) => {
+      const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
+      const name = cleanString(args.name, 120);
+      const email = cleanString(args.email, 320);
+      if (!name) throw errorWithStatus("Whose email is this? Give me a name to save it under.", 400);
+      if (!EMAIL_RE.test(email)) throw errorWithStatus(`"${email}" doesn't look like an email address.`, 400);
+      const existing = contacts.find(name, {});
+      const saved = existing
+        ? contacts.save({ id: existing.id, name: existing.name, channels: { email: { address: email } } })
+        : contacts.save({ name, channels: { email: { address: email } } });
+      return { ok: true, saved: true, name: saved.name, email, message: `Saved — ${saved.name}: ${email}. I'll use it next time.` };
+    },
     browser_search: browserSearch,
     browser_status: (args, context) => browserForContext(context).status(args),
     browser_login_handoff: (args, context) => browserForContext(context).loginHandoff(args),
