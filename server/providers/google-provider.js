@@ -368,6 +368,30 @@ function createGoogleProvider({
     return { deleted: true, id };
   }
 
+  // Read calendar events in a window (calendar.readonly). singleEvents expands recurring instances.
+  async function listCalendarEvents({ timeMin, timeMax, maxResults = 25 } = {}) {
+    const token = await accessToken();
+    const url = new URL("https://www.googleapis.com/calendar/v3/calendars/primary/events");
+    if (timeMin) url.searchParams.set("timeMin", timeMin);
+    if (timeMax) url.searchParams.set("timeMax", timeMax);
+    url.searchParams.set("singleEvents", "true");
+    url.searchParams.set("orderBy", "startTime");
+    url.searchParams.set("maxResults", String(Math.max(1, Math.min(50, Number(maxResults) || 25))));
+    const { data } = await fetchJson(fetchImpl, url.toString(), { headers: { authorization: `Bearer ${token}` } });
+    return (data.items || [])
+      .filter((ev) => ev && ev.status !== "cancelled")
+      .map((ev) => ({
+        id: ev.id,
+        title: ev.summary || "(no title)",
+        startAt: (ev.start && (ev.start.dateTime || ev.start.date)) || null,
+        endAt: (ev.end && (ev.end.dateTime || ev.end.date)) || null,
+        location: ev.location || null,
+        allDay: Boolean(ev.start && ev.start.date && !ev.start.dateTime),
+        htmlLink: ev.htmlLink || null,
+      }))
+      .filter((e) => e.startAt);
+  }
+
   async function disconnect() {
     const settings = getSettings();
     const token = settings.googleRefreshToken || settings.googleAccessToken || process.env.GOOGLE_REFRESH_TOKEN || process.env.GOOGLE_ACCESS_TOKEN;

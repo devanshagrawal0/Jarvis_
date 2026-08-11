@@ -379,6 +379,7 @@ function createCapabilityEngine({
     ["apex_health_apply", "Apply the data-source fixes proposed by the last apex_health_check (after the user approves), hot-reload the ingestion governor WITHOUT restarting the server, then re-verify and report the new health. Optionally pass specific source ids to apply only those.", "execute", false],
     ["apex_brief", "Get a data-grounded market brief assembled from live APEX data: a headline, a narrative paragraph, index session (yesterday close→today open→gap→range), top movers, sector leaders/laggards, macro, top news, and 'things to watch'. type can be now, morning, or eod. Use to brief the user on the market.", "observe", false],
     ["atlas_capture", "Capture the owner's task, reminder, calendar event, or note from one natural sentence and save it to their day (ATLAS/Today). Use whenever the owner wants to remember, be reminded, add a to-do, schedule something, or jot a note — e.g. 'remind me to call the bank at 5', 'add a task file taxes', 'lunch with Priya tomorrow at 1', 'note: parking is B12'. Pass the owner's own sentence as text; the tool parses the time and kind itself and lands it in Today.", "execute", false],
+    ["atlas_today", "Read the owner's LIVE day from ATLAS/Today: open tasks, pending reminders, today's and upcoming calendar events (their local events AND their real Google Calendar), and who they're waiting on. Call this WHENEVER the owner asks about their day, schedule, agenda, tasks, to-dos, reminders, what they're forgetting, what's next, or 'plan my day'. You DO have access to this — never say you don't; this tool IS your access. Returns structured data for you to summarize.", "observe", false],
     ["email_smart", "PREFERRED one-step email sender. Send an email to a saved contact BY NAME (or to a raw email address) in a single step — no separate draft, no extra approval prompt. Use for casual requests like 'email AJ that I'm running late' or 'send TG a note saying dinner at 8'. If an email is on file for that name it sends immediately and returns sent:true. If NO email is on file it does NOT send and returns status:recipient_unknown — then ask the owner for the address. If the owner supplies a new address (pass it as `email`), it sends and returns a saveSuggestion so you can offer to remember it. Prefer this over gmail_prepare_email/gmail_send_prepared for everyday sends to people.", "execute", false],
     ["contact_add_email", "Save or update a person's email address so future 'email <name>' sends resolve on their own. Use right after email_smart returns a saveSuggestion and the owner agrees, or when the owner says 'save X's email as …'.", "execute", false],
   ].map(([name, description, risk, confirmationRequired]) => ({
@@ -497,6 +498,7 @@ function createCapabilityEngine({
       text: { type: "STRING", description: "The owner's own sentence to capture verbatim, e.g. 'remind me to call the bank at 5pm' or 'add a task file the reimbursement'." },
       tz: { type: "STRING", description: "Optional IANA timezone; defaults to the owner's resolved location timezone." },
     }, required: ["text"] } },
+    { name: "atlas_today", description: description("atlas_today"), parameters: { type: "OBJECT", properties: {} } },
     { name: "pc_graph_rebuild", description: description("pc_graph_rebuild"), parameters: { type: "OBJECT", properties: {
       roots: { type: "ARRAY", items: { type: "STRING" }, description: "Optional root folders to index. Defaults to workspace, Downloads, Documents, and Desktop." },
       limit: { type: "INTEGER", description: "Maximum files to scan, 1 to 50000. Defaults to 1200." },
@@ -2087,6 +2089,37 @@ function createCapabilityEngine({
       const result = atlasCapture.capture(store, text, { tz: cleanString(args.tz, 60) || ownerTz(), sourceKind: "chat" });
       if (!result.ok) return { ok: false, captured: false, message: "That didn't look like a task, reminder, event, or note — nothing was saved." };
       return { ok: true, captured: true, kind: result.kind, message: result.message, item: result.item };
+    },
+    atlas_today: async () => {
+      const store = atlas();
+      if (!store) throw errorWithStatus("The day-model (ATLAS) is not available in this runtime.", 412);
+      const tz = ownerTz() || "America/New_York";
+      // Local day bounds [midnight, +2 days) so "today + what's next" is covered.
+      const nowMs = Date.now();
+      const startIso = new Date(nowMs - 12 * 3600_000).toISOString();
+      const endIso = new Date(nowMs + 48 * 3600_000).toISOString();
+      const localEvents = (store.eventsBetween ? store.eventsBetween(startIso, endIso) : []) || [];
+      let googleEvents = [];
+      try {
+        if (providers?.google?.listCalendarEvents) googleEvents = await providers.google.listCalendarEvents({ timeMin: startIso, timeMax: endIso, maxResults: 25 });
+      } catch { /* calendar not readable → local only */ }
+      const events = [...localEvents, ...googleEvents]
+        .filter((e) => e && e.startAt)
+        .sort((a, b) => String(a.startAt).localeCompare(String(b.startAt)))
+        .map((e) => ({ title: e.title, startAt: e.startAt, endAt: e.endAt || null, location: e.location || null, source: e.source?.kind === "google" || String(e.id || "").startsWith("gcal_") || googleEvents.includes(e) ? "google" : "local" }));
+      const openTasks = (store.listTasks ? store.listTasks({ status: "open" }) : []) || [];
+      const reminders = (store.pendingReminders ? store.pendingReminders() : []) || [];
+      const waitingOnThem = (store.waitingOnThem ? store.waitingOnThem(10) : []) || [];
+      return {
+        ok: true,
+        tz,
+        now: new Date(nowMs).toISOString(),
+        tasks: openTasks.map((t) => ({ id: t.id, title: t.title, priority: t.priority, dueAt: t.dueAt || null, waitingOn: t.waitingOn || null, actor: t.actor || null })),
+        reminders: reminders.slice(0, 12).map((r) => ({ title: r.title, fireAt: r.fireAt })),
+        events,
+        waitingOnThem: waitingOnThem.map((t) => ({ title: t.title, actor: t.actor || null, dueAt: t.dueAt || null })),
+        counts: { openTasks: openTasks.length, reminders: reminders.length, events: events.length, waitingOnThem: waitingOnThem.length },
+      };
     },
     search_projects: async (args) => {
       const query = cleanString(args.query, 120).toLowerCase();
