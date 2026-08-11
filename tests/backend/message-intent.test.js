@@ -5,7 +5,7 @@
 // Run: node --test tests/backend/message-intent.test.js
 const { test } = require("node:test");
 const assert = require("node:assert");
-const { detectMessageIntent, detectInboxRead, detectCalendarCommand } = require("../../src/lib/messageIntent");
+const { detectMessageIntent, detectInboxRead, detectCalendarCommand, parseContactSaveReply } = require("../../src/lib/messageIntent");
 
 function fires(text, expectRecipient) {
   const r = detectMessageIntent(text);
@@ -143,6 +143,28 @@ test("detectCalendarCommand gates create / move / cancel", () => {
   ]) {
     assert.ok(detectCalendarCommand(t), `should gate as calendar write: ${t}`);
   }
+});
+
+test("parseContactSaveReply — the exact loop that broke: name in one shot AND bare name", () => {
+  // "yes save a new contact name owner" must extract "owner" in one shot (no re-ask, no loop)
+  assert.deepEqual(parseContactSaveReply("yes save a new contact name owner").name, "owner");
+  // a later bare "owner" (answering "what name?") must also yield "owner" — not fall through to the brain
+  assert.deepEqual(parseContactSaveReply("owner").name, "owner");
+  // decline
+  assert.equal(parseContactSaveReply("no").decline, true);
+  assert.equal(parseContactSaveReply("skip").decline, true);
+});
+
+test("parseContactSaveReply — other natural phrasings", () => {
+  assert.equal(parseContactSaveReply("save as John Doe").name, "John Doe");
+  assert.equal(parseContactSaveReply("call it mom").name, "mom");
+  assert.equal(parseContactSaveReply("sure, save it as Priya").name, "Priya");
+  assert.equal(parseContactSaveReply("under Dad").name, "Dad");
+  assert.equal(parseContactSaveReply("Sam Rivera").name, "Sam Rivera");
+  // bare "yes" with no name → affirmed but no name (UI then asks once)
+  const y = parseContactSaveReply("yes");
+  assert.equal(y.affirmed, true);
+  assert.equal(y.name, "");
 });
 
 test("detectCalendarCommand ignores reminders, reads, and non-calendar commands", () => {

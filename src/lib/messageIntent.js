@@ -154,4 +154,29 @@ function detectCalendarCommand(text) {
   return null;
 }
 
-module.exports = { detectMessageIntent, detectInboxRead, detectCalendarCommand };
+// Parse the owner's reply to "want me to save this address to a contact?". Returns:
+//   { decline }  — they said no/skip.
+//   { name }     — a name to save it under (from "as X" / "name X" / "call it X" / "under X", or a
+//                  bare 1–3 word name, after stripping a leading "yes save a new contact …").
+//   { affirmed } — they said yes but gave no name yet (→ ask for it).
+// This is what fixes the loop: "yes save a new contact name owner" yields name "owner" in one shot, and
+// a later bare "owner" also yields name "owner" — neither falls through to the brain.
+function parseContactSaveReply(text) {
+  const t = String(text || "").trim();
+  if (!t) return { decline: false, name: "", affirmed: false };
+  if (/^\s*(no|nope|nah|don'?t|do not|skip|leave it|never ?mind|nvm|cancel|forget it)\b/i.test(t)) return { decline: true, name: "", affirmed: false };
+  const affirmed = /^\s*(y|yes|yea|yeah|yep|sure|ok|okay|please|go|do it|save|add|store)\b/i.test(t);
+  // strip a leading affirmation, then a "save (a new) contact/person" preamble
+  let s = t.replace(/^\s*(?:y|yes|yea|yeah|yep|sure|ok|okay|please|go|do it)\b[,:]?\s*/i, "");
+  s = s.replace(/^\s*(?:save|add|create|store)\s+(?:(?:it|them|this|a|an|the|new)\s+)*(?:contact|person|entry)\s+/i, "");
+  s = s.replace(/^\s*(?:save|add|create|store)\s+(?:(?:it|them|this|a|an|the|new)\s+)*/i, "");
+  s = s.replace(/^\s*as\s+/i, "");
+  // explicit name marker
+  let m = s.match(/\b(?:as|named?|call(?:ed)?(?:\s+it)?|under|for)\s+([A-Za-z][\w.'-]*(?:\s+[A-Za-z][\w.'-]*){0,2})/i);
+  let name = m ? m[1] : "";
+  if (!name) { const bare = s.trim().match(/^([A-Za-z][\w.'-]*(?:\s+[A-Za-z][\w.'-]*){0,2})$/); if (bare) name = bare[1]; }
+  name = String(name).replace(/[.?!,]+$/, "").trim();
+  return { decline: false, name, affirmed };
+}
+
+module.exports = { detectMessageIntent, detectInboxRead, detectCalendarCommand, parseContactSaveReply };

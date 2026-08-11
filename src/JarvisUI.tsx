@@ -11,7 +11,7 @@ import { ApexRoom } from "./rooms/ApexRoom";
 import { ArbiterRoom } from "./rooms/ArbiterRoom";
 import { SynapseRoom } from "./rooms/synapse/SynapseRoom";
 import { api, post, resolveOwnerChallenge, streamPost } from "./api";
-import { detectMessageIntent, detectInboxRead, detectCalendarCommand } from "./lib/messageIntent";
+import { detectMessageIntent, detectInboxRead, detectCalendarCommand, parseContactSaveReply } from "./lib/messageIntent";
 import { LiveVoiceController } from "./liveVoice";
 import type { BrainResponse, JarvisActivityEvent, JarvisArtifact, JarvisContactCandidate, JarvisResponseCard, JarvisUiAction } from "./types";
 import "./JarvisUI.css";
@@ -522,7 +522,7 @@ export function JarvisUI() {
   // reference the other before initialisation.
   const decideApprovalRef = useRef<((approval: ApprovalRequest, decision: "approve" | "deny") => Promise<void>) | null>(null);
   // Smart email follow-up state: either waiting for a missing address, or offering to save a new one.
-  const pendingEmailRef = useRef<{ kind: "need-recipient"; name: string; instruction: string; attachment?: any } | { kind: "offer-save"; name: string | null; email: string } | null>(null);
+  const pendingEmailRef = useRef<{ kind: "need-recipient"; name: string; instruction: string; attachment?: any } | { kind: "offer-save"; name: string | null; email: string; askedName?: boolean } | null>(null);
   // W6: a parsed-and-previewed calendar change waiting for the owner's yes/no before it's committed.
   const pendingCalendarRef = useRef<{ proposal: any; preview: string } | null>(null);
 
@@ -648,14 +648,31 @@ export function JarvisUI() {
         if (/^\s*(no|nvm|never ?mind|cancel|forget it|drop it)\b/i.test(text)) { pendingEmailRef.current = null; setResponse("Okay — didn't send it."); setVisible(true); return; }
       }
       if (pend?.kind === "offer-save") {
-        if (/^\s*(y|yes|yea|yeah|yep|sure|ok|okay|save|do it|please|go)\b/i.test(text)) {
-          const nm = pend.name || text.match(/\bas\s+([A-Za-z][\w.-]*)/i)?.[1] || text.trim().match(/^([A-Za-z][\w.-]*)$/)?.[1] || "";
-          const email = pend.email; pendingEmailRef.current = null;
-          if (nm) { try { const r = await fetch("/api/contact/email", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: nm, email }) }); const j = await r.json().catch(() => ({})); setResponse(j.message || `Saved ${email} as ${nm}.`); } catch { setResponse("Couldn't save that contact."); } }
-          else { pendingEmailRef.current = { kind: "offer-save", name: null, email }; setResponse(`What name should I save ${email} under?`); }
-          setVisible(true); return;
+        const email = pend.email;
+        const saveContact = async (nm: string) => {
+          pendingEmailRef.current = null;
+          try {
+            const r = await fetch("/api/contact/email", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: nm, email }) });
+            const j = await r.json().catch(() => ({}));
+            setResponse(j.message || `Saved ${email} as ${nm}.`);
+          } catch { setResponse("Couldn't save that contact."); }
+          setVisible(true);
+        };
+        const { decline, name, affirmed } = parseContactSaveReply(text);
+        if (decline) { pendingEmailRef.current = null; setResponse("No problem — won't save it."); setVisible(true); return; }
+        if (name) { await saveContact(name); return; }                       // "yes save … name owner" / "as John" / bare name
+        if (pend.askedName) {                                                 // we already asked; take the whole reply as the name
+          const nm = text.trim().replace(/[.?!,]+$/, "");
+          if (nm && nm.length <= 40) { await saveContact(nm); return; }
+          setResponse(`What name should I save ${email} under? (or say "skip")`); setVisible(true); return;
         }
-        if (/^\s*(no|nope|nah|don'?t|skip|leave it)\b/i.test(text)) { pendingEmailRef.current = null; setResponse("No problem — won't save it."); setVisible(true); return; }
+        if (affirmed) {                                                       // "yes" with no name yet → ask once, remember we asked
+          pendingEmailRef.current = { kind: "offer-save", name: null, email, askedName: true };
+          setResponse(`What name should I save ${email} under?`); setVisible(true); return;
+        }
+        // Anything else (not yes/no/name) → don't trap the turn in a loop; drop the offer and let this
+        // message be handled fresh below.
+        pendingEmailRef.current = null;
       }
       // read-the-inbox command → summarize unread + flag replies owed, deterministically, before the
       // brain. Read-only. If the "Read email" scope isn't granted the server returns a connect hint.
@@ -687,6 +704,14 @@ export function JarvisUI() {
       // raw address / "me"), so an unknown name just prompts for the address — it never fabricates one.
       const mi = detectMessageIntent(text);
       if (mi) {
+        // Delayed-send guard: if they asked to send LATER ("in 2 min", "send it later", "at 5pm",
+        // "schedule send"), we must NOT fire it off immediately behind their back. Gmail's API has no
+        // native delay, so say so and let them choose — never silent-send-now on a delay request.
+        const wantsDelay = /\b(in\s+\d+\s*(?:sec|second|min|minute|hour|hr)s?|(?:send|deliver|shoot|fire)\s+(?:it\s+)?later|later\s+(?:today|tonight|tomorrow)|schedule[d]?\s+(?:the\s+)?send|send\s+(?:it\s+)?(?:at|on)\s+\d)\b/i.test(text);
+        if (wantsDelay) {
+          setResponse("I can't schedule a delayed send yet — Gmail's API doesn't expose it, so I won't quietly send it now. Want me to **send it now** or **just draft it**? (Or use Gmail's own “Schedule send”.)");
+          setVisible(true); return;
+        }
         // Pass the WHOLE instruction (the composer handles the framing) + any attached file to summarize.
         let attachment: any = null;
         if (files?.length) { try { attachment = (await prepareAttachments(files.slice(0, 1)))[0] || null; } catch { /* unreadable file — send without it */ } }
