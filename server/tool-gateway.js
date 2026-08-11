@@ -140,6 +140,11 @@ function createToolGateway({ capabilityEngine, moduleRegistry, codeKnowledge }) 
       && /\b(task|todo|to-?do|reminder|note|event|meeting|appointment|call|lunch|dinner|breakfast|coffee|drinks?|gym|class|flight|interview|standup|sync|at\s*\d|\d{1,2}\s*(?:am|pm|:)|tomorrow|tonight|today|monday|tuesday|wednesday|thursday|friday|saturday|sunday|next week|morning|afternoon|evening|noon)\b/i.test(prompt);
     if (atlasRead) alwaysUseful.push("atlas_today");
     if (atlasWrite) alwaysUseful.push("atlas_add_task", "atlas_add_event", "atlas_add_reminder", "atlas_capture");
+    // The owner's REAL Google Calendar (read + write). Any mention of "calendar" exposes the Google
+    // calendar tools so the model can actually check it / write it — never fall back to a web search.
+    if (/\bcalendar\b/i.test(prompt)) {
+      alwaysUseful.push("calendar_list_events", "calendar_create_event", "calendar_move_event", "calendar_cancel_event");
+    }
     if (/\b(latest|recent|most recent|today|tomorrow|current|right now|live|online|news|score|schedule|price|weather|research|look up|google|web|internet|who is|when is|where is|who won|finals|championship|world cup|fifa|things to do|events?)\b/i.test(prompt)) {
       alwaysUseful.push("research_v2", "web_research");
     }

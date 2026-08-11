@@ -408,7 +408,7 @@ function createGoogleProvider({
     return { disconnected: true };
   }
 
-  return { accessToken, callback, createCalendarEvent, createDraft, deleteCalendarEvent, deleteDraft, disconnect, getDraft, getMessage, listMessages, redirectUri, requireCapability, sendDraft, sendEmail, start, status, test, updateCalendarEvent, verify };
+  return { accessToken, callback, createCalendarEvent, createDraft, deleteCalendarEvent, deleteDraft, disconnect, getDraft, getMessage, listCalendarEvents, listMessages, redirectUri, requireCapability, sendDraft, sendEmail, start, status, test, updateCalendarEvent, verify };
 }
 
 module.exports = { createGoogleProvider, GOOGLE_SCOPES };

@@ -61,7 +61,11 @@ function createAgentRuntime({ getSettings, toolGateway, codeKnowledge, memorySto
     // Bare time words (today/tomorrow/current/right now) are NOT fresh signals on their own — "im
     // tired today" is conversation, not a live-data request. Real fresh queries carry a topical
     // signal (news/weather/price/score/latest/who won), which is what this matches.
-    const fresh = marketDiscovery || deepResearch || sportsSchedule || /\b(latest|recent|most recent|online|internet|news|headline|score|standings|schedule|fixtures?|price|quote|weather|forecast|temperature|research|look up|google|web search|search the web|events?|things to do|who is|when is|where is|who won|finals|championship)\b/.test(lower);
+    // A question about the owner's OWN calendar/day is answered by tools, never a web search — but words
+    // like "google", "schedule", and "events" below would otherwise flag it "fresh" and hand it to
+    // grounding ("what's on my google calendar" → "turn on Research mode"). Exclude owner-data queries.
+    const ownerDataish = /\bcalendar\b|\bmy (?:tasks?|to-?dos?|schedule|reminders?|day|agenda|events?|meetings?|appointments?|plate)\b|\bwhat am i forgetting\b|\bon my plate\b|\bwhat'?s on my\b/.test(lower);
+    const fresh = !ownerDataish && (marketDiscovery || deepResearch || sportsSchedule || /\b(latest|recent|most recent|online|internet|news|headline|score|standings|schedule|fixtures?|price|quote|weather|forecast|temperature|research|look up|google|web search|search the web|events?|things to do|who is|when is|where is|who won|finals|championship)\b/.test(lower));
     const privateAccount = kalshiAccountPrompt || /\b(my (kalshi|portfolio|positions?|bets?|orders?|fills?|balance)|latest (kalshi )?(bet|fill|order)|best (kalshi )?position)\b/.test(lower);
     // The owner asking about his OWN day/state (tasks, schedule, reminders, calendar, inbox, contacts,
     // who he last emailed) is personal — it needs his private data, which lives behind tools. Without
@@ -71,7 +75,10 @@ function createAgentRuntime({ getSettings, toolGateway, codeKnowledge, memorySto
     const ownerData = /\b(my (?:tasks?|to-?dos?|schedule|day|agenda|calendar|reminders?|errands?|meetings?|appointments?|events?|inbox|emails?|plate))\b/.test(lower)
       || /\b(what|which|any)\b[^?]*\b(tasks?|to-?dos?|schedule|agenda|reminders?|on my plate|due (?:today|tomorrow|this)|forgetting|next up)\b/.test(lower)
       || /\bwhat do i (?:have|need)\b/.test(lower)
-      || /\b(plan (?:my|the) day|organi[sz]e my day|what am i forgetting|what'?s next|waiting on (?:me|them|someone)|need(?:s)? (?:a|my) reply|who did i (?:email|message|call))\b/.test(lower);
+      || /\b(plan (?:my|the) day|organi[sz]e my day|what am i forgetting|what'?s next|waiting on (?:me|them|someone)|need(?:s)? (?:a|my) reply|who did i (?:email|message|call))\b/.test(lower)
+      // Any calendar mention is about the owner's own calendar → personal, so the calendar tools engage
+      // instead of the turn being misrouted to a web search ("is it on my google calendar" was).
+      || /\bcalendar\b/.test(lower);
     const personal = privateAccount || ownerData || /\b(i like|i prefer|my favorite|about me|remember|what do you know about me|always|never|when i ask)\b/.test(lower);
     const followUp = text.trim().split(/\s+/).length < 8 || /\b(that|it|them|those|earlier|previous|i meant|actually)\b/.test(lower);
     // A "bigger question" — conceptual, decision, opinion, or teaching — is what Dev means by

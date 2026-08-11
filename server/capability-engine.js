@@ -396,6 +396,10 @@ function createCapabilityEngine({
     ["atlas_add_task", "Add a to-do/task to the owner's Today list. YOU extract the fields — do not make the owner rephrase. title is the task in a few words; dueAt is an ISO 8601 timestamp if they gave a due time (compute it from the current date/time provided to you, in the owner's timezone), else omit. Use for 'add a task to…', 'I need to…', 'remind me to <do X>' (no fire time). It saves immediately, no confirmation.", "execute", false],
     ["atlas_add_event", "Add a calendar event to the owner's Today (local day-model). YOU extract the fields: title (a few words, e.g. 'Dinner'), startAt as an ISO 8601 timestamp you compute from the current date/time in the owner's timezone (e.g. 'dinner at 9:15pm' today → today's date at 21:15 local), optional endAt (default 1h after start), optional location. Use for 'add <event> at <time>', 'schedule <event>', 'lunch with Sam tomorrow at 1'. Saves immediately, no confirmation. (This is the LOCAL day-model; to put it on the owner's real Google Calendar use the calendar tools instead.)", "execute", false],
     ["atlas_add_reminder", "Add a durable reminder that fires once at a specific time. YOU extract: title (what to remind about) and fireAt as an ISO 8601 timestamp computed from the current date/time in the owner's timezone. Use for 'remind me to <X> at <time>', 'nudge me at 5'. Saves immediately, no confirmation.", "execute", false],
+    ["calendar_list_events", "Read the owner's REAL Google Calendar over a time window. Call this whenever the owner asks what's on their (Google) calendar, whether something is on it, their meetings/events, or to confirm an event exists. timeMin/timeMax are ISO 8601 (default: now to +7 days). This is your ONLY way to see the real Google Calendar — never claim you can't check it.", "observe", false],
+    ["calendar_create_event", "Create a real event on the owner's Google Calendar (the actual calendar, not the local Today list). Use when the owner says 'add to my calendar', 'put X on my calendar', 'schedule X', or 'add an event'. YOU extract title, and startAt as an ISO 8601 timestamp in the owner's local time WITH offset; optional endAt (default +1h) and location. This is a real external write — it is confirmed with the owner before it goes through, so do NOT say it's done until the confirmation completes.", "commit", true],
+    ["calendar_move_event", "Move/reschedule an existing Google Calendar event to a new time. First call calendar_list_events to find the event and its id, then call this with eventId and newStartAt (ISO 8601, owner-local with offset). Confirmed before it goes through.", "commit", true],
+    ["calendar_cancel_event", "Cancel/delete an event from the owner's Google Calendar. First call calendar_list_events to find the event id, then call this with eventId. Confirmed before it goes through.", "commit", true],
     ["email_smart", "PREFERRED one-step email sender. Send an email to a saved contact BY NAME (or to a raw email address) in a single step — no separate draft, no extra approval prompt. Use for casual requests like 'email AJ that I'm running late' or 'send TG a note saying dinner at 8'. If an email is on file for that name it sends immediately and returns sent:true. If NO email is on file it does NOT send and returns status:recipient_unknown — then ask the owner for the address. If the owner supplies a new address (pass it as `email`), it sends and returns a saveSuggestion so you can offer to remember it. Prefer this over gmail_prepare_email/gmail_send_prepared for everyday sends to people.", "execute", false],
     ["contact_add_email", "Save or update a person's email address so future 'email <name>' sends resolve on their own. Use right after email_smart returns a saveSuggestion and the owner agrees, or when the owner says 'save X's email as …'.", "execute", false],
   ].map(([name, description, risk, confirmationRequired]) => ({
@@ -530,6 +534,25 @@ function createCapabilityEngine({
       title: { type: "STRING", description: "What to remind about, e.g. 'Call the bank'." },
       fireAt: { type: "STRING", description: "ISO 8601 timestamp to fire the reminder (compute from current date/time in the owner's timezone)." },
     }, required: ["title", "fireAt"] } },
+    { name: "calendar_list_events", description: description("calendar_list_events"), parameters: { type: "OBJECT", properties: {
+      timeMin: { type: "STRING", description: "Optional ISO 8601 window start; defaults to now." },
+      timeMax: { type: "STRING", description: "Optional ISO 8601 window end; defaults to 7 days from now." },
+      query: { type: "STRING", description: "Optional text to filter event titles by." },
+    } } },
+    { name: "calendar_create_event", description: description("calendar_create_event"), parameters: { type: "OBJECT", properties: {
+      title: { type: "STRING", description: "Event title, e.g. 'Dinner with parents'." },
+      startAt: { type: "STRING", description: "ISO 8601 start in the owner's local time WITH offset (e.g. 2026-08-11T21:15:00+05:30)." },
+      endAt: { type: "STRING", description: "Optional ISO 8601 end; defaults to one hour after start." },
+      location: { type: "STRING", description: "Optional location." },
+    }, required: ["title", "startAt"] } },
+    { name: "calendar_move_event", description: description("calendar_move_event"), parameters: { type: "OBJECT", properties: {
+      eventId: { type: "STRING", description: "The Google event id (from calendar_list_events)." },
+      newStartAt: { type: "STRING", description: "ISO 8601 new start (owner-local with offset)." },
+      newEndAt: { type: "STRING", description: "Optional ISO 8601 new end; defaults to one hour after new start." },
+    }, required: ["eventId", "newStartAt"] } },
+    { name: "calendar_cancel_event", description: description("calendar_cancel_event"), parameters: { type: "OBJECT", properties: {
+      eventId: { type: "STRING", description: "The Google event id (from calendar_list_events)." },
+    }, required: ["eventId"] } },
     { name: "pc_graph_rebuild", description: description("pc_graph_rebuild"), parameters: { type: "OBJECT", properties: {
       roots: { type: "ARRAY", items: { type: "STRING" }, description: "Optional root folders to index. Defaults to workspace, Downloads, Documents, and Desktop." },
       limit: { type: "INTEGER", description: "Maximum files to scan, 1 to 50000. Defaults to 1200." },
@@ -2147,6 +2170,41 @@ function createCapabilityEngine({
       if (!title || !fireAt) throw errorWithStatus("atlas_add_reminder needs a title and an ISO fireAt.", 400);
       const item = store.createReminder({ title, fireAt, tz: ownerTz(), source: { kind: "chat" } });
       return { ok: true, added: "reminder", item, message: `Reminder set — ${item.title}` };
+    },
+    calendar_list_events: async (args) => {
+      if (!providers?.google?.listCalendarEvents) throw errorWithStatus("Google Calendar isn't connected.", 412);
+      const now = Date.now();
+      const timeMin = ownerIso(args.timeMin) || new Date(now - 3600_000).toISOString();
+      const timeMax = ownerIso(args.timeMax) || new Date(now + 7 * 86400_000).toISOString();
+      let events = await providers.google.listCalendarEvents({ timeMin, timeMax, maxResults: 40 });
+      const q = cleanString(args.query, 120).toLowerCase();
+      if (q) events = events.filter((e) => String(e.title || "").toLowerCase().includes(q));
+      return { ok: true, source: "google-calendar", count: events.length, events };
+    },
+    calendar_create_event: async (args) => {
+      if (!providers?.google?.createCalendarEvent) throw errorWithStatus("Google Calendar isn't connected.", 412);
+      const title = cleanString(args.title, 400);
+      const startAt = ownerIso(args.startAt);
+      if (!title || !startAt) throw errorWithStatus("calendar_create_event needs a title and an ISO startAt.", 400);
+      const endAt = ownerIso(args.endAt) || new Date(new Date(startAt).getTime() + 3600_000).toISOString();
+      const ev = await providers.google.createCalendarEvent({ title, startAt, endAt, location: cleanString(args.location, 300) || null });
+      return { ok: true, created: "google-event", id: ev.id, title: ev.summary || title, startAt, endAt, htmlLink: ev.htmlLink || null, message: `Added "${ev.summary || title}" to your Google Calendar.` };
+    },
+    calendar_move_event: async (args) => {
+      if (!providers?.google?.updateCalendarEvent) throw errorWithStatus("Google Calendar isn't connected.", 412);
+      const eventId = cleanString(args.eventId, 200);
+      const newStartAt = ownerIso(args.newStartAt);
+      if (!eventId || !newStartAt) throw errorWithStatus("calendar_move_event needs an eventId and newStartAt.", 400);
+      const newEndAt = ownerIso(args.newEndAt) || new Date(new Date(newStartAt).getTime() + 3600_000).toISOString();
+      const ev = await providers.google.updateCalendarEvent(eventId, { startAt: newStartAt, endAt: newEndAt });
+      return { ok: true, moved: "google-event", id: ev.id, startAt: newStartAt, message: `Moved "${ev.summary || "the event"}" to the new time.` };
+    },
+    calendar_cancel_event: async (args) => {
+      if (!providers?.google?.deleteCalendarEvent) throw errorWithStatus("Google Calendar isn't connected.", 412);
+      const eventId = cleanString(args.eventId, 200);
+      if (!eventId) throw errorWithStatus("calendar_cancel_event needs an eventId.", 400);
+      await providers.google.deleteCalendarEvent(eventId);
+      return { ok: true, cancelled: "google-event", id: eventId, message: "Cancelled the event on your Google Calendar." };
     },
     atlas_today: async () => {
       const store = atlas();
