@@ -138,12 +138,28 @@ function createToolGateway({ capabilityEngine, moduleRegistry, codeKnowledge }) 
     const atlasRead = /\b(task|tasks|to-?do|to-?dos|reminder|reminders|schedule|agenda|calendar|my day|plan (?:my|the) day|organize my day|what'?s (?:next|on|due)|what am i (?:forgetting|doing|supposed)|what do i (?:have|need)|due (?:today|tomorrow|this)|appointments?|events?|meetings?|waiting on|follow ?ups?|errands?|on my plate)\b/i.test(prompt);
     const atlasWrite = /\b(add|remind|schedule|book|jot|note|log|pencil in|set ?up|reschedule|cancel|move)\b/i.test(prompt)
       && /\b(task|todo|to-?do|reminder|note|event|meeting|appointment|call|lunch|dinner|breakfast|coffee|drinks?|gym|class|flight|interview|standup|sync|at\s*\d|\d{1,2}\s*(?:am|pm|:)|tomorrow|tonight|today|monday|tuesday|wednesday|thursday|friday|saturday|sunday|next week|morning|afternoon|evening|noon)\b/i.test(prompt);
+    // Mutating an EXISTING local item — "mark X done", "finish X", "move/reschedule X", "cancel/delete X".
+    // Without these exposed, the model claimed "marked done"/"moved" with no tool (a lie) because it only
+    // had atlas_add_*. These give it the real complete / reschedule / cancel handlers.
+    const atlasMutate = /\b(mark|complete|completed|finish|finished|check off|tick off|cross off|done with|reschedule|move|cancel|delete|remove)\b/i.test(prompt);
     if (atlasRead) alwaysUseful.push("atlas_today");
     if (atlasWrite) alwaysUseful.push("atlas_add_task", "atlas_add_event", "atlas_add_reminder", "atlas_capture");
+    if (atlasMutate) alwaysUseful.push("atlas_today", "atlas_complete_task", "atlas_reschedule_event", "atlas_cancel_item");
     // The owner's REAL Google Calendar (read + write). Any mention of "calendar" exposes the Google
     // calendar tools so the model can actually check it / write it — never fall back to a web search.
     if (/\bcalendar\b/i.test(prompt)) {
       alwaysUseful.push("calendar_list_events", "calendar_create_event", "calendar_move_event", "calendar_cancel_event");
+    }
+    // Email — "email <person>", "e-mail/gmail", "send/reply/draft … a note/message", or a raw address.
+    // There was NO email rule here, so the gmail tools were only pulled by fuzzy keyword scoring: "draft
+    // an email" caught them but "email X that I'll be late" missed them → "Gmail tools not exposed" and a
+    // hallucinated browser fallback. Expose the prepare→send pair (approval-bound) + the one-step sender
+    // + a plain draft on ANY email intent so a send is always possible. gmail_read/inbox stay out (those
+    // are inbound reads with their own trust rules); this is send/compose only.
+    if (/\b(e-?mail|gmail)\b/i.test(prompt)
+      || /\b(send|write|draft|shoot|compose|reply|forward|fire off|drop)\b[^.?!]{0,30}\b(mail|note|message|line|memo|email)\b/i.test(prompt)
+      || /[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/.test(prompt)) {
+      alwaysUseful.push("gmail_prepare_email", "gmail_send_prepared", "email_smart", "draft_email");
     }
     if (/\b(latest|recent|most recent|today|tomorrow|current|right now|live|online|news|score|schedule|price|weather|research|look up|google|web|internet|who is|when is|where is|who won|finals|championship|world cup|fifa|things to do|events?)\b/i.test(prompt)) {
       alwaysUseful.push("research_v2", "web_research");

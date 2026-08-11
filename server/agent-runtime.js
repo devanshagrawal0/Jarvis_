@@ -51,13 +51,22 @@ function createAgentRuntime({ getSettings, toolGateway, codeKnowledge, memorySto
       && /\b(report|brief|briefing|document|doc|pdf|deck|slides?|presentation|study sheet|one[- ]pager|artifact|write[- ]up|summary sheet|trading brief|research brief)\b/.test(lower);
     const deepResearch = /\b(deep research|research report|investigate|source-backed|source backed|citations?|evidence|read sources?|compare sources?|summarize (?:this )?(?:url|link|page|article)|read (?:this )?(?:url|link|page|article))\b/.test(lower)
       || /https?:\/\/[^\s)]+/i.test(text);
-    const action = deviceMesh || localObserve || pcGraph || agentSwarm || skillAutopilot || marketDiscovery || workComposer
+    // An email intent — "email <person>", "e-mail/gmail", "send/reply/draft … a note/message/line",
+    // or any raw address in the text. Without this, "email devanshhagrawal@… that I'll be late"
+    // classified as plain conversation → the prepare() gate skipped selectTools → zero tools → the
+    // brain said "the Gmail tools are not exposed in this turn" and invented a useless
+    // browser-automation fallback. "email"/"mail" was never an action VERB. Marking the turn an
+    // action exposes gmail_prepare_email/gmail_send_prepared/email_smart so a send can actually happen.
+    const emailIntent = /\b(e-?mail|gmail)\b/.test(lower)
+      || /\b(send|write|draft|shoot|compose|reply|forward|fire off|drop)\b[^.?!]{0,30}\b(mail|note|message|line|memo|email)\b/.test(lower)
+      || /[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}/i.test(lower);
+    const action = deviceMesh || localObserve || pcGraph || agentSwarm || skillAutopilot || marketDiscovery || workComposer || emailIntent
       || /\b(open|close|launch|send|write|draft|focus|click|type|create|deploy|run|search(?:\s+(?:for|my|on|in))?|check my|remember|save)\b/.test(lower)
       // Owner-action verbs: adding a task/event, reminding, scheduling, moving/cancelling. Without
       // these the classifier called "add dinner at 9:15" plain conversation → zero tools → the brain
       // said "I can't add anything, no tool this turn." They just need to engage the tool pathway;
       // the LLM still decides whether/how to act.
-      || /\b(add|remind|schedule|book|jot|note|log|pencil in|set ?up|reschedule|resched|cancel|move|delete|renew|track)\b/.test(lower);
+      || /\b(add|remind|schedule|book|jot|note|log|pencil in|set ?up|reschedule|resched|cancel|move|delete|renew|track|mark|complete|finish|finished|check off|tick off|done with|cross off)\b/.test(lower);
     // Bare time words (today/tomorrow/current/right now) are NOT fresh signals on their own — "im
     // tired today" is conversation, not a live-data request. Real fresh queries carry a topical
     // signal (news/weather/price/score/latest/who won), which is what this matches.
@@ -272,20 +281,36 @@ function createAgentRuntime({ getSettings, toolGateway, codeKnowledge, memorySto
     const meshTask = route.deviceMesh || /\b(mesh_status|device mesh|omnipresence|object portal|command cards?|cloudflare|stable phone|webhook|phone link|ipad link|trusted devices?)\b/i.test(String(prompt || ""));
     // THE FORGE — strategy/bot questions must reach apex_strategies, not memory/web.
     const forgeTask = /\b(strateg(?:y|ies)|the forge|my bots?|trading bots?|backtest|which bots?|what bots?|signals?|variables?|folders?|sortino|sharpe|calmar|drawdown|deep analysis|report)\b/i.test(String(prompt || ""));
+    // RW3 (coreference) — a short continuation ("yes", "send it", "move it to 1pm", "actually make
+    // it 5pm", "cancel that") carries NO nouns of its own, so the classifier/gateway saw no
+    // email/calendar/task signal and stripped the turn of tools. The brain then said "no email tool
+    // active for this turn" or, worse, FALSELY claimed success ("Lunch is moved to 1 PM") with no tool
+    // call. Fold the last couple of exchanges into the text the GATEWAY scores (this never touches the
+    // model prompt — the model already gets full history), so a follow-up re-exposes the same tool
+    // family the prior turn used. Then the model can actually act on "it"/"that"/"yes".
+    const rawPrompt = String(prompt || "");
+    const isContinuation = rawPrompt.trim().split(/\s+/).filter(Boolean).length <= 6
+      || /^\s*(y|ok|okay|sure|yes|yeah|yep|yup|do it|go ?ahead|please|confirm|send (?:it|now|that)|make it|change it|move it|reschedule|cancel (?:it|that)|actually\b|instead\b|nah?\b|no,? )/i.test(rawPrompt);
+    const historyTail = Array.isArray(history)
+      ? history.slice(-4).map((h) => String((h && (h.text || h.content)) || "")).filter(Boolean).join("\n")
+      : "";
+    const continuationAction = isContinuation && historyTail.trim().length > 0;
     const toolPrompt = screenTask
       ? `${prompt}\ncurrent laptop screen screen_capture screen_inspect screen_act desktop_control`
       : meshTask
         ? `${prompt}\ndevice mesh mesh_status mesh_objects mesh_send_command device_files device_latest_image`
         : forgeTask
           ? `${prompt}\napex_strategies strategies bots forge portfolio backtest`
-          : prompt;
+          : continuationAction
+            ? `${historyTail}\n${prompt}`
+            : prompt;
     // T4c: intent-aware tool limit — deep/complex gets 12, browser/screen/mesh gets 10, action 8, else 5
     const toolLimit = route.complexity === "deep" ? 12
       : (browserTask || screenTask || meshTask) ? 10
-        : (route.action || route.agentSwarm) ? 8
+        : (route.action || route.agentSwarm || continuationAction) ? 8
           : 5;
     let selectedTools = forgeGenerative ? []
-      : (route.action || route.code || route.personal || route.fresh || browserTask || meshTask || forgeTask
+      : (route.action || route.code || route.personal || route.fresh || browserTask || meshTask || forgeTask || continuationAction
         ? toolGateway.selectTools(toolPrompt, { limit: toolLimit, intent: route.intent, route })
         : []);
     const execution = forgeGenerative ? { lane: "none", tools: [] } : routeExecutionLane(prompt, settings);

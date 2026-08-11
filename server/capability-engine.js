@@ -196,6 +196,26 @@ function createCapabilityEngine({
     }
     const d = new Date(s); return Number.isNaN(d.getTime()) ? null : d.toISOString();
   };
+  // Fuzzy-match a local ATLAS item by title for complete/reschedule/cancel. The owner says "mark the
+  // plumber task done" / "move lunch", not an id, so score candidates by token overlap with the query
+  // and require at least one shared meaningful word so a wrong item is never silently mutated.
+  const bestAtlasMatch = (items, query) => {
+    const stop = new Set(["the", "a", "an", "my", "to", "for", "of", "on", "at", "with", "task", "event", "reminder", "appt", "appointment", "meeting", "call", "please"]);
+    const toks = (s) => String(s || "").toLowerCase().replace(/[^a-z0-9\s]/g, " ").split(/\s+/).filter((w) => w && !stop.has(w));
+    const qset = new Set(toks(query));
+    if (!qset.size) {
+      // Query was all stop-words (e.g. "the meeting") — fall back to a substring test on the raw title.
+      const ql = String(query || "").toLowerCase().trim();
+      return (items || []).find((it) => String(it.title || "").toLowerCase().includes(ql)) || null;
+    }
+    let best = null, bestScore = 0;
+    for (const it of items || []) {
+      const t = new Set(toks(it.title));
+      let overlap = 0; for (const w of qset) if (t.has(w)) overlap += 1;
+      if (overlap > bestScore) { bestScore = overlap; best = it; }
+    }
+    return bestScore > 0 ? best : null;
+  };
   const confirmationsPath = path.join(runtimeDir, CONFIRMATIONS_FILE);
   const memoryPath = path.join(runtimeDir, MEMORY_FILE);
   // Who the owner means when they say a name. Consulted before any identity search, so a known
@@ -396,6 +416,9 @@ function createCapabilityEngine({
     ["atlas_add_task", "Add a to-do/task to the owner's Today list. YOU extract the fields — do not make the owner rephrase. title is the task in a few words; dueAt is an ISO 8601 timestamp if they gave a due time (compute it from the current date/time provided to you, in the owner's timezone), else omit. Use for 'add a task to…', 'I need to…', 'remind me to <do X>' (no fire time). It saves immediately, no confirmation.", "execute", false],
     ["atlas_add_event", "Add a calendar event to the owner's Today (local day-model). YOU extract the fields: title (a few words, e.g. 'Dinner'), startAt as an ISO 8601 timestamp you compute from the current date/time in the owner's timezone (e.g. 'dinner at 9:15pm' today → today's date at 21:15 local), optional endAt (default 1h after start), optional location. Use for 'add <event> at <time>', 'schedule <event>', 'lunch with Sam tomorrow at 1'. Saves immediately, no confirmation. (This is the LOCAL day-model; to put it on the owner's real Google Calendar use the calendar tools instead.)", "execute", false],
     ["atlas_add_reminder", "Add a durable reminder that fires once at a specific time. YOU extract: title (what to remind about) and fireAt as an ISO 8601 timestamp computed from the current date/time in the owner's timezone. Use for 'remind me to <X> at <time>', 'nudge me at 5'. Saves immediately, no confirmation.", "execute", false],
+    ["atlas_complete_task", "Mark one of the owner's LOCAL Today tasks as done/completed. Pass `title` = a few words identifying the task ('call the plumber', 'file taxes'); the tool finds the best-matching OPEN task and completes it. Use for 'mark X done', 'I finished X', 'check off X', 'that's done'. Saves immediately. Returns which task it completed (or says none matched) — never claim a task is done unless this returns ok.", "execute", false],
+    ["atlas_reschedule_event", "Move or rename one of the owner's LOCAL Today events (not Google Calendar). Pass `title` to identify the event and `newStartAt` (ISO 8601, owner-local) to move it, and/or `newTitle` to rename. Use for 'move lunch to 1pm', 'push the dentist appt to 4', 'rename X to Y'. Finds the best-matching upcoming event and updates it in place (no duplicate). Returns the updated event — never claim it moved unless this returns ok.", "execute", false],
+    ["atlas_cancel_item", "Cancel/remove one of the owner's LOCAL Today items — a task, event, or reminder. Pass `title` to identify it and optional `kind` ('task'|'event'|'reminder') to disambiguate. Use for 'cancel lunch', 'delete the plumber task', 'remove that reminder'. This deletes local data, so it is confirmed with the owner first; do NOT say it's removed until the confirmation completes. Returns what was cancelled.", "execute", false],
     ["calendar_list_events", "Read the owner's REAL Google Calendar over a time window. Call this whenever the owner asks what's on their (Google) calendar, whether something is on it, their meetings/events, or to confirm an event exists. timeMin/timeMax are ISO 8601 (default: now to +7 days). This is your ONLY way to see the real Google Calendar — never claim you can't check it.", "observe", false],
     ["calendar_create_event", "Create a real event on the owner's Google Calendar (the actual calendar, not the local Today list). Use when the owner says 'add to my calendar', 'put X on my calendar', 'schedule X', or 'add an event'. YOU extract title, and startAt as an ISO 8601 timestamp in the owner's local time WITH offset; optional endAt (default +1h) and location. This is a real external write — it is confirmed with the owner before it goes through, so do NOT say it's done until the confirmation completes.", "commit", true],
     ["calendar_move_event", "Move/reschedule an existing Google Calendar event to a new time. First call calendar_list_events to find the event and its id, then call this with eventId and newStartAt (ISO 8601, owner-local with offset). Confirmed before it goes through.", "commit", true],
@@ -534,6 +557,18 @@ function createCapabilityEngine({
       title: { type: "STRING", description: "What to remind about, e.g. 'Call the bank'." },
       fireAt: { type: "STRING", description: "ISO 8601 timestamp to fire the reminder (compute from current date/time in the owner's timezone)." },
     }, required: ["title", "fireAt"] } },
+    { name: "atlas_complete_task", description: description("atlas_complete_task"), parameters: { type: "OBJECT", properties: {
+      title: { type: "STRING", description: "A few words identifying the open task to mark done, e.g. 'call the plumber'." },
+    }, required: ["title"] } },
+    { name: "atlas_reschedule_event", description: description("atlas_reschedule_event"), parameters: { type: "OBJECT", properties: {
+      title: { type: "STRING", description: "A few words identifying the local event to change, e.g. 'lunch'." },
+      newStartAt: { type: "STRING", description: "Optional new ISO 8601 start (owner-local) to move the event to." },
+      newTitle: { type: "STRING", description: "Optional new title to rename the event to." },
+    }, required: ["title"] } },
+    { name: "atlas_cancel_item", description: description("atlas_cancel_item"), parameters: { type: "OBJECT", properties: {
+      title: { type: "STRING", description: "A few words identifying the item to cancel/remove." },
+      kind: { type: "STRING", description: "Optional 'task' | 'event' | 'reminder' to disambiguate which kind to cancel." },
+    }, required: ["title"] } },
     { name: "calendar_list_events", description: description("calendar_list_events"), parameters: { type: "OBJECT", properties: {
       timeMin: { type: "STRING", description: "Optional ISO 8601 window start; defaults to now." },
       timeMax: { type: "STRING", description: "Optional ISO 8601 window end; defaults to 7 days from now." },
@@ -2170,6 +2205,61 @@ function createCapabilityEngine({
       if (!title || !fireAt) throw errorWithStatus("atlas_add_reminder needs a title and an ISO fireAt.", 400);
       const item = store.createReminder({ title, fireAt, tz: ownerTz(), source: { kind: "chat" } });
       return { ok: true, added: "reminder", item, message: `Reminder set — ${item.title}` };
+    },
+    atlas_complete_task: async (args) => {
+      const store = atlas();
+      if (!store) throw errorWithStatus("The day-model (ATLAS) is not available in this runtime.", 412);
+      const q = cleanString(args.title, 300);
+      if (!q) throw errorWithStatus("atlas_complete_task needs a title to identify the task.", 400);
+      const open = store.listTasks({ status: "open", limit: 200 });
+      const match = bestAtlasMatch(open, q);
+      if (!match) return { ok: false, completed: false, message: `No open task matched "${q}". Nothing was changed.` };
+      const item = store.updateTask(match.id, { status: "done" });
+      return { ok: true, completed: true, item, message: `Marked done — ${item.title}` };
+    },
+    atlas_reschedule_event: async (args) => {
+      const store = atlas();
+      if (!store) throw errorWithStatus("The day-model (ATLAS) is not available in this runtime.", 412);
+      const q = cleanString(args.title, 300);
+      if (!q) throw errorWithStatus("atlas_reschedule_event needs a title to identify the event.", 400);
+      const newStartAt = ownerIso(args.newStartAt);
+      const newTitle = cleanString(args.newTitle, 300);
+      if (!newStartAt && !newTitle) throw errorWithStatus("atlas_reschedule_event needs newStartAt and/or newTitle.", 400);
+      // Look at a wide upcoming window so "move lunch" finds today's/tomorrow's event.
+      const from = new Date(Date.now() - 12 * 3600_000).toISOString();
+      const to = new Date(Date.now() + 30 * 86400_000).toISOString();
+      const events = store.eventsBetween(from, to);
+      const match = bestAtlasMatch(events, q);
+      if (!match) return { ok: false, moved: false, message: `No upcoming event matched "${q}". Nothing was changed.` };
+      const patch = {};
+      if (newStartAt) {
+        patch.startAt = newStartAt;
+        const oldDur = match.endAt ? (new Date(match.endAt).getTime() - new Date(match.startAt).getTime()) : 3600_000;
+        patch.endAt = new Date(new Date(newStartAt).getTime() + Math.max(0, oldDur)).toISOString();
+      }
+      if (newTitle) patch.title = newTitle;
+      const item = store.updateEvent(match.id, patch);
+      return { ok: true, moved: true, item, message: `Updated event — ${item.title}` };
+    },
+    atlas_cancel_item: async (args) => {
+      const store = atlas();
+      if (!store) throw errorWithStatus("The day-model (ATLAS) is not available in this runtime.", 412);
+      const q = cleanString(args.title, 300);
+      if (!q) throw errorWithStatus("atlas_cancel_item needs a title to identify the item.", 400);
+      const kind = cleanString(args.kind, 20).toLowerCase();
+      const from = new Date(Date.now() - 12 * 3600_000).toISOString();
+      const to = new Date(Date.now() + 60 * 86400_000).toISOString();
+      const pools = [];
+      if (!kind || kind === "task") for (const t of store.listTasks({ status: "open", limit: 200 })) pools.push({ kind: "task", item: t });
+      if (!kind || kind === "event") for (const e of store.eventsBetween(from, to)) pools.push({ kind: "event", item: e });
+      if (!kind || kind === "reminder") for (const r of store.pendingReminders()) pools.push({ kind: "reminder", item: r });
+      const match = bestAtlasMatch(pools.map((p) => p.item), q);
+      if (!match) return { ok: false, cancelled: false, message: `No task, event, or reminder matched "${q}". Nothing was changed.` };
+      const hit = pools.find((p) => p.item.id === match.id);
+      if (hit.kind === "task") store.updateTask(match.id, { status: "cancelled" });
+      else if (hit.kind === "event") store.deleteEvent(match.id);
+      else store.cancelReminder(match.id);
+      return { ok: true, cancelled: true, kind: hit.kind, item: match, message: `Cancelled ${hit.kind} — ${match.title}` };
     },
     calendar_list_events: async (args) => {
       if (!providers?.google?.listCalendarEvents) throw errorWithStatus("Google Calendar isn't connected.", 412);

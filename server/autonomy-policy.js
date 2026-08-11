@@ -79,7 +79,11 @@ function evaluateAutonomy({ definition, tool, args, profile, context, recentActi
   // reversible — deleting is one command — so they run without a confirmation click, like the owner
   // typing into the Today widget. (Google Calendar / email writes are NOT here; those still confirm.)
   const lowRiskLocalExecute = new Set(["screen_act", "desktop_control", "open_url", "youtube_open_video", "computer_use",
-    "atlas_capture", "atlas_add_task", "atlas_add_event", "atlas_add_reminder"]);
+    "atlas_capture", "atlas_add_task", "atlas_add_event", "atlas_add_reminder",
+    // Completing / rescheduling a LOCAL Today item is reversible (re-open, move back) and mirrors the
+    // owner clicking on their own board, so it runs without a confirmation click. atlas_cancel_item is
+    // deliberately NOT here — it deletes local data, so it keeps the confirmation gate.
+    "atlas_complete_task", "atlas_reschedule_event"]);
   // Arbitrary code execution is never routine. `run_command` shells out with
   // -ExecutionPolicy Bypass, and its own blocklist is a resource-exhaustion heuristic rather than
   // a security boundary — every entry is trivially expressible another way (ForEach-Object for
