@@ -183,6 +183,19 @@ function createCapabilityEngine({
   const getApex = () => (typeof apexIngest === "function" ? apexIngest() : apexIngest);
   const atlas = () => (typeof getAtlas === "function" ? getAtlas() : null);
   const ownerTz = () => { try { return (typeof getOwnerTz === "function" ? getOwnerTz() : null) || atlasCapture.DEFAULT_TZ; } catch { return atlasCapture.DEFAULT_TZ; } };
+  // Normalize a time the MODEL produced into a correct UTC ISO instant. If it already carries a zone
+  // (Z or ±HH:MM) trust it; if it's a naive wall-clock ("2026-08-11T21:15"), interpret it in the
+  // owner's timezone. Safety net so a model that forgets the offset still lands on the right day.
+  const ownerIso = (raw) => {
+    const s = String(raw || "").trim();
+    if (!s) return null;
+    if (/[zZ]$|[+-]\d{2}:?\d{2}$/.test(s)) { const d = new Date(s); return Number.isNaN(d.getTime()) ? null : d.toISOString(); }
+    const m = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})[T ](\d{1,2}):(\d{2})/);
+    if (m && typeof atlasCapture.zonedWallToIso === "function") {
+      try { return atlasCapture.zonedWallToIso(+m[1], +m[2], +m[3], +m[4], +m[5], ownerTz()); } catch { /* fall through */ }
+    }
+    const d = new Date(s); return Number.isNaN(d.getTime()) ? null : d.toISOString();
+  };
   const confirmationsPath = path.join(runtimeDir, CONFIRMATIONS_FILE);
   const memoryPath = path.join(runtimeDir, MEMORY_FILE);
   // Who the owner means when they say a name. Consulted before any identity search, so a known
@@ -2113,16 +2126,16 @@ function createCapabilityEngine({
       if (!store) throw errorWithStatus("The day-model (ATLAS) is not available in this runtime.", 412);
       const title = cleanString(args.title, 300);
       if (!title) throw errorWithStatus("atlas_add_task needs a title.", 400);
-      const item = store.createTask({ title, dueAt: cleanString(args.dueAt, 40) || null, priority: Number.isFinite(args.priority) ? args.priority : 1, tz: ownerTz(), source: { kind: "chat" } });
+      const item = store.createTask({ title, dueAt: ownerIso(args.dueAt), priority: Number.isFinite(args.priority) ? args.priority : 1, tz: ownerTz(), source: { kind: "chat" } });
       return { ok: true, added: "task", item, message: `Task added — ${item.title}` };
     },
     atlas_add_event: async (args) => {
       const store = atlas();
       if (!store) throw errorWithStatus("The day-model (ATLAS) is not available in this runtime.", 412);
       const title = cleanString(args.title, 300);
-      const startAt = cleanString(args.startAt, 40);
+      const startAt = ownerIso(args.startAt);
       if (!title || !startAt) throw errorWithStatus("atlas_add_event needs a title and an ISO startAt.", 400);
-      const endAt = cleanString(args.endAt, 40) || new Date(new Date(startAt).getTime() + 3600_000).toISOString();
+      const endAt = ownerIso(args.endAt) || new Date(new Date(startAt).getTime() + 3600_000).toISOString();
       const item = store.createEvent({ title, startAt, endAt, location: cleanString(args.location, 200) || null, tz: ownerTz(), source: { kind: "chat" } });
       return { ok: true, added: "event", item, message: `Event added — ${item.title}` };
     },
@@ -2130,7 +2143,7 @@ function createCapabilityEngine({
       const store = atlas();
       if (!store) throw errorWithStatus("The day-model (ATLAS) is not available in this runtime.", 412);
       const title = cleanString(args.title, 300);
-      const fireAt = cleanString(args.fireAt, 40);
+      const fireAt = ownerIso(args.fireAt);
       if (!title || !fireAt) throw errorWithStatus("atlas_add_reminder needs a title and an ISO fireAt.", 400);
       const item = store.createReminder({ title, fireAt, tz: ownerTz(), source: { kind: "chat" } });
       return { ok: true, added: "reminder", item, message: `Reminder set — ${item.title}` };
