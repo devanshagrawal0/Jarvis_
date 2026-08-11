@@ -2,6 +2,7 @@ import type { ReactNode } from "react";
 import { useEffect, useRef, useState } from "react";
 import "./TodayDashboard.css";
 import heroArt from "./assets/hero-planet.png";
+import { GoogleConnectChips } from "./GoogleConnectChips";
 
 // Today — focused view. Built to the 4 reference mockups: deep-space canvas, cyan primary with
 // purple/blue/green semantic accents, left icon rail, "Next" hero + holographic art, four stat
@@ -11,17 +12,6 @@ import heroArt from "./assets/hero-planet.png";
 
 function command(text: string) {
   document.dispatchEvent(new CustomEvent("jarvis:command", { detail: { text, files: [] } }));
-}
-// Grant one Google capability bundle (gmail_read / calendar_write) RIGHT HERE in Today — opens the
-// consent popup, no trip to a separate settings screen. The window regains focus when consent finishes,
-// which is what triggers the status re-fetch below.
-async function connectGoogle(bundle: string) {
-  try {
-    const r = await fetch(`/api/oauth/google/start?bundles=${encodeURIComponent(bundle)}`);
-    const d = await r.json().catch(() => ({}));
-    if (d?.authorizationUrl) window.open(d.authorizationUrl, "_blank", "noopener,noreferrer");
-    else command(`I tried to start the Google "${bundle}" connection but got no authorization URL. What's blocking it?`);
-  } catch { command("The Google connection couldn't start — check that OAuth credentials are configured."); }
 }
 const clockOf = (iso?: string | null, tz?: string) => {
   if (!iso) return "";
@@ -75,24 +65,6 @@ export function TodayDashboard({ data, loading, onExpand, onRefresh }: { data: a
   // Live ticking clock — the hero anchor when the day is clear (real + useful, not filler text).
   const [tick, setTick] = useState(() => Date.now());
   useEffect(() => { const t = window.setInterval(() => setTick(Date.now()), 1000); return () => window.clearInterval(t); }, []);
-  // Which Google capabilities are live, so Today can offer to enable the missing ones inline. Re-checks
-  // when the window regains focus (i.e. right after the consent popup closes).
-  const [gcap, setGcap] = useState<{ calWrite: boolean; mailRead: boolean } | null>(null);
-  useEffect(() => {
-    let alive = true;
-    const load = async () => {
-      try {
-        const r = await fetch("/api/health"); const j = await r.json();
-        const s = j?.providers?.google?.services || {};
-        const connected = j?.providers?.google?.connected;
-        if (alive) setGcap(connected ? { calWrite: !!s.calendar?.canWrite, mailRead: !!s.gmail?.canRead } : null);
-      } catch { /* leave null → offer nothing rather than a wrong prompt */ }
-    };
-    load();
-    const onFocus = () => load();
-    window.addEventListener("focus", onFocus);
-    return () => { alive = false; window.removeEventListener("focus", onFocus); };
-  }, []);
   const [liveTime, liveAp] = (() => {
     try { return new Date(tick).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", timeZone: tz || undefined }).split(" "); } catch { return ["", ""]; }
   })();
@@ -216,8 +188,7 @@ export function TodayDashboard({ data, loading, onExpand, onRefresh }: { data: a
             <div className="sub"><span className="td-dot" /> {clockOf(nowIso, tz)} · {now ? "Live now" : "On schedule"}</div>
           </div>
           <div className="td-top-right">
-            {gcap && !gcap.calWrite ? <button className="td-connect" title="Let Jarvis create, move and cancel calendar events — each change is previewed for your OK first." onClick={() => connectGoogle("calendar_write")}>⊕ Enable calendar editing</button> : null}
-            {gcap && !gcap.mailRead ? <button className="td-connect" title="Let Jarvis read your inbox to surface replies you owe. Read-only — it never sends." onClick={() => connectGoogle("gmail_read")}>⊕ Read email</button> : null}
+            <GoogleConnectChips />
             <span className="td-online"><span className="td-dot" /> JARVIS ONLINE</span>
             <span style={{ color: "var(--td-mut)" }}>{I.search}</span>
           </div>

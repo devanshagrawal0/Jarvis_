@@ -1,5 +1,6 @@
 import { useMemo } from "react";
 import "./PersonalCommandCenters.css";
+import { GoogleConnectChips } from "./GoogleConnectChips";
 
 function command(text: string) {
   document.dispatchEvent(new CustomEvent("jarvis:command", { detail: { text, files: [] } }));
@@ -60,6 +61,7 @@ export function TodayCommandCenter({ data, loading }: { data: any; loading: bool
   const nowIso = data?.now;
   return <div className="pc-center today-command">
     <section className="pc-hero"><div><span>YOUR DAY</span><h2>{now ? now.title : next ? `Next: ${next.title}` : "Nothing scheduled"}</h2><p>{now ? `On now until ${clockOf(now.endAt, tz) || "—"}${next ? ` · then ${next.title} at ${clockOf(next.startAt, tz)}` : ""}` : next ? `Starts at ${clockOf(next.startAt, tz)}${next.location ? ` · ${next.location}` : ""}` : `${data?.place || "your area"} · ${clockOf(nowIso, tz)} — the day is clear.`}</p></div><div className="pc-live"><i /> {loading ? "SYNCING" : "LIVE"}</div></section>
+    <GoogleConnectChips />
     <div className="pc-stats"><Stat label="Open tasks" value={counts.openTasks ?? 0} note="to do" tone="cyan" /><Stat label="Top of mind" value={top.length} note="need you today" tone="amber" /><Stat label="Waiting on others" value={counts.waitingOnThem ?? 0} note="delegated / replies" tone="violet" /><Stat label="Reminders set" value={counts.pendingReminders ?? 0} note="will fire on time" tone="green" /></div>
     <div className="pc-profile-grid">
       <section className="pc-panel pc-span"><header><div><span>Top of mind</span><strong>{top.length ? `${top.length} for today` : "All clear"}</strong></div><small>due today or high priority</small></header>
