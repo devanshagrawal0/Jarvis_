@@ -1,3 +1,4 @@
 // Types for messageIntent.js (a CommonJS module; tsconfig has allowJs:false so tsc reads this instead).
 export declare function detectMessageIntent(text: string): { recipient: string } | null;
 export declare function detectInboxRead(text: string): { unreadOnly: boolean } | null;
+export declare function detectCalendarCommand(text: string): { kind: "write" } | null;

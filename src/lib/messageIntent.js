@@ -128,4 +128,30 @@ function detectInboxRead(text) {
   return null;
 }
 
-module.exports = { detectMessageIntent, detectInboxRead };
+// A permissive gate for "change my calendar" commands (create / move / cancel an event). It only
+// decides whether JarvisUI should POST to /api/calendar/plan — the SERVER's parseCalendarCommand is
+// authoritative and returns not_calendar to fall back to the brain, so this can be generous without
+// risk. It deliberately excludes reminders/to-dos (atlas capture) and calendar READS ("what's on my
+// calendar").
+function detectCalendarCommand(text) {
+  const t = String(text || "").trim();
+  if (!t) return null;
+  if (/\bremind me\b|\bset (?:a |up a )?reminder\b|\badd (?:a |an )?(?:task|to-?do)\b|\bdon'?t let me forget\b/i.test(t)) return null;
+  // a pure read of the calendar is not a write
+  const hasWriteVerb = /\b(schedule|book|set\s?up|pencil\s+in|block\s+off|block\s+out|move|reschedule|resched|push|shift|bump|cancel|delete|remove|clear|call\s+off|add|put)\b/i.test(t);
+  if (/\b(what'?s|what is|show|list|see|any|when'?s|when is)\b/i.test(t) && /\b(calendar|schedule|agenda|events?)\b/i.test(t) && !hasWriteVerb) return null;
+
+  const createVerb = /\b(schedule|book|set\s?up|pencil\s+in|block\s+off|block\s+out|put\s+[\s\S]*\bcalendar\b|add\s+(?:an?\s+)?(?:event|meeting|appointment|appt|call|invite))\b/i.test(t);
+  const moveVerb = /\b(move|reschedule|resched|push|shift|bump|change)\b[\s\S]*\bto\b/i.test(t);
+  const cancelVerb = /\b(cancel|delete|remove|clear|call\s+off)\b/i.test(t);
+  const eventNoun = /\b(meeting|appointment|appt|call|invite|event|lunch|dinner|coffee|breakfast|interview|standup|stand-up|sync|1:1|catch\s*up|review|session|class|flight|reservation|dentist|doctor|gym)\b/i.test(t);
+  const timeWord = /\b(today|tomorrow|tonight|monday|tuesday|wednesday|thursday|friday|saturday|sunday|next week|morning|afternoon|evening|noon|midnight|\d{1,2}\s*(?:am|pm)|at\s+\d)\b/i.test(t);
+
+  if (createVerb) return { kind: "write" };
+  if (moveVerb) return { kind: "write" };
+  if (cancelVerb && (eventNoun || /\bcalendar\b/i.test(t) || timeWord)) return { kind: "write" };
+  if (eventNoun && timeWord) return { kind: "write" }; // implicit "lunch tomorrow at 1"
+  return null;
+}
+
+module.exports = { detectMessageIntent, detectInboxRead, detectCalendarCommand };

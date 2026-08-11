@@ -86,6 +86,7 @@ const { createUserContext } = require("./server/user-context");
 const { createAtlasStore } = require("./server/atlas/atlas-store");           // ATLAS Wave 1 — day-model store
 const { createAtlasScheduler } = require("./server/atlas/atlas-scheduler");   // ATLAS Wave 1 — reminder tick
 const atlasCapture = require("./server/atlas/atlas-capture");                 // ATLAS Wave 2 — NL quick capture
+const atlasCalendarWrite = require("./server/atlas/calendar-write");          // ATLAS Wave 6 — calendar write proposals
 const { createGoogleCalendar } = require("./server/atlas/google-calendar");   // ATLAS Wave 5 — Google Calendar read model
 // DM-1: Cloudflare Quick Tunnel — phones can reach Jarvis from any network
 const { startTunnel, stopTunnel, getTunnelUrl, isTunnelActive, getTunnelStatus } = require("./server/tunnel-manager");
@@ -7034,6 +7035,73 @@ async function handleApi(req, res, pathname, url) {
       }
       sendJson(res, 400, { ok: false, error: String((e && e.message) || e) });
     }
+    return;
+  }
+  // W6 — calendar WRITE, two phases so nothing changes without an explicit preview + confirm.
+  // /plan parses the command and (for move/cancel) resolves the target against the real calendar,
+  // returning a preview. /commit executes the resolved proposal. Both owner-session gated (POST).
+  if ((pathname === "/api/calendar/plan" || pathname === "/api/calendar/commit") && req.method === "POST") {
+    const calClock = (iso, tz) => {
+      try { return new Intl.DateTimeFormat("en-US", { timeZone: tz || "America/New_York", weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }).format(new Date(iso)); }
+      catch { return String(iso); }
+    };
+    try {
+      const d = await parseRequestData(req);
+      const loc = userContext ? userContext.resolveLocation() : { ianaTz: "America/New_York" };
+      const tz = d.tz || loc.ianaTz || "America/New_York";
+
+      if (pathname === "/api/calendar/plan") {
+        const proposal = atlasCalendarWrite.parseCalendarCommand(d.text || "", { tz });
+        if (!proposal) { sendJson(res, 200, { ok: false, status: "not_calendar", message: "That didn't look like a calendar change I can make." }); return; }
+        if (proposal.action === "create") {
+          sendJson(res, 200, { ok: true, proposal, preview: `Create “${proposal.title}”${proposal.location ? ` at ${proposal.location}` : ""} · ${calClock(proposal.startAt, tz)}` });
+          return;
+        }
+        // move / cancel → resolve the target against real events (a wide window around the hint).
+        const gcal = getAtlasGoogleCalendar();
+        if (!gcal) { sendJson(res, 200, { ok: false, status: "not_connected", message: "Connect Google Calendar first." }); return; }
+        const centre = proposal.targetWhen ? Date.parse(proposal.targetWhen) : Date.now();
+        const startIso = new Date(centre - 2 * 86400_000).toISOString();
+        const endIso = new Date(centre + 30 * 86400_000).toISOString();
+        let events = [];
+        try { events = await gcal.eventsBetween(startIso, endIso); }
+        catch (e) { if (e && e.statusCode === 412) { sendJson(res, 200, { ok: false, status: "scope_missing", message: "I need calendar access first — grant it in Connections." }); return; } throw e; }
+        const matches = atlasCalendarWrite.matchCalendarTarget(events, proposal.targetQuery, proposal.targetWhen);
+        if (!matches.length) { sendJson(res, 200, { ok: false, status: "no_match", message: `I couldn't find “${proposal.targetQuery || "that event"}” on your calendar.` }); return; }
+        const top = matches[0].event;
+        const realId = String(top.id).replace(/^gcal_/, "");
+        const resolved = { ...proposal, targetEventId: realId, targetEventTitle: top.title, targetEventStart: top.startAt };
+        const preview = proposal.action === "cancel"
+          ? `Cancel “${top.title}” · ${calClock(top.startAt, tz)}`
+          : `Move “${top.title}” from ${calClock(top.startAt, tz)} to ${calClock(proposal.newStartAt, tz)}`;
+        sendJson(res, 200, { ok: true, proposal: resolved, preview, alternatives: matches.slice(1, 4).map((m) => ({ title: m.event.title, startAt: m.event.startAt })) });
+        return;
+      }
+
+      // /commit — execute the (already-previewed) proposal.
+      const p = d.proposal || {};
+      if (!p.action) { sendJson(res, 400, { ok: false, error: "No proposal to commit." }); return; }
+      try {
+        let result, message;
+        if (p.action === "create") {
+          result = await providers.google.createCalendarEvent({ title: p.title, startAt: p.startAt, endAt: p.endAt, location: p.location });
+          message = `Added “${result.summary}” to your calendar · ${calClock(p.startAt, tz)}.`;
+        } else if (p.action === "move") {
+          if (!p.targetEventId) { sendJson(res, 400, { ok: false, error: "No event resolved to move." }); return; }
+          result = await providers.google.updateCalendarEvent(p.targetEventId, { startAt: p.newStartAt, endAt: new Date(new Date(p.newStartAt).getTime() + 3600_000).toISOString() });
+          message = `Moved “${result.summary || p.targetEventTitle}” to ${calClock(p.newStartAt, tz)}.`;
+        } else if (p.action === "cancel") {
+          if (!p.targetEventId) { sendJson(res, 400, { ok: false, error: "No event resolved to cancel." }); return; }
+          await providers.google.deleteCalendarEvent(p.targetEventId);
+          message = `Cancelled “${p.targetEventTitle || "the event"}”.`;
+        } else { sendJson(res, 400, { ok: false, error: "Unknown calendar action." }); return; }
+        try { getAtlasGoogleCalendar()?.invalidate(); } catch {}
+        sendJson(res, 200, { ok: true, action: p.action, message });
+      } catch (e) {
+        if (e && e.statusCode === 412) { sendJson(res, 200, { ok: false, status: "scope_missing", message: "I can't edit your calendar yet — grant “Manage calendar events” in Connections, then try again." }); return; }
+        throw e;
+      }
+    } catch (e) { sendJson(res, 400, { ok: false, error: String((e && e.message) || e) }); }
     return;
   }
   if (pathname === "/api/atlas/tasks" && req.method === "GET") {

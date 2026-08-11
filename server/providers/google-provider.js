@@ -323,6 +323,51 @@ function createGoogleProvider({
     return data;
   }
 
+  // ── Calendar write (calendar.events) ───────────────────────────────────────
+  // All three re-check the write scope; a missing grant throws a clean 412 the caller turns into a
+  // "grant Manage calendar events" hint. Times are RFC3339 (the proposal already produced ISO instants).
+  const CAL_BASE = "https://www.googleapis.com/calendar/v3/calendars/primary/events";
+  async function createCalendarEvent({ title, startAt, endAt, location, allDay = false } = {}) {
+    requireCapability("calendar_write", "calendar editing");
+    if (!startAt) throw errorWithStatus("An event start time is required", 400);
+    const token = await accessToken();
+    const body = {
+      summary: cleanString(title || "Event", 500),
+      start: allDay ? { date: String(startAt).slice(0, 10) } : { dateTime: startAt },
+      end: allDay ? { date: String(endAt || startAt).slice(0, 10) } : { dateTime: endAt || new Date(new Date(startAt).getTime() + 3600_000).toISOString() },
+    };
+    if (location) body.location = cleanString(location, 500);
+    const { data } = await fetchJson(fetchImpl, CAL_BASE, {
+      method: "POST", headers: { authorization: `Bearer ${token}`, "content-type": "application/json" }, body: JSON.stringify(body),
+    });
+    return { id: data.id, htmlLink: data.htmlLink || null, summary: data.summary || body.summary, start: data.start, end: data.end };
+  }
+  async function updateCalendarEvent(id, { startAt, endAt, title, location } = {}) {
+    requireCapability("calendar_write", "calendar editing");
+    const token = await accessToken();
+    const patch = {};
+    if (startAt) patch.start = { dateTime: startAt };
+    if (endAt || startAt) patch.end = { dateTime: endAt || new Date(new Date(startAt).getTime() + 3600_000).toISOString() };
+    if (title) patch.summary = cleanString(title, 500);
+    if (location != null) patch.location = cleanString(location, 500);
+    const { data } = await fetchJson(fetchImpl, `${CAL_BASE}/${encodeURIComponent(String(id))}`, {
+      method: "PATCH", headers: { authorization: `Bearer ${token}`, "content-type": "application/json" }, body: JSON.stringify(patch),
+    });
+    return { id: data.id, htmlLink: data.htmlLink || null, summary: data.summary, start: data.start, end: data.end };
+  }
+  async function deleteCalendarEvent(id) {
+    requireCapability("calendar_write", "calendar editing");
+    const token = await accessToken();
+    const response = await fetchImpl(`${CAL_BASE}/${encodeURIComponent(String(id))}`, {
+      method: "DELETE", headers: { authorization: `Bearer ${token}` },
+    });
+    if (!response.ok && response.status !== 410) { // 410 = already gone; treat as success
+      const t = await response.text().catch(() => "");
+      throw errorWithStatus(`Google Calendar delete ${response.status}: ${t.slice(0, 200)}`, response.status);
+    }
+    return { deleted: true, id };
+  }
+
   async function disconnect() {
     const settings = getSettings();
     const token = settings.googleRefreshToken || settings.googleAccessToken || process.env.GOOGLE_REFRESH_TOKEN || process.env.GOOGLE_ACCESS_TOKEN;
@@ -339,7 +384,7 @@ function createGoogleProvider({
     return { disconnected: true };
   }
 
-  return { accessToken, callback, createDraft, deleteDraft, disconnect, getDraft, getMessage, listMessages, redirectUri, requireCapability, sendDraft, sendEmail, start, status, test, verify };
+  return { accessToken, callback, createCalendarEvent, createDraft, deleteCalendarEvent, deleteDraft, disconnect, getDraft, getMessage, listMessages, redirectUri, requireCapability, sendDraft, sendEmail, start, status, test, updateCalendarEvent, verify };
 }
 
 module.exports = { createGoogleProvider, GOOGLE_SCOPES };

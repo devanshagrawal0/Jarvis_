@@ -11,7 +11,7 @@ import { ApexRoom } from "./rooms/ApexRoom";
 import { ArbiterRoom } from "./rooms/ArbiterRoom";
 import { SynapseRoom } from "./rooms/synapse/SynapseRoom";
 import { api, post, resolveOwnerChallenge, streamPost } from "./api";
-import { detectMessageIntent, detectInboxRead } from "./lib/messageIntent";
+import { detectMessageIntent, detectInboxRead, detectCalendarCommand } from "./lib/messageIntent";
 import { LiveVoiceController } from "./liveVoice";
 import type { BrainResponse, JarvisActivityEvent, JarvisArtifact, JarvisContactCandidate, JarvisResponseCard, JarvisUiAction } from "./types";
 import "./JarvisUI.css";
@@ -523,6 +523,8 @@ export function JarvisUI() {
   const decideApprovalRef = useRef<((approval: ApprovalRequest, decision: "approve" | "deny") => Promise<void>) | null>(null);
   // Smart email follow-up state: either waiting for a missing address, or offering to save a new one.
   const pendingEmailRef = useRef<{ kind: "need-recipient"; name: string; instruction: string; attachment?: any } | { kind: "offer-save"; name: string | null; email: string } | null>(null);
+  // W6: a parsed-and-previewed calendar change waiting for the owner's yes/no before it's committed.
+  const pendingCalendarRef = useRef<{ proposal: any; preview: string } | null>(null);
 
   const handleSubmit = useCallback(async (text: string, files: File[] = []) => {
     // Forgiving room-entry matcher — tolerates casing, trailing punctuation
@@ -567,6 +569,48 @@ export function JarvisUI() {
     if (/^(?:(?:go to|open|launch|enter|show|take me to)\s+)?synapse(?:\s+room)?$/.test(norm)) {
       setSynapseOpen(true);
       return;
+    }
+
+    // ── Calendar write (create / move / cancel) — preview, then confirm, before the brain ────────
+    // parse+preview on /plan (no change yet); a plain "yes" commits it on /commit. The server parse is
+    // authoritative — status:"not_calendar" means fall through to the normal flow.
+    {
+      const cpend = pendingCalendarRef.current;
+      if (cpend) {
+        if (/^\s*(y|yes|yea|yeah|yep|sure|ok|okay|do it|confirm|confirmed|go|go ahead|please|send it)\b/i.test(text)) {
+          const proposal = cpend.proposal; pendingCalendarRef.current = null;
+          setResponse(""); setActivity("Updating your calendar…"); setActivityEvents([]); setHasError(false); setApprovals([]); setVisible(true);
+          try {
+            const r = await fetch("/api/calendar/commit", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ proposal }) });
+            const d = await r.json().catch(() => ({}));
+            setActivity("");
+            if (d?.ok) { setResponse(d.message || "Done."); document.dispatchEvent(new CustomEvent("jarvis:open-widget", { detail: { id: "today" } })); }
+            else { setResponse(d?.message || d?.error || "I couldn't make that change."); if (!d?.status) setHasError(true); }
+          } catch { setActivity(""); setResponse("I couldn't reach the calendar service."); setHasError(true); }
+          return;
+        }
+        if (/^\s*(no|nope|nah|cancel|nvm|never ?mind|forget it|don'?t|stop)\b/i.test(text)) {
+          pendingCalendarRef.current = null; setResponse("Okay — left your calendar as it is."); setVisible(true); return;
+        }
+        // anything else: drop the pending change and let this new utterance be handled fresh
+        pendingCalendarRef.current = null;
+      }
+      if (!files.length && detectCalendarCommand(text)) {
+        setResponse(""); setActivity("Checking your calendar…"); setActivityEvents([]); setHasError(false); setApprovals([]); setVisible(true);
+        try {
+          const r = await fetch("/api/calendar/plan", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text }) });
+          const d = await r.json().catch(() => ({}));
+          setActivity("");
+          if (d?.ok && d.proposal) {
+            pendingCalendarRef.current = { proposal: d.proposal, preview: d.preview };
+            const alts = Array.isArray(d.alternatives) && d.alternatives.length ? `\n\n_(also found: ${d.alternatives.map((a: any) => a.title).join(", ")})_` : "";
+            setResponse(`${d.preview} — **confirm?** (yes / no)${alts}`);
+            return;
+          }
+          if (d?.status === "not_calendar") { setActivity(""); /* fall through to the rest of handleSubmit */ }
+          else { setResponse(d?.message || d?.error || "I couldn't work out that calendar change."); if (!d?.status) setHasError(true); return; }
+        } catch { setActivity(""); setResponse("I couldn't reach the calendar service."); setHasError(true); return; }
+      }
     }
 
     // ── Smart contact-aware email — deterministic, before the brain ─────────────────────────────

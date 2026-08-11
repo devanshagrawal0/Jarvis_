@@ -5,7 +5,7 @@
 // Run: node --test tests/backend/message-intent.test.js
 const { test } = require("node:test");
 const assert = require("node:assert");
-const { detectMessageIntent, detectInboxRead } = require("../../src/lib/messageIntent");
+const { detectMessageIntent, detectInboxRead, detectCalendarCommand } = require("../../src/lib/messageIntent");
 
 function fires(text, expectRecipient) {
   const r = detectMessageIntent(text);
@@ -127,5 +127,34 @@ test("detectInboxRead stays silent on sends and unrelated asks", () => {
 test("inbox-read requests are not mistaken for sends (detectMessageIntent stays silent)", () => {
   for (const t of ["check my inbox", "summarize my unread emails", "what do I need to reply to"]) {
     assert.equal(detectMessageIntent(t), null, `send-detector must ignore inbox read: ${t}`);
+  }
+});
+
+test("detectCalendarCommand gates create / move / cancel", () => {
+  for (const t of [
+    "schedule lunch tomorrow at 1",
+    "book dentist friday 2pm",
+    "move my 3pm to 4pm",
+    "reschedule standup to tomorrow 10am",
+    "cancel my 3pm meeting",
+    "delete the standup",
+    "add a meeting monday at 9",
+    "lunch with Sam tomorrow at noon",
+  ]) {
+    assert.ok(detectCalendarCommand(t), `should gate as calendar write: ${t}`);
+  }
+});
+
+test("detectCalendarCommand ignores reminders, reads, and non-calendar commands", () => {
+  for (const t of [
+    "remind me to call mom at 5",
+    "add a task to email Bob",
+    "what's on my calendar",
+    "when is my next meeting",
+    "cancel my subscription",
+    "send AJ a note that it works",
+    "what is the weather",
+  ]) {
+    assert.equal(detectCalendarCommand(t), null, `should NOT gate as calendar write: ${t}`);
   }
 });
