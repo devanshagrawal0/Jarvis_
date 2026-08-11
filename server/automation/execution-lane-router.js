@@ -39,10 +39,16 @@ function emailIntent(text) {
   // address alone is enough, so "fire off a note to sam@x.com" routes to the mail lane even without
   // the word "email". Send verbs are broadened (shoot / fire off / drop a line / mail) but we do NOT
   // treat a bare "message/ping <name>" as email — that's an ambiguous channel handled elsewhere.
-  const hasEmailWord = /\b(email|e-?mail|gmail)\b/i.test(value);
+  // "gmail" only counts as an email WORD when it is not just part of the recipient address itself
+  // (devanshhagrawal@gmail.com must not read as "the user said gmail"). Strip the address before the word test.
+  const withoutAddress = value.replace(/\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/ig, " ");
+  const hasEmailWord = /\b(email|e-?mail|gmail)\b/i.test(withoutAddress);
   const FIRE = "fire\\s+(?:it|them|this|that|off)?\\s*off"; // "fire off", "fire it off", "fire them off"
   const SEND_OFF = "send\\s+(?:it|them|this|that)?\\s*off";
-  const hasSendVerb = new RegExp(`\\b(send|write|draft|compose|reply|forward|shoot|${FIRE}|${SEND_OFF}|drop\\s+(?:a\\s+)?(?:line|note|mail)|mail)\\b`, "i").test(value);
+  // With a real recipient address present, "message/ping <addr>" is unambiguously an email send — route
+  // it to the mail lane, not the browser-automation lane. Without an address these verbs stay ambiguous.
+  const messageVerb = recipientEmail ? "|message|ping|text" : "";
+  const hasSendVerb = new RegExp(`\\b(send|write|draft|compose|reply|forward|shoot${messageVerb}|${FIRE}|${SEND_OFF}|drop\\s+(?:a\\s+)?(?:line|note|mail)|mail)\\b`, "i").test(value);
   const requested = (hasEmailWord || recipientEmail) && hasSendVerb;
   if (!requested) return null;
   return {

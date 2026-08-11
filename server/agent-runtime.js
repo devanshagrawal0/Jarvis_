@@ -314,6 +314,30 @@ function createAgentRuntime({ getSettings, toolGateway, codeKnowledge, memorySto
         ? toolGateway.selectTools(toolPrompt, { limit: toolLimit, intent: route.intent, route })
         : []);
     const execution = forgeGenerative ? { lane: "none", tools: [] } : routeExecutionLane(prompt, settings);
+    // TYPED INTENT BEATS THE BROWSER LANE. The execution-lane router over-fires on words that also
+    // occur in ordinary assistant requests — "add a task to submit the form" (submit+form) and
+    // "message devanshhagrawal@gmail.com" (message + the "gmail" inside the address) were both routed
+    // to a computer_use browser-automation lane, which REPLACED the atlas/email tools, so the task was
+    // never added and the email never drafted. If the turn is clearly an email/atlas/calendar intent
+    // and the owner did NOT name a real site or their screen, a computer_use lane is wrong — suppress
+    // it and keep the typed tools selectTools already chose. (The gmail connector lane has no
+    // computer_use, so it is never suppressed here.)
+    if (execution.lane !== "none" && Array.isArray(execution.tools) && execution.tools.includes("computer_use")) {
+      const raw = String(prompt || "");
+      const rawLower = raw.toLowerCase();
+      const withoutAddr = raw.replace(/\b[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}\b/ig, " ");
+      const namesSiteOrScreen = /\b(instagram|insta|whats ?app|canvas|student hub|student portal|github|linked ?in|reddit|youtube|you tube|amazon|browser|website|web ?page|chrome|on my screen|my screen|visible screen|current screen|desktop|portal)\b/i.test(raw);
+      const typedAssistantIntent =
+        /\b[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}\b/i.test(raw)
+        || /\b(e-?mail|gmail)\b/i.test(withoutAddr)
+        || /\b(add|remind|schedule|reschedule|move|cancel|delete|mark|complete|finish|finished|jot|note|log|book|set ?up|pencil in)\b/i.test(rawLower)
+        || /\b(task|to-?do|reminder|my day|my agenda|my plate|my schedule|my tasks?|my reminders?|my events?)\b/i.test(rawLower)
+        || /\bcalendar\b/i.test(rawLower);
+      if (typedAssistantIntent && !namesSiteOrScreen) {
+        execution.lane = "none";
+        execution.tools = [];
+      }
+    }
     if (execution.lane !== "none") {
       // B-09 — the old fallback was
       //   `laneDeclarations.length ? laneDeclarations : declarationsForLane(selectedTools, execution)`
