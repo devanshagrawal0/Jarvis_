@@ -131,11 +131,15 @@ function createToolGateway({ capabilityEngine, moduleRegistry, codeKnowledge }) 
       alwaysUseful.push("skill_run", "skill_list", "agent_deploy");
     }
     if (/\b(system|cpu|memory usage|uptime|network status|computer status)\b/i.test(prompt)) alwaysUseful.push("system_status");
-    // The owner's own day — tasks, reminders, schedule/calendar, what he's forgetting, plan my day.
-    // atlas_today is the READ tool (never let the model claim it lacks access); atlas_capture creates.
-    if (/\b(task|tasks|to-?do|to-?dos|reminder|reminders|schedule|agenda|calendar|my day|plan (?:my|the) day|organize my day|what'?s (?:next|on|due)|what am i (?:forgetting|doing|supposed)|what do i (?:have|need)|due (?:today|tomorrow|this)|appointments?|events?|meetings?|waiting on|follow ?ups?|errands?)\b/i.test(prompt)) {
-      alwaysUseful.push("atlas_today", "atlas_capture");
-    }
+    // The owner's own day — reading it (tasks/reminders/schedule/what's forgotten) AND adding to it
+    // (add/remind/schedule/jot/note/book, or an event noun with a time). atlas_today is the READ tool
+    // (never let the model claim it lacks access); atlas_capture creates. Both are exposed together so
+    // the model can read-then-write; it still decides which to call.
+    const atlasRead = /\b(task|tasks|to-?do|to-?dos|reminder|reminders|schedule|agenda|calendar|my day|plan (?:my|the) day|organize my day|what'?s (?:next|on|due)|what am i (?:forgetting|doing|supposed)|what do i (?:have|need)|due (?:today|tomorrow|this)|appointments?|events?|meetings?|waiting on|follow ?ups?|errands?|on my plate)\b/i.test(prompt);
+    const atlasWrite = /\b(add|remind|schedule|book|jot|note|log|pencil in|set ?up|reschedule|cancel|move)\b/i.test(prompt)
+      && /\b(task|todo|to-?do|reminder|note|event|meeting|appointment|call|lunch|dinner|breakfast|coffee|drinks?|gym|class|flight|interview|standup|sync|at\s*\d|\d{1,2}\s*(?:am|pm|:)|tomorrow|tonight|today|monday|tuesday|wednesday|thursday|friday|saturday|sunday|next week|morning|afternoon|evening|noon)\b/i.test(prompt);
+    if (atlasRead) alwaysUseful.push("atlas_today");
+    if (atlasWrite) alwaysUseful.push("atlas_add_task", "atlas_add_event", "atlas_add_reminder", "atlas_capture");
     if (/\b(latest|recent|most recent|today|tomorrow|current|right now|live|online|news|score|schedule|price|weather|research|look up|google|web|internet|who is|when is|where is|who won|finals|championship|world cup|fifa|things to do|events?)\b/i.test(prompt)) {
       alwaysUseful.push("research_v2", "web_research");
     }

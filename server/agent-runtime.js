@@ -51,7 +51,13 @@ function createAgentRuntime({ getSettings, toolGateway, codeKnowledge, memorySto
       && /\b(report|brief|briefing|document|doc|pdf|deck|slides?|presentation|study sheet|one[- ]pager|artifact|write[- ]up|summary sheet|trading brief|research brief)\b/.test(lower);
     const deepResearch = /\b(deep research|research report|investigate|source-backed|source backed|citations?|evidence|read sources?|compare sources?|summarize (?:this )?(?:url|link|page|article)|read (?:this )?(?:url|link|page|article))\b/.test(lower)
       || /https?:\/\/[^\s)]+/i.test(text);
-    const action = deviceMesh || localObserve || pcGraph || agentSwarm || skillAutopilot || marketDiscovery || workComposer || /\b(open|close|launch|send|write|draft|focus|click|type|create|deploy|run|search(?:\s+(?:for|my|on|in))?|check my|remember|save)\b/.test(lower);
+    const action = deviceMesh || localObserve || pcGraph || agentSwarm || skillAutopilot || marketDiscovery || workComposer
+      || /\b(open|close|launch|send|write|draft|focus|click|type|create|deploy|run|search(?:\s+(?:for|my|on|in))?|check my|remember|save)\b/.test(lower)
+      // Owner-action verbs: adding a task/event, reminding, scheduling, moving/cancelling. Without
+      // these the classifier called "add dinner at 9:15" plain conversation → zero tools → the brain
+      // said "I can't add anything, no tool this turn." They just need to engage the tool pathway;
+      // the LLM still decides whether/how to act.
+      || /\b(add|remind|schedule|book|jot|note|log|pencil in|set ?up|reschedule|resched|cancel|move|delete|renew|track)\b/.test(lower);
     // Bare time words (today/tomorrow/current/right now) are NOT fresh signals on their own — "im
     // tired today" is conversation, not a live-data request. Real fresh queries carry a topical
     // signal (news/weather/price/score/latest/who won), which is what this matches.

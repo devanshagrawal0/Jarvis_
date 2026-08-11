@@ -75,7 +75,11 @@ function evaluateAutonomy({ definition, tool, args, profile, context, recentActi
     };
   }
 
-  const lowRiskLocalExecute = new Set(["screen_act", "desktop_control", "open_url", "youtube_open_video", "computer_use"]);
+  // Writes to the owner's own local day-model (ATLAS: tasks / events / reminders) are low-risk and
+  // reversible — deleting is one command — so they run without a confirmation click, like the owner
+  // typing into the Today widget. (Google Calendar / email writes are NOT here; those still confirm.)
+  const lowRiskLocalExecute = new Set(["screen_act", "desktop_control", "open_url", "youtube_open_video", "computer_use",
+    "atlas_capture", "atlas_add_task", "atlas_add_event", "atlas_add_reminder"]);
   // Arbitrary code execution is never routine. `run_command` shells out with
   // -ExecutionPolicy Bypass, and its own blocklist is a resource-exhaustion heuristic rather than
   // a security boundary — every entry is trivially expressible another way (ForEach-Object for

@@ -380,6 +380,9 @@ function createCapabilityEngine({
     ["apex_brief", "Get a data-grounded market brief assembled from live APEX data: a headline, a narrative paragraph, index session (yesterday close→today open→gap→range), top movers, sector leaders/laggards, macro, top news, and 'things to watch'. type can be now, morning, or eod. Use to brief the user on the market.", "observe", false],
     ["atlas_capture", "Capture the owner's task, reminder, calendar event, or note from one natural sentence and save it to their day (ATLAS/Today). Use whenever the owner wants to remember, be reminded, add a to-do, schedule something, or jot a note — e.g. 'remind me to call the bank at 5', 'add a task file taxes', 'lunch with Priya tomorrow at 1', 'note: parking is B12'. Pass the owner's own sentence as text; the tool parses the time and kind itself and lands it in Today.", "execute", false],
     ["atlas_today", "Read the owner's LIVE day from ATLAS/Today: open tasks, pending reminders, today's and upcoming calendar events (their local events AND their real Google Calendar), and who they're waiting on. Call this WHENEVER the owner asks about their day, schedule, agenda, tasks, to-dos, reminders, what they're forgetting, what's next, or 'plan my day'. You DO have access to this — never say you don't; this tool IS your access. Returns structured data for you to summarize.", "observe", false],
+    ["atlas_add_task", "Add a to-do/task to the owner's Today list. YOU extract the fields — do not make the owner rephrase. title is the task in a few words; dueAt is an ISO 8601 timestamp if they gave a due time (compute it from the current date/time provided to you, in the owner's timezone), else omit. Use for 'add a task to…', 'I need to…', 'remind me to <do X>' (no fire time). It saves immediately, no confirmation.", "execute", false],
+    ["atlas_add_event", "Add a calendar event to the owner's Today (local day-model). YOU extract the fields: title (a few words, e.g. 'Dinner'), startAt as an ISO 8601 timestamp you compute from the current date/time in the owner's timezone (e.g. 'dinner at 9:15pm' today → today's date at 21:15 local), optional endAt (default 1h after start), optional location. Use for 'add <event> at <time>', 'schedule <event>', 'lunch with Sam tomorrow at 1'. Saves immediately, no confirmation. (This is the LOCAL day-model; to put it on the owner's real Google Calendar use the calendar tools instead.)", "execute", false],
+    ["atlas_add_reminder", "Add a durable reminder that fires once at a specific time. YOU extract: title (what to remind about) and fireAt as an ISO 8601 timestamp computed from the current date/time in the owner's timezone. Use for 'remind me to <X> at <time>', 'nudge me at 5'. Saves immediately, no confirmation.", "execute", false],
     ["email_smart", "PREFERRED one-step email sender. Send an email to a saved contact BY NAME (or to a raw email address) in a single step — no separate draft, no extra approval prompt. Use for casual requests like 'email AJ that I'm running late' or 'send TG a note saying dinner at 8'. If an email is on file for that name it sends immediately and returns sent:true. If NO email is on file it does NOT send and returns status:recipient_unknown — then ask the owner for the address. If the owner supplies a new address (pass it as `email`), it sends and returns a saveSuggestion so you can offer to remember it. Prefer this over gmail_prepare_email/gmail_send_prepared for everyday sends to people.", "execute", false],
     ["contact_add_email", "Save or update a person's email address so future 'email <name>' sends resolve on their own. Use right after email_smart returns a saveSuggestion and the owner agrees, or when the owner says 'save X's email as …'.", "execute", false],
   ].map(([name, description, risk, confirmationRequired]) => ({
@@ -499,6 +502,21 @@ function createCapabilityEngine({
       tz: { type: "STRING", description: "Optional IANA timezone; defaults to the owner's resolved location timezone." },
     }, required: ["text"] } },
     { name: "atlas_today", description: description("atlas_today"), parameters: { type: "OBJECT", properties: {} } },
+    { name: "atlas_add_task", description: description("atlas_add_task"), parameters: { type: "OBJECT", properties: {
+      title: { type: "STRING", description: "The task in a few words, e.g. 'Send the Q3 report to finance'." },
+      dueAt: { type: "STRING", description: "Optional ISO 8601 due timestamp (compute from current date/time in the owner's timezone). Omit if no due time was given." },
+      priority: { type: "INTEGER", description: "Optional 0-3 (3 = highest). Default 1." },
+    }, required: ["title"] } },
+    { name: "atlas_add_event", description: description("atlas_add_event"), parameters: { type: "OBJECT", properties: {
+      title: { type: "STRING", description: "Event title in a few words, e.g. 'Dinner' or 'Lunch with Sam'." },
+      startAt: { type: "STRING", description: "ISO 8601 start timestamp you compute from the current date/time in the owner's timezone." },
+      endAt: { type: "STRING", description: "Optional ISO 8601 end timestamp; defaults to one hour after start." },
+      location: { type: "STRING", description: "Optional location." },
+    }, required: ["title", "startAt"] } },
+    { name: "atlas_add_reminder", description: description("atlas_add_reminder"), parameters: { type: "OBJECT", properties: {
+      title: { type: "STRING", description: "What to remind about, e.g. 'Call the bank'." },
+      fireAt: { type: "STRING", description: "ISO 8601 timestamp to fire the reminder (compute from current date/time in the owner's timezone)." },
+    }, required: ["title", "fireAt"] } },
     { name: "pc_graph_rebuild", description: description("pc_graph_rebuild"), parameters: { type: "OBJECT", properties: {
       roots: { type: "ARRAY", items: { type: "STRING" }, description: "Optional root folders to index. Defaults to workspace, Downloads, Documents, and Desktop." },
       limit: { type: "INTEGER", description: "Maximum files to scan, 1 to 50000. Defaults to 1200." },
@@ -2089,6 +2107,33 @@ function createCapabilityEngine({
       const result = atlasCapture.capture(store, text, { tz: cleanString(args.tz, 60) || ownerTz(), sourceKind: "chat" });
       if (!result.ok) return { ok: false, captured: false, message: "That didn't look like a task, reminder, event, or note — nothing was saved." };
       return { ok: true, captured: true, kind: result.kind, message: result.message, item: result.item };
+    },
+    atlas_add_task: async (args) => {
+      const store = atlas();
+      if (!store) throw errorWithStatus("The day-model (ATLAS) is not available in this runtime.", 412);
+      const title = cleanString(args.title, 300);
+      if (!title) throw errorWithStatus("atlas_add_task needs a title.", 400);
+      const item = store.createTask({ title, dueAt: cleanString(args.dueAt, 40) || null, priority: Number.isFinite(args.priority) ? args.priority : 1, tz: ownerTz(), source: { kind: "chat" } });
+      return { ok: true, added: "task", item, message: `Task added — ${item.title}` };
+    },
+    atlas_add_event: async (args) => {
+      const store = atlas();
+      if (!store) throw errorWithStatus("The day-model (ATLAS) is not available in this runtime.", 412);
+      const title = cleanString(args.title, 300);
+      const startAt = cleanString(args.startAt, 40);
+      if (!title || !startAt) throw errorWithStatus("atlas_add_event needs a title and an ISO startAt.", 400);
+      const endAt = cleanString(args.endAt, 40) || new Date(new Date(startAt).getTime() + 3600_000).toISOString();
+      const item = store.createEvent({ title, startAt, endAt, location: cleanString(args.location, 200) || null, tz: ownerTz(), source: { kind: "chat" } });
+      return { ok: true, added: "event", item, message: `Event added — ${item.title}` };
+    },
+    atlas_add_reminder: async (args) => {
+      const store = atlas();
+      if (!store) throw errorWithStatus("The day-model (ATLAS) is not available in this runtime.", 412);
+      const title = cleanString(args.title, 300);
+      const fireAt = cleanString(args.fireAt, 40);
+      if (!title || !fireAt) throw errorWithStatus("atlas_add_reminder needs a title and an ISO fireAt.", 400);
+      const item = store.createReminder({ title, fireAt, tz: ownerTz(), source: { kind: "chat" } });
+      return { ok: true, added: "reminder", item, message: `Reminder set — ${item.title}` };
     },
     atlas_today: async () => {
       const store = atlas();
