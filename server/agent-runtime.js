@@ -57,7 +57,16 @@ function createAgentRuntime({ getSettings, toolGateway, codeKnowledge, memorySto
     // signal (news/weather/price/score/latest/who won), which is what this matches.
     const fresh = marketDiscovery || deepResearch || sportsSchedule || /\b(latest|recent|most recent|online|internet|news|headline|score|standings|schedule|fixtures?|price|quote|weather|forecast|temperature|research|look up|google|web search|search the web|events?|things to do|who is|when is|where is|who won|finals|championship)\b/.test(lower);
     const privateAccount = kalshiAccountPrompt || /\b(my (kalshi|portfolio|positions?|bets?|orders?|fills?|balance)|latest (kalshi )?(bet|fill|order)|best (kalshi )?position)\b/.test(lower);
-    const personal = privateAccount || /\b(i like|i prefer|my favorite|about me|remember|what do you know about me|always|never|when i ask)\b/.test(lower);
+    // The owner asking about his OWN day/state (tasks, schedule, reminders, calendar, inbox, contacts,
+    // who he last emailed) is personal — it needs his private data, which lives behind tools. Without
+    // this, the classifier called it plain conversation, the tool pathway was skipped entirely, and the
+    // brain (correctly) said "no tool this turn" and fell back to stale memory. Classifying it personal
+    // engages selectTools so atlas_today / calendar / email tools are actually exposed.
+    const ownerData = /\b(my (?:tasks?|to-?dos?|schedule|day|agenda|calendar|reminders?|errands?|meetings?|appointments?|events?|inbox|emails?|plate))\b/.test(lower)
+      || /\b(what|which|any)\b[^?]*\b(tasks?|to-?dos?|schedule|agenda|reminders?|on my plate|due (?:today|tomorrow|this)|forgetting|next up)\b/.test(lower)
+      || /\bwhat do i (?:have|need)\b/.test(lower)
+      || /\b(plan (?:my|the) day|organi[sz]e my day|what am i forgetting|what'?s next|waiting on (?:me|them|someone)|need(?:s)? (?:a|my) reply|who did i (?:email|message|call))\b/.test(lower);
+    const personal = privateAccount || ownerData || /\b(i like|i prefer|my favorite|about me|remember|what do you know about me|always|never|when i ask)\b/.test(lower);
     const followUp = text.trim().split(/\s+/).length < 8 || /\b(that|it|them|those|earlier|previous|i meant|actually)\b/.test(lower);
     // A "bigger question" — conceptual, decision, opinion, or teaching — is what Dev means by
     // "bigger questions need longer responses". These deserve MORE ROOM to answer well (larger

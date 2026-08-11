@@ -131,6 +131,11 @@ function createToolGateway({ capabilityEngine, moduleRegistry, codeKnowledge }) 
       alwaysUseful.push("skill_run", "skill_list", "agent_deploy");
     }
     if (/\b(system|cpu|memory usage|uptime|network status|computer status)\b/i.test(prompt)) alwaysUseful.push("system_status");
+    // The owner's own day — tasks, reminders, schedule/calendar, what he's forgetting, plan my day.
+    // atlas_today is the READ tool (never let the model claim it lacks access); atlas_capture creates.
+    if (/\b(task|tasks|to-?do|to-?dos|reminder|reminders|schedule|agenda|calendar|my day|plan (?:my|the) day|organize my day|what'?s (?:next|on|due)|what am i (?:forgetting|doing|supposed)|what do i (?:have|need)|due (?:today|tomorrow|this)|appointments?|events?|meetings?|waiting on|follow ?ups?|errands?)\b/i.test(prompt)) {
+      alwaysUseful.push("atlas_today", "atlas_capture");
+    }
     if (/\b(latest|recent|most recent|today|tomorrow|current|right now|live|online|news|score|schedule|price|weather|research|look up|google|web|internet|who is|when is|where is|who won|finals|championship|world cup|fifa|things to do|events?)\b/i.test(prompt)) {
       alwaysUseful.push("research_v2", "web_research");
     }
