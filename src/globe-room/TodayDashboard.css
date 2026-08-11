@@ -77,6 +77,9 @@
 .td-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--td-green); box-shadow: 0 0 8px var(--td-green); display: inline-block; animation: td-pulse 2s ease-in-out infinite; }
 @keyframes td-pulse { 0%,100% { opacity: 1; } 50% { opacity: .4; } }
 .td-top-right { display: flex; align-items: center; gap: 13px; }
+/* Inline "grant this Google capability" chip — lives in Today so nothing sends you to a settings screen. */
+.td-connect { font: 600 9.5px Inter; letter-spacing: .02em; color: var(--td-cyan); background: linear-gradient(180deg, rgba(79,227,255,.16), rgba(79,227,255,.05)); border: 1px solid rgba(79,227,255,.42); border-radius: 999px; padding: 5px 11px; cursor: pointer; white-space: nowrap; transition: .16s; box-shadow: 0 0 14px rgba(79,227,255,.12); }
+.td-connect:hover { background: linear-gradient(180deg, rgba(79,227,255,.28), rgba(79,227,255,.1)); box-shadow: 0 0 20px rgba(79,227,255,.28); }
 .td-online { font: 600 9px Orbitron; letter-spacing: .1em; color: var(--td-green); display: flex; align-items: center; gap: 6px; }
 
 /* ── Hero (embedded 4K art + live motion) ───────────────────────────────── */

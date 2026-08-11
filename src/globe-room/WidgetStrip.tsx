@@ -1028,9 +1028,40 @@ export function WeatherCard({ data, loading, onClose, onExpand }: {
   );
 }
 
+// Grant one Google capability bundle (gmail_read / calendar_write) right here in the Today widget —
+// opens the consent popup, no trip to a settings screen.
+async function todayConnectGoogle(bundle: string) {
+  try {
+    const r = await fetch(`/api/oauth/google/start?bundles=${encodeURIComponent(bundle)}`);
+    const d = await r.json().catch(() => ({}));
+    if (d?.authorizationUrl) window.open(d.authorizationUrl, "_blank", "noopener,noreferrer");
+    else document.dispatchEvent(new CustomEvent("jarvis:command", { detail: { text: `I tried to start the Google "${bundle}" connection but got no authorization URL. What's blocking it?`, files: [] } }));
+  } catch { document.dispatchEvent(new CustomEvent("jarvis:command", { detail: { text: "The Google connection couldn't start — check that OAuth credentials are configured.", files: [] } })); }
+}
+// Which Google capabilities are live, refreshed when the window regains focus (after the consent popup).
+function useGoogleCaps(): { calWrite: boolean; mailRead: boolean } | null {
+  const [caps, setCaps] = useState<{ calWrite: boolean; mailRead: boolean } | null>(null);
+  useEffect(() => {
+    let alive = true;
+    const load = async () => {
+      try {
+        const r = await fetch("/api/health"); const j = await r.json();
+        const s = j?.providers?.google?.services || {};
+        if (alive) setCaps(j?.providers?.google?.connected ? { calWrite: !!s.calendar?.canWrite, mailRead: !!s.gmail?.canRead } : null);
+      } catch { /* leave null → offer nothing rather than a wrong prompt */ }
+    };
+    load();
+    const onFocus = () => load();
+    window.addEventListener("focus", onFocus);
+    return () => { alive = false; window.removeEventListener("focus", onFocus); };
+  }, []);
+  return caps;
+}
+
 export function TodayCard({ data, loading, onClose, onExpand, embedded }: {
   data: any; loading: boolean; onClose: () => void; onExpand: () => void; embedded?: boolean; onRefresh?: () => void;
 }) {
+  const gcap = useGoogleCaps();
   const t = (iso?: string | null) => { try { return iso ? new Date(iso).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }) : ""; } catch { return ""; } };
   const now = data?.nowNext?.now, next = data?.nowNext?.next;
   const top: any[] = data?.topOfMind ?? [];
@@ -1052,6 +1083,24 @@ export function TodayCard({ data, loading, onClose, onExpand, embedded }: {
               <Muted>⧖ {counts.waitingOnThem ?? 0} waiting</Muted>
               <Muted>⏰ {counts.pendingReminders ?? 0} reminders</Muted>
             </div>
+            {gcap && (!gcap.calWrite || !gcap.mailRead) ? (
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 6, margin: "2px 0 8px" }}>
+                {!gcap.calWrite ? (
+                  <button
+                    onClick={() => todayConnectGoogle("calendar_write")}
+                    title="Let Jarvis create, move and cancel calendar events — each change is previewed for your OK first."
+                    style={{ font: "600 10px Inter", color: "#4fe3ff", background: "linear-gradient(180deg,rgba(79,227,255,.16),rgba(79,227,255,.05))", border: "1px solid rgba(79,227,255,.42)", borderRadius: 999, padding: "4px 10px", cursor: "pointer", whiteSpace: "nowrap" }}
+                  >⊕ Enable calendar editing</button>
+                ) : null}
+                {!gcap.mailRead ? (
+                  <button
+                    onClick={() => todayConnectGoogle("gmail_read")}
+                    title="Let Jarvis read your inbox to surface replies you owe. Read-only — it never sends."
+                    style={{ font: "600 10px Inter", color: "#4fe3ff", background: "linear-gradient(180deg,rgba(79,227,255,.16),rgba(79,227,255,.05))", border: "1px solid rgba(79,227,255,.42)", borderRadius: 999, padding: "4px 10px", cursor: "pointer", whiteSpace: "nowrap" }}
+                  >⊕ Read email</button>
+                ) : null}
+              </div>
+            ) : null}
             {top.length ? <>
               <Divider />
               <div style={{ marginTop: 6 }}>
