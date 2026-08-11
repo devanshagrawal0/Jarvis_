@@ -11,7 +11,6 @@ import { ApexRoom } from "./rooms/ApexRoom";
 import { ArbiterRoom } from "./rooms/ArbiterRoom";
 import { SynapseRoom } from "./rooms/synapse/SynapseRoom";
 import { api, post, resolveOwnerChallenge, streamPost } from "./api";
-import { detectMessageIntent, detectInboxRead, detectCalendarCommand, parseContactSaveReply } from "./lib/messageIntent";
 import { LiveVoiceController } from "./liveVoice";
 import type { BrainResponse, JarvisActivityEvent, JarvisArtifact, JarvisContactCandidate, JarvisResponseCard, JarvisUiAction } from "./types";
 import "./JarvisUI.css";
@@ -521,10 +520,6 @@ export function JarvisUI() {
   // on exactly the same path as clicking; a latest-ref avoids an ordering where one const would
   // reference the other before initialisation.
   const decideApprovalRef = useRef<((approval: ApprovalRequest, decision: "approve" | "deny") => Promise<void>) | null>(null);
-  // Smart email follow-up state: either waiting for a missing address, or offering to save a new one.
-  const pendingEmailRef = useRef<{ kind: "need-recipient"; name: string; instruction: string; attachment?: any } | { kind: "offer-save"; name: string | null; email: string; askedName?: boolean } | null>(null);
-  // W6: a parsed-and-previewed calendar change waiting for the owner's yes/no before it's committed.
-  const pendingCalendarRef = useRef<{ proposal: any; preview: string } | null>(null);
 
   const handleSubmit = useCallback(async (text: string, files: File[] = []) => {
     // Forgiving room-entry matcher — tolerates casing, trailing punctuation
@@ -571,183 +566,11 @@ export function JarvisUI() {
       return;
     }
 
-    // ── Calendar write (create / move / cancel) — preview, then confirm, before the brain ────────
-    // parse+preview on /plan (no change yet); a plain "yes" commits it on /commit. The server parse is
-    // authoritative — status:"not_calendar" means fall through to the normal flow.
-    {
-      const cpend = pendingCalendarRef.current;
-      if (cpend) {
-        if (/^\s*(y|yes|yea|yeah|yep|sure|ok|okay|do it|confirm|confirmed|go|go ahead|please|send it)\b/i.test(text)) {
-          const proposal = cpend.proposal; pendingCalendarRef.current = null;
-          setResponse(""); setActivity("Updating your calendar…"); setActivityEvents([]); setHasError(false); setApprovals([]); setVisible(true);
-          try {
-            const r = await fetch("/api/calendar/commit", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ proposal }) });
-            const d = await r.json().catch(() => ({}));
-            setActivity("");
-            if (d?.ok) { setResponse(d.message || "Done."); document.dispatchEvent(new CustomEvent("jarvis:open-widget", { detail: { id: "today" } })); }
-            else { setResponse(d?.message || d?.error || "I couldn't make that change."); if (!d?.status) setHasError(true); }
-          } catch { setActivity(""); setResponse("I couldn't reach the calendar service."); setHasError(true); }
-          return;
-        }
-        if (/^\s*(no|nope|nah|cancel|nvm|never ?mind|forget it|don'?t|stop)\b/i.test(text)) {
-          pendingCalendarRef.current = null; setResponse("Okay — left your calendar as it is."); setVisible(true); return;
-        }
-        // anything else: drop the pending change and let this new utterance be handled fresh
-        pendingCalendarRef.current = null;
-      }
-      if (!files.length && detectCalendarCommand(text)) {
-        setResponse(""); setActivity("Checking your calendar…"); setActivityEvents([]); setHasError(false); setApprovals([]); setVisible(true);
-        try {
-          const r = await fetch("/api/calendar/plan", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text }) });
-          const d = await r.json().catch(() => ({}));
-          setActivity("");
-          if (d?.ok && d.proposal) {
-            pendingCalendarRef.current = { proposal: d.proposal, preview: d.preview };
-            const alts = Array.isArray(d.alternatives) && d.alternatives.length ? `\n\n_(also found: ${d.alternatives.map((a: any) => a.title).join(", ")})_` : "";
-            setResponse(`${d.preview} — **confirm?** (yes / no)${alts}`);
-            return;
-          }
-          if (d?.status === "not_calendar") { setActivity(""); /* fall through to the rest of handleSubmit */ }
-          else { setResponse(d?.message || d?.error || "I couldn't work out that calendar change."); if (!d?.status) setHasError(true); return; }
-        } catch { setActivity(""); setResponse("I couldn't reach the calendar service."); setHasError(true); return; }
-      }
-    }
-
-    // ── Smart contact-aware email — deterministic, before the brain ─────────────────────────────
-    // "email AJ saying hi" → resolve the saved contact and send in one step (no approval prompt).
-    // Missing address → ask, and remember so the next message (an address) completes it. New address
-    // → send, then offer to save. The brain is too unreliable at picking the one-step send tool.
-    {
-      const emailIsh = "[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}";
-      const showComposed = (d: any) => {
-        // Show what actually went out — subject + body — so an AI-written email is never hidden.
-        const lines = [d.message || "Sent."];
-        if (d.subject && d.subject !== "(no subject)") lines.push(`\n**Subject:** ${d.subject}`);
-        if (d.body) lines.push(`\n${d.body}`);
-        setResponse(lines.join("\n"));
-      };
-      const sendSmart = async (payload: { recipient: string; email?: string; instruction: string; attachment?: any }) => {
-        setResponse(""); setActivity(payload.attachment ? "Reading the file & composing…" : "Composing…"); setActivityEvents([]); setHasError(false); setApprovals([]); setVisible(true);
-        try {
-          const r = await fetch("/api/email/smart", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
-          const d = await r.json().catch(() => ({}));
-          setActivity("");
-          if (d?.ok && d.sent) {
-            showComposed(d);
-            pendingEmailRef.current = d.saveSuggestion ? { kind: "offer-save", name: d.saveSuggestion.name ?? null, email: d.saveSuggestion.email } : null;
-          } else if (d?.status === "recipient_unknown") {
-            pendingEmailRef.current = { kind: "need-recipient", name: d.name || payload.recipient, instruction: payload.instruction, attachment: payload.attachment };
-            setResponse(d.message || `I don't have an email for ${payload.recipient}. What's the address?`);
-          } else { setResponse(d?.error || "I couldn't send that email."); setHasError(true); }
-        } catch { setActivity(""); setResponse("I couldn't reach the mail service."); setHasError(true); }
-      };
-      const pend = pendingEmailRef.current;
-      if (pend?.kind === "need-recipient") {
-        const em = text.match(new RegExp(emailIsh));
-        if (em) { const p = pend; pendingEmailRef.current = null; await sendSmart({ recipient: p.name, email: em[0], instruction: p.instruction, attachment: p.attachment }); return; }
-        if (/^\s*(no|nvm|never ?mind|cancel|forget it|drop it)\b/i.test(text)) { pendingEmailRef.current = null; setResponse("Okay — didn't send it."); setVisible(true); return; }
-      }
-      if (pend?.kind === "offer-save") {
-        const email = pend.email;
-        const saveContact = async (nm: string) => {
-          pendingEmailRef.current = null;
-          try {
-            const r = await fetch("/api/contact/email", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: nm, email }) });
-            const j = await r.json().catch(() => ({}));
-            setResponse(j.message || `Saved ${email} as ${nm}.`);
-          } catch { setResponse("Couldn't save that contact."); }
-          setVisible(true);
-        };
-        const { decline, name, affirmed } = parseContactSaveReply(text);
-        if (decline) { pendingEmailRef.current = null; setResponse("No problem — won't save it."); setVisible(true); return; }
-        if (name) { await saveContact(name); return; }                       // "yes save … name owner" / "as John" / bare name
-        if (pend.askedName) {                                                 // we already asked; take the whole reply as the name
-          const nm = text.trim().replace(/[.?!,]+$/, "");
-          if (nm && nm.length <= 40) { await saveContact(nm); return; }
-          setResponse(`What name should I save ${email} under? (or say "skip")`); setVisible(true); return;
-        }
-        if (affirmed) {                                                       // "yes" with no name yet → ask once, remember we asked
-          pendingEmailRef.current = { kind: "offer-save", name: null, email, askedName: true };
-          setResponse(`What name should I save ${email} under?`); setVisible(true); return;
-        }
-        // Anything else (not yes/no/name) → don't trap the turn in a loop; drop the offer and let this
-        // message be handled fresh below.
-        pendingEmailRef.current = null;
-      }
-      // read-the-inbox command → summarize unread + flag replies owed, deterministically, before the
-      // brain. Read-only. If the "Read email" scope isn't granted the server returns a connect hint.
-      if (!files.length && detectInboxRead(text)) {
-        const ir = detectInboxRead(text)!;
-        setResponse(""); setActivity("Reading your inbox…"); setActivityEvents([]); setHasError(false); setApprovals([]); setVisible(true);
-        try {
-          const r = await fetch("/api/email/inbox", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ unreadOnly: ir.unreadOnly, max: 12 }) });
-          const d = await r.json().catch(() => ({}));
-          setActivity("");
-          if (d?.ok) {
-            const lines = [d.message || d.overview || "Here's your inbox."];
-            for (const it of (d.items || [])) {
-              lines.push(`\n${it.needsReply ? "↩︎ " : "• "}**${it.from}** — ${it.subject}${it.gist ? `\n   ${it.gist}` : ""}`);
-            }
-            setResponse(lines.join("\n"));
-          } else if (d?.status === "scope_missing") {
-            setResponse(d.message || "I need the Read email scope first — grant it from Connections.");
-          } else { setResponse(d?.error || "I couldn't read your inbox."); setHasError(true); }
-        } catch { setActivity(""); setResponse("I couldn't reach the mail service."); setHasError(true); }
-        return;
-      }
-
-      // fresh send command → a broad, unit-tested detector (src/lib/messageIntent) decides if this is a
-      // "send a message/email to <someone>" intent and pulls out a recipient guess. It fires on plenty of
-      // phrasings that never say "email" ("shoot AJ a note that…", "drop Bob a line about…", "tell her I'll
-      // be late") and deliberately stays silent on report-writing, reminders, inbox reads, and other
-      // channels (Instagram/WhatsApp). The backend /api/email/smart resolves the recipient (known contact /
-      // raw address / "me"), so an unknown name just prompts for the address — it never fabricates one.
-      const mi = detectMessageIntent(text);
-      if (mi) {
-        // Delayed-send guard: if they asked to send LATER ("in 2 min", "send it later", "at 5pm",
-        // "schedule send"), we must NOT fire it off immediately behind their back. Gmail's API has no
-        // native delay, so say so and let them choose — never silent-send-now on a delay request.
-        const wantsDelay = /\b(in\s+\d+\s*(?:sec|second|min|minute|hour|hr)s?|(?:send|deliver|shoot|fire)\s+(?:it\s+)?later|later\s+(?:today|tonight|tomorrow)|schedule[d]?\s+(?:the\s+)?send|send\s+(?:it\s+)?(?:at|on)\s+\d)\b/i.test(text);
-        if (wantsDelay) {
-          setResponse("I can't schedule a delayed send yet — Gmail's API doesn't expose it, so I won't quietly send it now. Want me to **send it now** or **just draft it**? (Or use Gmail's own “Schedule send”.)");
-          setVisible(true); return;
-        }
-        // Pass the WHOLE instruction (the composer handles the framing) + any attached file to summarize.
-        let attachment: any = null;
-        if (files?.length) { try { attachment = (await prepareAttachments(files.slice(0, 1)))[0] || null; } catch { /* unreadable file — send without it */ } }
-        await sendSmart({ recipient: mi.recipient, instruction: text.trim(), attachment });
-        return;
-      }
-    }
-
-    // ATLAS quick capture — a task / reminder / event / note said in plain words lands in Today
-    // DETERMINISTICALLY, without waiting on the model to pick the atlas_capture tool. The gate is
-    // conservative (unambiguous imperatives, or a reminder/event that carries a time), so ordinary
-    // questions still go to the brain; if the server doesn't recognise it, we fall straight through.
-    if (!files.length) {
-      const TIME_HINT = /\b(at\s*\d{1,2}(:\d{2})?\s*(a\.?m\.?|p\.?m\.?)?|\d{1,2}(:\d{2})?\s*(a\.?m\.?|p\.?m\.?)|in\s+\d+\s*(min|minute|hour|hr)s?|tomorrow|tonight|today|this\s+(morning|afternoon|evening)|noon|midnight|on\s+(mon|tue|wed|thu|fri|sat|sun)|(mon|tues|wednes|thurs|fri|satur|sun)day|\b(morning|afternoon|evening)\b)\b/i;
-      const looksLikeCapture =
-        /^\s*(add (a |an )?(task|todo|to-?do)|new task|to-?do|task:)/i.test(text)
-        || /^\s*(note:|jot|take (a|down).*note|make a note|new note)/i.test(text)
-        || /^\s*(schedule\b|add (an? )?(event|meeting|appointment))/i.test(text)
-        || (/\b(remind me|set (a |up a )?reminder|nudge me|don'?t let me forget)\b/i.test(text) && TIME_HINT.test(text))
-        || /\b(said (he|she|they)('| wi)ll|promised (he|she|they)|waiting (on|for)\s+[A-Z]|owes me)\b/i.test(text)
-        || (/\b(meeting|lunch|dinner|coffee|appointment|interview|flight|class|standup|sync)\b/i.test(text) && TIME_HINT.test(text));
-      if (looksLikeCapture) {
-        try {
-          const res = await fetch("/api/atlas/capture", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text }) });
-          const cap = await res.json().catch(() => ({}));
-          if (cap && cap.ok) {
-            setResponse(cap.message || "Captured.");
-            setMeta({ model: "atlas" } as BrainResponse);
-            setVisible(true);
-            document.dispatchEvent(new CustomEvent("jarvis:open-widget", { detail: { id: "today" } }));
-            return;
-          }
-        } catch { /* backend unreachable — fall through to the brain */ }
-      }
-    }
-
+    // RW0 — the deterministic front-end pre-routes for calendar / email / inbox / capture were REMOVED.
+    // They bypassed the brain AND the conversation recorder, so turns weren't saved, there was no
+    // history, and short follow-ups ("yes", "send it now", "it") hallucinated (wrong recipient, made-up
+    // email, phantom files). Everything now goes to the brain below, which records the turn, loads the
+    // full history, and uses the real typed tools (atlas_today / atlas_add_* / calendar_* / email).
     abortRef.current?.abort();
     abortRef.current = new AbortController();
 

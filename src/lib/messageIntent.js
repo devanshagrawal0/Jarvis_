@@ -30,7 +30,7 @@ const DET = "(?:my|our|the|a|an)\\s+";
 // A recipient token: an address, OR "<det> word", OR a bare word that is NOT itself a determiner (so
 // "send an email to …" doesn't capture "an" as the recipient). No capitalization reliance — the /i
 // flag would defeat it anyway — a single token, or a determiner + single token.
-const NAME = `${ADDR}|${DET}[A-Za-z][A-Za-z0-9._'-]*|(?!(?:a|an|the|my|our|your|his|her|their)\\b)[A-Za-z][A-Za-z0-9._'-]*`;
+const NAME = `${ADDR}|${DET}[A-Za-z][A-Za-z0-9._'-]*|(?!(?:a|an|the|my|our|your|his|her|their|another|one|some|any|each|every|no|this|that)\\b)[A-Za-z][A-Za-z0-9._'-]*`;
 
 // Verbs meaning "put this in front of a person". Excludes bare "message/ping/text/dm" (chat channels).
 const SEND =

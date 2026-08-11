@@ -87,7 +87,13 @@ function evaluateAutonomy({ definition, tool, args, profile, context, recentActi
   // was therefore the only real gate, and `effectiveLevel !== "autopilot"` removed it at the
   // highest autonomy level. Autopilot should mean "stop asking about routine actions", not "run
   // any shell command unattended", so this one is confirmed at every level.
-  const alwaysConfirm = new Set(["run_command"]);
+  // email_smart is a one-step external SEND. It is `execute` risk, which means at the "autopilot"
+  // level the generic gate below would let it fire with NO confirmation — and because it composes the
+  // body at send time, an un-approved send is exactly the "wrong recipient + hallucinated body went
+  // out behind my back" failure. An outbound email is irreversible and leaves the machine, so it is
+  // confirmed at EVERY autonomy level, like run_command. (The preferred path is still
+  // gmail_prepare_email → gmail_send_prepared, whose approval is bound to an exact provider draft.)
+  const alwaysConfirm = new Set(["run_command", "email_smart"]);
   const requiresConfirmation = Boolean(definition.risk === "commit"
     || alwaysConfirm.has(tool)
     || (definition.risk === "execute" && effectiveLevel !== "autopilot" && !lowRiskLocalExecute.has(tool))
