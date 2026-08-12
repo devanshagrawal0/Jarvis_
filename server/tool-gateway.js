@@ -145,6 +145,9 @@ function createToolGateway({ capabilityEngine, moduleRegistry, codeKnowledge }) 
     if (atlasRead) alwaysUseful.push("atlas_today");
     if (atlasWrite) alwaysUseful.push("atlas_add_task", "atlas_add_event", "atlas_add_reminder", "atlas_capture");
     if (atlasMutate) alwaysUseful.push("atlas_today", "atlas_complete_task", "atlas_reschedule_event", "atlas_cancel_item");
+    // Undo — reverse the last Today/calendar change. Exposed on undo/revert/nevermind so a bare "undo
+    // that" reliably reaches the tool (it carries no other noun).
+    if (/\b(undo|revert|nevermind|never mind|take that back|take it back|oops|scratch that|reverse that|undo that)\b/i.test(prompt)) alwaysUseful.push("atlas_undo", "atlas_today");
     // The owner's REAL Google Calendar (read + write). Any mention of "calendar" exposes the Google
     // calendar tools so the model can actually check it / write it — never fall back to a web search.
     if (/\bcalendar\b/i.test(prompt)) {

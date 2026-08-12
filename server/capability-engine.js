@@ -222,6 +222,11 @@ function createCapabilityEngine({
       return iso ? { iso, hadTime: r.hadTime, dateOnly: !r.hadTime } : null;
     } catch { return null; }
   };
+  // NOVEL FEATURE — Undo. Every reversible Today/calendar change pushes an inverse operation here, so
+  // "undo that" / "nevermind" / "take that back" actually reverses the last action (add -> delete,
+  // complete -> reopen, move -> move back). Almost no assistant offers a real undo.
+  const undoStack = [];
+  const pushUndo = (describe, undo) => { undoStack.push({ describe, undo, at: Date.now() }); if (undoStack.length > 25) undoStack.shift(); };
   // Smart default duration by event type — a "quick sync" is not an hour, a "lunch" is not 30 min.
   // Used when the owner gives a start but no explicit end. Beats a flat 1-hour block for every event.
   const defaultDurationMs = (title, phrase) => {
@@ -455,6 +460,7 @@ function createCapabilityEngine({
     ["atlas_complete_task", "Mark one of the owner's LOCAL Today tasks as done/completed. Pass `title` = a few words identifying the task ('call the plumber', 'file taxes'); the tool finds the best-matching OPEN task and completes it. Use for 'mark X done', 'I finished X', 'check off X', 'that's done'. Saves immediately. Returns which task it completed (or says none matched) — never claim a task is done unless this returns ok.", "execute", false],
     ["atlas_reschedule_event", "Move or rename one of the owner's LOCAL Today events (not Google Calendar). Pass `title` to identify the event and `newStartAt` (ISO 8601, owner-local) to move it, and/or `newTitle` to rename. Use for 'move lunch to 1pm', 'push the dentist appt to 4', 'rename X to Y'. Finds the best-matching upcoming event and updates it in place (no duplicate). Returns the updated event — never claim it moved unless this returns ok.", "execute", false],
     ["atlas_cancel_item", "Cancel/remove one of the owner's LOCAL Today items — a task, event, or reminder. Pass `title` to identify it and optional `kind` ('task'|'event'|'reminder') to disambiguate. Use for 'cancel lunch', 'delete the plumber task', 'remove that reminder'. This deletes local data, so it is confirmed with the owner first; do NOT say it's removed until the confirmation completes. Returns what was cancelled.", "execute", false],
+    ["atlas_undo", "Undo the owner's most recent Today/calendar change — reverse the last add/complete/move (add→delete, complete→reopen, move→move back). Use the moment the owner says 'undo', 'undo that', 'nevermind', 'take that back', 'revert that', 'oops undo'. Runs immediately. Returns what was undone, or says there's nothing to undo.", "execute", false],
     ["calendar_list_events", "Read the owner's REAL Google Calendar over a time window. Call this whenever the owner asks what's on their (Google) calendar, whether something is on it, their meetings/events, or to confirm an event exists. timeMin/timeMax are ISO 8601 (default: now to +7 days). This is your ONLY way to see the real Google Calendar — never claim you can't check it.", "observe", false],
     ["calendar_create_event", "Create a real event on the owner's Google Calendar (the actual calendar, not the local Today list). Use when the owner says 'add to my calendar', 'put X on my calendar', 'schedule X', or 'add an event'. YOU extract title, and startAt as an ISO 8601 timestamp in the owner's local time WITH offset; optional endAt (default +1h) and location. This is a real external write — it is confirmed with the owner before it goes through, so do NOT say it's done until the confirmation completes.", "commit", true],
     ["calendar_move_event", "Move/reschedule an existing Google Calendar event to a new time. First call calendar_list_events to find the event and its id, then call this with eventId and newStartAt (ISO 8601, owner-local with offset). Confirmed before it goes through.", "commit", true],
@@ -605,6 +611,7 @@ function createCapabilityEngine({
       title: { type: "STRING", description: "A few words identifying the item to cancel/remove." },
       kind: { type: "STRING", description: "Optional 'task' | 'event' | 'reminder' to disambiguate which kind to cancel." },
     }, required: ["title"] } },
+    { name: "atlas_undo", description: description("atlas_undo"), parameters: { type: "OBJECT", properties: {} } },
     { name: "calendar_list_events", description: description("calendar_list_events"), parameters: { type: "OBJECT", properties: {
       timeMin: { type: "STRING", description: "Optional ISO 8601 window start; defaults to now." },
       timeMax: { type: "STRING", description: "Optional ISO 8601 window end; defaults to 7 days from now." },
@@ -2225,6 +2232,7 @@ function createCapabilityEngine({
       const when = context?.userPrompt ? ownerResolveWhen(context.userPrompt) : null;
       const dueAt = when?.iso || ownerIso(args.dueAt);
       const item = store.createTask({ title, dueAt, priority: Number.isFinite(args.priority) ? args.priority : 1, tz: ownerTz(), source: { kind: "chat" } });
+      pushUndo(`added task "${item.title}"`, () => store.updateTask(item.id, { status: "cancelled" }));
       return { ok: true, added: "task", item, message: `Task added — ${item.title}` };
     },
     atlas_add_event: async (args, context) => {
@@ -2245,6 +2253,7 @@ function createCapabilityEngine({
         if (clash) conflict = { title: clash.title, startAt: clash.startAt };
       } catch { /* non-fatal */ }
       const item = store.createEvent({ title, startAt, endAt, location: cleanString(args.location, 200) || null, tz: ownerTz(), source: { kind: "chat" } });
+      pushUndo(`added event "${item.title}"`, () => store.deleteEvent(item.id));
       return { ok: true, added: "event", item, conflict, message: conflict ? `Event added — ${item.title}. Heads up: it overlaps "${conflict.title}".` : `Event added — ${item.title}` };
     },
     atlas_add_reminder: async (args, context) => {
@@ -2262,6 +2271,7 @@ function createCapabilityEngine({
       const fireAt = when?.iso || ownerIso(args.fireAt);
       if (!title || !fireAt) throw errorWithStatus("atlas_add_reminder needs a title and an ISO fireAt.", 400);
       const item = store.createReminder({ title, fireAt, tz: ownerTz(), source: { kind: "chat" } });
+      pushUndo(`set reminder "${item.title}"`, () => store.cancelReminder(item.id));
       return { ok: true, added: "reminder", item, message: `Reminder set — ${item.title}` };
     },
     atlas_complete_task: async (args) => {
@@ -2272,7 +2282,9 @@ function createCapabilityEngine({
       const open = store.listTasks({ status: "open", limit: 200 });
       const match = bestAtlasMatch(open, q);
       if (!match) return { ok: false, completed: false, message: `No open task matched "${q}". Nothing was changed.` };
+      const prevStatus = match.status || "open";
       const item = store.updateTask(match.id, { status: "done" });
+      pushUndo(`completed "${item.title}"`, () => store.updateTask(match.id, { status: prevStatus }));
       return { ok: true, completed: true, item, message: `Marked done — ${item.title}` };
     },
     atlas_reschedule_event: async (args) => {
@@ -2296,7 +2308,9 @@ function createCapabilityEngine({
         patch.endAt = new Date(new Date(newStartAt).getTime() + Math.max(0, oldDur)).toISOString();
       }
       if (newTitle) patch.title = newTitle;
+      const prev = { startAt: match.startAt, endAt: match.endAt, title: match.title };
       const item = store.updateEvent(match.id, patch);
+      pushUndo(`moved "${prev.title}"`, () => store.updateEvent(match.id, prev));
       return { ok: true, moved: true, item, message: `Updated event — ${item.title}` };
     },
     atlas_cancel_item: async (args) => {
@@ -2317,7 +2331,20 @@ function createCapabilityEngine({
       if (hit.kind === "task") store.updateTask(match.id, { status: "cancelled" });
       else if (hit.kind === "event") store.deleteEvent(match.id);
       else store.cancelReminder(match.id);
+      pushUndo(`cancelled ${hit.kind} "${match.title}"`, () => {
+        if (hit.kind === "task") store.updateTask(match.id, { status: "open" });
+        else if (hit.kind === "event") store.createEvent({ title: match.title, startAt: match.startAt, endAt: match.endAt, location: match.location || null, tz: ownerTz(), source: { kind: "chat" } });
+        else store.createReminder({ title: match.title, fireAt: match.fireAt, tz: ownerTz(), source: { kind: "chat" } });
+      });
       return { ok: true, cancelled: true, kind: hit.kind, item: match, message: `Cancelled ${hit.kind} — ${match.title}` };
+    },
+    atlas_undo: async () => {
+      const store = atlas();
+      if (!store) throw errorWithStatus("The day-model (ATLAS) is not available in this runtime.", 412);
+      const last = undoStack.pop();
+      if (!last) return { ok: false, message: "There's nothing to undo." };
+      try { last.undo(); return { ok: true, undone: last.describe, message: `Undone — ${last.describe}.` }; }
+      catch { return { ok: false, message: `I couldn't undo ${last.describe}.` }; }
     },
     calendar_list_events: async (args) => {
       if (!providers?.google?.listCalendarEvents) throw errorWithStatus("Google Calendar isn't connected.", 412);

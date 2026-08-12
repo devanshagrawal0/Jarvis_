@@ -66,7 +66,7 @@ function createAgentRuntime({ getSettings, toolGateway, codeKnowledge, memorySto
       // these the classifier called "add dinner at 9:15" plain conversation → zero tools → the brain
       // said "I can't add anything, no tool this turn." They just need to engage the tool pathway;
       // the LLM still decides whether/how to act.
-      || /\b(add|remind|schedule|book|jot|note|log|pencil in|set ?up|reschedule|resched|cancel|move|delete|renew|track|mark|complete|finish|finished|check off|tick off|done with|cross off)\b/.test(lower);
+      || /\b(add|remind|schedule|book|jot|note|log|pencil in|set ?up|reschedule|resched|cancel|move|delete|renew|track|mark|complete|finish|finished|check off|tick off|done with|cross off|undo|revert|nevermind|never mind|take that back|take it back|scratch that|reverse that)\b/.test(lower);
     // Bare time words (today/tomorrow/current/right now) are NOT fresh signals on their own — "im
     // tired today" is conversation, not a live-data request. Real fresh queries carry a topical
     // signal (news/weather/price/score/latest/who won), which is what this matches.
