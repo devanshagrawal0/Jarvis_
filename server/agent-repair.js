@@ -3,7 +3,13 @@ const fs = require("fs");
 const path = require("path");
 const Database = require("better-sqlite3");
 
-const TIMEZONE = "America/New_York";
+// The "trusted local time" this module injects into every brain turn used to be hardcoded to US
+// Eastern — an authoritative-sounding line ("Trusted local time: ... EDT, local clock
+// America/New_York") that overrode the real owner timezone and made the assistant insist it was
+// Eastern and miscompute "tomorrow" by a day. It is now runtime-settable from the owner's resolved
+// location (default = the owner's real zone, not Eastern).
+let ACTIVE_TIMEZONE = "Asia/Kolkata";
+function setActiveTimezone(tz) { if (tz && typeof tz === "string") ACTIVE_TIMEZONE = tz; }
 
 function textOf(value) {
   return String(value || "").trim();
@@ -23,7 +29,7 @@ function nowIso() {
 
 function localDateParts(date = new Date()) {
   const parts = new Intl.DateTimeFormat("en-CA", {
-    timeZone: TIMEZONE,
+    timeZone: ACTIVE_TIMEZONE,
     year: "numeric",
     month: "2-digit",
     day: "2-digit",
@@ -41,7 +47,7 @@ function trustedTime() {
   const parts = localDateParts(date);
   return {
     now: date.toISOString(),
-    timezone: TIMEZONE,
+    timezone: ACTIVE_TIMEZONE,
     source: "system_clock",
     localDate: `${parts.year}-${parts.month}-${parts.day}`,
     localLabel: `${parts.weekday}, ${parts.month}/${parts.day}/${parts.year} ${parts.hour}:${parts.minute} ${parts.timeZoneName}`,
@@ -61,7 +67,7 @@ function defaultTopicState() {
     lastFailedTools: [],
     thorough: false,
     currentDateResolved: trustedTime().localDate,
-    currentTimezone: TIMEZONE,
+    currentTimezone: ACTIVE_TIMEZONE,
   };
 }
 
@@ -294,7 +300,7 @@ function createAgentRepair({ runtimeDir }) {
   }
 
   function saveTopic(topicState) {
-    const next = { ...defaultTopicState(), ...topicState, currentDateResolved: trustedTime().localDate, currentTimezone: TIMEZONE };
+    const next = { ...defaultTopicState(), ...topicState, currentDateResolved: trustedTime().localDate, currentTimezone: ACTIVE_TIMEZONE };
     writeJsonAtomic(topicPath, next);
     db.prepare(`
       INSERT INTO conversation_state(key, value_json, updated_at)
@@ -506,4 +512,5 @@ module.exports = {
   expandQueries,
   looksLikeBehaviorRules,
   trustedTime,
+  setActiveTimezone,
 };

@@ -1,3 +1,9 @@
+// Run the whole process in the owner's real timezone. The host machine here is US-Eastern, and
+// several subsystems format time with the MACHINE-local clock (no explicit zone) — which is how the
+// assistant kept insisting it was "3 PM EDT / America/New_York" and computed "tomorrow" a day off no
+// matter how the prompt was fixed. Anchoring process.env.TZ makes every machine-local Date resolve to
+// the owner's zone. Set before any Date is constructed. (Can be overridden via a real TZ env var.)
+if (!process.env.TZ || process.env.TZ === "America/New_York") process.env.TZ = "Asia/Kolkata";
 const crypto = require("crypto");
 const fs = require("fs");
 const http = require("http");
@@ -40,7 +46,7 @@ const { createAgentRuntime } = require("./server/agent-runtime");
 const { createReActExecutor } = require("./server/react-loop");
 const { createActivityGraph } = require("./server/pc-activity-graph");
 const { createProactiveIntelligence } = require("./server/proactive-intelligence");
-const { createAgentRepair } = require("./server/agent-repair");
+const { createAgentRepair, setActiveTimezone: setRepairTimezone } = require("./server/agent-repair");
 const { createMemoryGovernance } = require("./server/memory-governance");
 const { createTaskToSkillFactory } = require("./server/task-to-skill");
 const { createLocalFileAccess } = require("./server/local-file-access");
@@ -2256,10 +2262,10 @@ function brainSystemInstruction(mode, recalledMemories = [], runtimeContext = ""
   const now = new Date();
   // Cortex v3 · Wave 0 — resolve the owner's real location/timezone instead of
   // a hardcoded America/New_York, and inject an authoritative user-profile block.
-  const resolvedLoc = userContext ? userContext.resolveLocation() : { placeName: "", ianaTz: "America/New_York" };
+  const resolvedLoc = userContext ? userContext.resolveLocation() : { placeName: "", ianaTz: "Asia/Kolkata" };
   const profileBlock = userContext ? userContext.renderProfileBlock({ resolved: resolvedLoc, situational: userContext.situationalContext ? userContext.situationalContext() : null }) : "";
   const easternNow = now.toLocaleString("en-US", {
-    timeZone: resolvedLoc.ianaTz || "America/New_York",
+    timeZone: resolvedLoc.ianaTz || "Asia/Kolkata",
     weekday: "long",
     year: "numeric",
     month: "long",
@@ -2274,7 +2280,7 @@ function brainSystemInstruction(mode, recalledMemories = [], runtimeContext = ""
   // wrong day.
   const ownerUtcOffset = (() => {
     try {
-      const part = new Intl.DateTimeFormat("en-US", { timeZone: resolvedLoc.ianaTz || "America/New_York", timeZoneName: "longOffset" })
+      const part = new Intl.DateTimeFormat("en-US", { timeZone: resolvedLoc.ianaTz || "Asia/Kolkata", timeZoneName: "longOffset" })
         .formatToParts(now).find((x) => x.type === "timeZoneName");
       const raw = part ? part.value.replace(/^(GMT|UTC)/i, "").trim() : "";
       return raw || "+00:00";
@@ -2311,7 +2317,13 @@ function brainSystemInstruction(mode, recalledMemories = [], runtimeContext = ""
     "Stocks, health, and legal questions: ANSWER them substantively, never refuse. For 'should I buy X' or 'which stock', give the bull case, the bear case, the key factors (valuation, catalysts, his time horizon and risk tolerance if known), and a clear lean or pick — then put one short natural disclaimer on the LAST line only ('Not financial advice — do your own research and size to your own risk.'). Same shape for health ('here's the likely cause and what helps... if it's severe or persistent, get it checked') and legal (how it generally works, the likely answer, the main risk, a practical next move, then a one-line disclaimer). The disclaimer is a footer, never the opening, and never a reason to hold back the answer.",
     "Never invent tool or search results.",
     "Never promise ongoing monitoring, reminders, follow-ups, or background watching unless a real automation/monitor/task has been created by a tool and verified.",
-    `Current verified date/time: ${easternNow}. Runtime ISO timestamp: ${now.toISOString()}. Owner's location this turn: ${resolvedLoc.placeName || "(unknown)"} — timezone ${resolvedLoc.ianaTz} (current UTC offset ${ownerUtcOffset}). Use THIS location/timezone for time, weather, and local queries unless the owner names a different place.`,
+    (() => {
+      const tz = resolvedLoc.ianaTz || "Asia/Kolkata";
+      const todayLocal = now.toLocaleDateString("en-CA", { timeZone: tz });
+      const weekdayLocal = now.toLocaleDateString("en-US", { timeZone: tz, weekday: "long" });
+      const tomorrowLocal = new Date(now.getTime() + 86400000).toLocaleDateString("en-CA", { timeZone: tz });
+      return `CURRENT DATE & TIME — this is the ONLY authority on the current moment; USE IT and do NOT convert to US Eastern, UTC, or any other zone when talking to the owner. Right now it is ${easternNow}. In the owner's timezone ${tz} (${ownerUtcOffset}): TODAY is ${weekdayLocal}, ${todayLocal}; TOMORROW is ${tomorrowLocal}. Reason about "today / tonight / tomorrow / this <weekday> / next <weekday> / in N days" strictly from ${todayLocal} in ${tz} — never from a UTC date. Do NOT mention UTC, GMT, or US Eastern/EDT/EST at all; state the time only as ${easternNow}. CRITICAL: if any "Relevant memories" below state a current time, date, weekday, or "configured time zone" (e.g. a remembered "it is 3 PM EDT" or "America/New_York"), those are STALE snapshots from earlier turns — IGNORE them completely and trust ONLY this line. Owner's location this turn: ${resolvedLoc.placeName || "(unknown)"}. Use THIS location/timezone for time, weather, and local queries unless the owner names a different place.`;
+    })(),
     `When you produce an ISO 8601 timestamp for a tool argument (event start/end, reminder fire time, task due), express it in the owner's LOCAL time and INCLUDE the offset ${ownerUtcOffset} — e.g. tonight 9:15pm is ${new Date(now).toLocaleDateString("en-CA", { timeZone: resolvedLoc.ianaTz || "America/New_York" })}T21:15:00${ownerUtcOffset}. Never emit a bare 'Z'/UTC time for a local wall-clock, or the event lands on the wrong day.`,
     "For any live/current/date-sensitive claim, use a connected live source, tool output, or search grounding. If none is available, say exactly which source is missing instead of guessing.",
     "NEVER state specific current conditions from memory — no weather (temperature, % chance of rain, 'thunderstorms expected'), no live prices/scores, no today's-news specifics — unless a tool or search grounding returned them THIS turn. If you have a live tool available, call it; if you don't, say plainly you can't pull live weather/prices/news right now rather than inventing a number or a forecast. A fabricated forecast is worse than admitting you need to look it up.",
@@ -3780,6 +3792,9 @@ async function callGemini({ prompt, imageData, attachments = [], mode, sessionId
       if (moved) console.log(`[user-context] owner stated location: ${moved.placeName}${moved.ianaTz ? ` (${moved.ianaTz})` : ""}${moved.durable ? " — set as home" : ""}`);
     } catch (error) { console.warn(`[user-context] location capture failed: ${error.message}`); }
   }
+  // Point the repair controller's "trusted local time" at the owner's REAL resolved zone before it
+  // builds the turn — otherwise it injects a hardcoded US-Eastern clock that overrides everything.
+  try { if (typeof setRepairTimezone === "function" && userContext) setRepairTimezone(userContext.resolveLocation().ianaTz); } catch {}
   const repairTurn = agentRepair
     ? agentRepair.prepareTurn({ prompt, capabilityEngine, providerStatus: providerStatus(settings) })
     : null;

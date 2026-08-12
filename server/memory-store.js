@@ -285,10 +285,18 @@ function createMemoryStore(runtimeDir, { neuralVaultBridge } = {}) {
     });
   }
 
+  // Transient state — the current time/date/weekday/timezone, a weather reading, or a generic
+  // system-status/greeting line — must NEVER become a durable memory. Storing "it is 3 PM EDT" then
+  // recalling it on the next date question is a poisoning loop: the stale snapshot overrides the live
+  // clock and the assistant insists on the wrong day/zone. These are answered fresh every turn from
+  // the system prompt, so they carry zero durable value.
+  const EPHEMERAL_ASSISTANT_PATTERN = /\b(it is|today is|the time is|current (date|time)|right now it|the date is)\b[^.?!]*\b(\d{1,2}:\d{2}|\bAM\b|\bPM\b|EDT|EST|IST|UTC|GMT|monday|tuesday|wednesday|thursday|friday|saturday|sunday|january|february|march|april|may|june|july|august|september|october|november|december)\b|configured time ?zone|\b(systems?|core systems?)\b[^.?!]*\b(online|ready|responding|nominal|operational)\b|responding within nominal/i;
+
   function isSuccessfulEpisode(user, assistant, metadata) {
     const source = String(metadata.source || "");
     if (TEST_SOURCE_PATTERN.test(source)) return false;
     if (!user || !assistant || LOW_VALUE_ASSISTANT_PATTERN.test(assistant) || FAILURE_PATTERN.test(assistant)) return false;
+    if (EPHEMERAL_ASSISTANT_PATTERN.test(assistant)) return false;
     if (metadata.outcome && !["success", "partial_success", "recovery"].includes(metadata.outcome)) return false;
     const toolEvidence = Array.isArray(metadata.tools) && metadata.tools.length > 0;
     const durableEvent = /\b(completed|finished|sent|scheduled|booked|opened|created|updated|deployed|decided|agreed|deadline|appointment|meeting|commitment|milestone)\b/i.test(`${user} ${assistant}`);

@@ -119,16 +119,36 @@ function createUserContext({ runtimeDir, owner = "Dev" }) {
   if (!db.prepare("SELECT 1 FROM identity WHERE id=1").get()) {
     db.prepare(`INSERT INTO identity (id,legal_name,preferred_name,primary_email,home_timezone,locale,bio,updated_at)
                 VALUES (1,?,?,?,?,?,?,?)`)
-      .run("Devansh Agrawal", owner, "devanshhagrawal@gmail.com", "America/New_York", "en-US",
-           "Northeastern University student; builds Jarvis Command OS + APEX/Arbiter trading tools.", nowIso());
-    db.prepare("INSERT INTO locations (label,address,lat,lng,timezone,is_current,source,valid_from,confidence) VALUES ('home',?,?,?,?,1,'seed',?,1.0)")
-      .run("Boston, MA", 42.3601, -71.0589, "America/New_York", nowIso());
+      .run("Devansh Agrawal", owner, "devanshhagrawal@gmail.com", "Asia/Kolkata", "en-US",
+           "Northeastern University student; builds Jarvis Command OS + APEX/Arbiter trading tools. Currently based in India (Asia/Kolkata).", nowIso());
+    db.prepare("INSERT INTO locations (label,address,lat,lng,timezone,is_current,source,valid_from,confidence) VALUES ('home',?,?,?,?,1,'owner',?,1.0)")
+      .run("Nagpur, India", 21.1458, 79.0882, "Asia/Kolkata", nowIso());
     const pref = db.prepare("INSERT INTO preferences (category,subject,value,strength,source,updated_at) VALUES (?,?,?,?,?,?)");
     pref.run("comms", "reply_tone", "concise, direct, no filler", 1.0, "seed", nowIso());
     pref.run("comms", "address_style", "call me Dev", 1.0, "seed", nowIso());
     db.prepare("INSERT INTO core_memory_blocks (label,value,char_limit,updated_at,updated_by) VALUES (?,?,?,?,?)")
       .run("assistant_persona", "You are JARVIS — the owner's calm, sharp, capable operating intelligence. You act, not just answer.", 800, nowIso(), "seed");
   }
+
+  // Migration — the original seed hardcoded Boston / America/New_York, but the owner operates in
+  // Asia/Kolkata (IST): the SAME zone the ATLAS day-model already uses. A New_York home made the brain
+  // think "now" was Eastern, so it believed today was the UTC date and every relative date ("tomorrow",
+  // "next Monday") landed a full day off. Realign the still-untouched seed rows to the owner's real zone
+  // (only rows whose source is the seed and still carry the old zone — never a user-set location).
+  try {
+    const home = db.prepare("SELECT * FROM locations WHERE label='home' ORDER BY id LIMIT 1").get();
+    // Any still-seed home is realigned to the owner's real India zone AND promoted to source 'owner' so
+    // it is AUTHORITATIVE: unreliable IP geolocation (this machine's IP geolocates to the US via a
+    // datacenter/VPN) must NOT override where the owner actually is. Real browser GPS still can.
+    if (home && home.source === "seed") {
+      db.prepare("UPDATE locations SET address=?, lat=?, lng=?, timezone=?, source='owner' WHERE id=?")
+        .run("Nagpur, India", 21.1458, 79.0882, "Asia/Kolkata", home.id);
+    }
+    const ident = db.prepare("SELECT home_timezone FROM identity WHERE id=1").get();
+    if (ident && ident.home_timezone === "America/New_York") {
+      db.prepare("UPDATE identity SET home_timezone='Asia/Kolkata', updated_at=? WHERE id=1").run(nowIso());
+    }
+  } catch { /* non-fatal — resolveLocation still falls back to a valid zone */ }
 
   // ── Identity / facts ───────────────────────────────────────────────────
   function getIdentity() { return db.prepare("SELECT * FROM identity WHERE id=1").get() || {}; }
@@ -369,7 +389,7 @@ function createUserContext({ runtimeDir, owner = "Dev" }) {
       return { placeName: home?.address || "(unknown)", ianaTz: liveTz, lat: home?.lat ?? null, lon: home?.lng ?? null, source: "browser" };
     }
     if (home) return { placeName: home.address, ianaTz: home.timezone, lat: home.lat, lon: home.lng, source: "home" };
-    return { placeName: "(unknown)", ianaTz: "America/New_York", lat: null, lon: null, source: "default" };
+    return { placeName: "(unknown)", ianaTz: "Asia/Kolkata", lat: null, lon: null, source: "default" };
   }
 
   // ── The always-in-context block ("Model Set Context", authoritative) ───
