@@ -2235,8 +2235,17 @@ function createCapabilityEngine({
       const startAt = when?.iso || ownerIso(args.startAt);
       if (!title || !startAt) throw errorWithStatus("atlas_add_event needs a title and an ISO startAt.", 400);
       const endAt = ownerIso(args.endAt) || new Date(new Date(startAt).getTime() + defaultDurationMs(title, context?.userPrompt)).toISOString();
+      // Conflict detection — two intervals overlap iff s1 < e2 && s2 < e1. Warn (don't block) so the
+      // owner isn't silently double-booked. A world-class calendar surfaces the clash.
+      let conflict = null;
+      try {
+        const s1 = new Date(startAt).getTime(), e1 = new Date(endAt).getTime();
+        const clash = (store.eventsBetween(new Date(s1 - 3600_000).toISOString(), new Date(e1 + 3600_000).toISOString()) || [])
+          .find((ev) => { const s2 = new Date(ev.startAt).getTime(), e2 = new Date(ev.endAt || ev.startAt).getTime(); return s1 < e2 && s2 < e1; });
+        if (clash) conflict = { title: clash.title, startAt: clash.startAt };
+      } catch { /* non-fatal */ }
       const item = store.createEvent({ title, startAt, endAt, location: cleanString(args.location, 200) || null, tz: ownerTz(), source: { kind: "chat" } });
-      return { ok: true, added: "event", item, message: `Event added — ${item.title}` };
+      return { ok: true, added: "event", item, conflict, message: conflict ? `Event added — ${item.title}. Heads up: it overlaps "${conflict.title}".` : `Event added — ${item.title}` };
     },
     atlas_add_reminder: async (args, context) => {
       const store = atlas();
