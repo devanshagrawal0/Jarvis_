@@ -2252,6 +2252,13 @@ function createCapabilityEngine({
       if (!store) throw errorWithStatus("The day-model (ATLAS) is not available in this runtime.", 412);
       const title = cleanString(args.title, 300);
       const when = context?.userPrompt ? ownerResolveWhen(context.userPrompt) : null;
+      // Never fabricate a time. If the owner's words carry NO time or date signal at all (e.g. "remind
+      // me about my flight"), the model tends to invent one (9am tomorrow). Detect the absence and ask
+      // instead of silently scheduling a made-up time.
+      const hasTemporal = /\b(\d{1,2}(:\d{2})?\s*(a\.?m\.?|p\.?m\.?)?|noon|midnight|morning|afternoon|evening|tonight|tomorrow|today|tmrw|next|this|monday|tuesday|wednesday|thursday|friday|saturday|sunday|mon|tue|wed|thu|fri|sat|sun|in \d|end of|start of|beginning of|jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\b/i.test(String(context?.userPrompt || args.fireAt || ""));
+      if (context?.userPrompt && !when && !hasTemporal) {
+        return { ok: false, status: "needs_time", message: `When should I remind you to ${title.replace(/^remind me to /i, "") || "do that"}?` };
+      }
       const fireAt = when?.iso || ownerIso(args.fireAt);
       if (!title || !fireAt) throw errorWithStatus("atlas_add_reminder needs a title and an ISO fireAt.", 400);
       const item = store.createReminder({ title, fireAt, tz: ownerTz(), source: { kind: "chat" } });
