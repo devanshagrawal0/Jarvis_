@@ -627,9 +627,16 @@ export function JarvisUI() {
       if (preparedFiles.length) setActivity(`Prepared ${preparedFiles.length} attachment${preparedFiles.length === 1 ? "" : "s"}`);
       const primaryInline = preparedFiles.find((file) => file.dataUrl);
       const remainingAttachments = primaryInline ? preparedFiles.filter((file) => file !== primaryInline) : preparedFiles;
+      // W1 awareness: tell the brain which widgets are on screen right now, so it can
+      // answer "what's open?", close/arrange them, and avoid re-opening what's already up.
+      let openWidgets: { id: string; mode: string }[] = [];
+      try {
+        const spatial = JSON.parse(localStorage.getItem("jarvis.spatial-widgets.v1") || "{}");
+        openWidgets = Object.values(spatial).map((w: any) => ({ id: String(w.id), mode: String(w.mode || "normal") }));
+      } catch { /* no workspace yet */ }
       const result = await streamPost<BrainResponse>(
         "/api/chat/stream",
-        { prompt: text, mode: primaryInline ? "vision" : "command", model, strength, deepResearch: research === "deep", imageData: primaryInline?.dataUrl, attachments: remainingAttachments, clientContext: CLIENT_CONTEXT },
+        { prompt: text, mode: primaryInline ? "vision" : "command", model, strength, deepResearch: research === "deep", imageData: primaryInline?.dataUrl, attachments: remainingAttachments, clientContext: CLIENT_CONTEXT, openWidgets },
         (delta) => { setActivity(""); setResponse((r) => r + delta); },
         (phase, message) => {
           setActivity(message);

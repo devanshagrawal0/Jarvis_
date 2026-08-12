@@ -199,6 +199,12 @@ function createToolGateway({ capabilityEngine, moduleRegistry, codeKnowledge }) 
       || /\b(tidy|arrange|organi[sz]e|clean ?up|declutter)\b.*\b(up|my)\b/i.test(prompt)) {
       alwaysUseful.push("ui_arrange_widgets", "ui_open_widget", "ui_move_widget", "ui_resize_widget");
     }
+    // "close everything / close all / clear the screen" and "what's open?"
+    if (/\b(close|clear|dismiss|hide|shut)\b.*\b(everything|all|widgets?|panels?|windows?|screen|workspace|them)\b/i.test(prompt)
+      || /\bwhat(?:'s| is| are)\b.*\b(open|on (?:my |the )?screen|up)\b/i.test(prompt)
+      || /\b(which|list)\b.*\b(widgets?|panels?|windows?)\b.*\b(open)\b/i.test(prompt)) {
+      alwaysUseful.push("ui_close_widget", "ui_arrange_widgets", "ui_focus_widget");
+    }
     if (/\b(make|create|generate|write|build|compose|draft|turn .* into)\b/i.test(prompt)
       && /\b(report|brief|briefing|document|doc|pdf|deck|slides?|presentation|study sheet|one[- ]pager|artifact|write[- ]up|summary sheet|trading brief|research brief)\b/i.test(prompt)) {
       alwaysUseful.push("compose_artifact", "artifact_status", "web_research_deep", "url_read");

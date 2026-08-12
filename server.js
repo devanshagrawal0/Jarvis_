@@ -2308,6 +2308,7 @@ function brainSystemInstruction(mode, recalledMemories = [], runtimeContext = ""
     "Treat the conversation as continuous. Resolve pronouns, short follow-ups, corrections, misspellings, and phrases like 'I meant...' from recent turns before deciding what the user wants.",
     "Do not turn ordinary conversation into a tool call. Use tools only when a real action, local inspection, private data, or fresh external information is required.",
     "The owner's own live state — his tasks, to-dos, reminders, calendar/schedule/agenda, inbox/email, and contacts — lives ONLY behind tools (atlas_today for tasks/reminders/events, the calendar tools, the email/inbox tools, the contact tools). You have NO reliable memory of their current values; anything you 'remember' about a specific task, event, or unread email is stale and must not be trusted. Whenever he asks what's on his plate, his schedule, his tasks or reminders, what he's forgetting, what needs a reply, who he last emailed, or to plan/organize his day, you MUST call the relevant tool FIRST and answer strictly from its output — never from memory, and never invent, guess, or carry over items from earlier in the conversation.",
+    "EMAIL RECIPIENTS — never send to the wrong person. When the owner says 'email <name>' and the name is NOT already an email address, if there's any chance more than one contact matches, call resolve_contact(name) FIRST. If it returns 'ambiguous', ask the owner which one (list the candidates) — do NOT guess. If 'unknown', ask for the address. If 'resolved', proceed to send. Never invent or assume an email address for a name.",
     "CALENDAR — DEFAULT TO LOCAL. A plain 'schedule X at <time>', 'add <event> at <time>', 'put <event> at <time>', 'book <event>', 'lunch with Sam at 1' — with NO explicit mention of 'my calendar' or 'Google' — goes to the LOCAL Today list via atlas_add_event: it saves INSTANTLY with no approval, which is what he wants for everyday scheduling. Only use the Google tools (calendar_create_event / calendar_move_event / calendar_cancel_event, which confirm before writing) when he EXPLICITLY says 'my calendar', 'Google Calendar', 'on my calendar', or 'to my calendar'. To READ his real Google Calendar use calendar_list_events (any 'what's on my calendar' question). NEVER say something is 'on your calendar' unless a calendar_* tool actually returned success — if you added a LOCAL event, say 'added to your Today schedule' or similar, not 'on your calendar'. If he wants it both places, do both tools.",
     "When the user's meaning is reasonably clear despite a typo, silently understand it. Ask one short clarification only when multiple materially different interpretations remain.",
     "Lead with the answer. Open with the actual answer or your recommendation in the first sentence or two, then support it. Never open with a heading, never restate his question, never open with 'Certainly / Great question / Sure / Of course', never close with 'In conclusion / I hope this helps / let me know if you need anything else'. No buzzwords (delve, leverage, foster, robust, tapestry, realm, elevate, unlock, seamless, pivotal) and no announced transitions (Furthermore, Moreover, Additionally); let ideas connect naturally. Em-dashes rarely.",
@@ -11146,7 +11147,25 @@ ${entryText}`;
     // otherwise every stored turn is boilerplate and short follow-ups ("price")
     // lose their referent. Only the raw `prompt` is persisted.
     const context = typeof data.context === "string" ? data.context.slice(0, 1200) : "";
-    const modelPrompt = context ? `${context}\n\nUser: ${prompt}` : prompt;
+    // W1 awareness: frame the turn with the widgets actually on screen so the brain can
+    // answer "what's open?", close/arrange them, and not re-open what's already up. Kept
+    // out of persisted history (only raw `prompt` is stored) and only added when relevant.
+    const openList = Array.isArray(data.openWidgets)
+      ? data.openWidgets.filter((w) => w && w.id).map((w) => (w.mode === "minimized" ? `${w.id} (minimized)` : String(w.id))).slice(0, 24)
+      : [];
+    // Only frame the turn with widget awareness when it is actually about the widgets —
+    // otherwise the extra text would perturb lane routing on unrelated prompts.
+    const asksWidgets = /\b(widgets?|panels?)\b/i.test(prompt)
+      || /\bwhat(?:'s| is| are)\b[^?]*\b(open|up)\b/i.test(prompt)
+      || /\bclose\b[^?]*\b(everything|all)\b/i.test(prompt)
+      || /\b(tidy|arrange|declutter|cascade|tile)\b/i.test(prompt);
+    const widgetAwareness = asksWidgets
+      ? (openList.length
+          ? `[Your JARVIS widget workspace currently holds: ${openList.join(", ")}. These are in-app panels, not desktop apps. If asked what's open, answer from this list. Rearrange with ui_arrange_widgets; move/resize a named widget; close them all by calling ui_close_widget with no id.]`
+          : `[No JARVIS widgets are open right now.]`)
+      : "";
+    const framing = [widgetAwareness, context].filter(Boolean).join("\n\n");
+    const modelPrompt = framing ? `${framing}\n\nUser: ${prompt}` : prompt;
     // Prefer the caller's OWN recent turns (room-scoped memory) when provided —
     // the global conversation log mixes in other rooms/projects (e.g. Kalshi),
     // which bleeds unrelated context into follow-ups. Falls back to global log.

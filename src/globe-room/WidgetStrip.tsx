@@ -1978,6 +1978,23 @@ function cascadeLayout(ids: string[]): Record<string, { x: number; y: number; w:
   return out;
 }
 
+// Awareness / no-overlap: find a spot for a NEW window that does not cover any
+// open one. Scans left-to-right, top-to-bottom for the first clear slot; returns
+// null when the screen is genuinely full (caller then re-tiles everything to fit).
+function findFreeSlot(current: Record<string, SpatialWidgetState>, w: number, h: number): { x: number; y: number } | null {
+  const vw = window.innerWidth, vh = window.innerHeight;
+  const M = 18, pad = 10, bottomPad = 96, stepX = 46, stepY = 42;
+  const taken = Object.values(current).filter((s) => s.mode !== "minimized").map((s) => ({ x: s.x, y: s.y, w: s.w, h: s.h }));
+  const hits = (x: number, y: number) => taken.some((r) =>
+    !(x + w + pad <= r.x || r.x + r.w + pad <= x || y + h + pad <= r.y || r.y + r.h + pad <= y));
+  for (let y = M; y + h <= vh - bottomPad; y += stepY) {
+    for (let x = M; x + w <= vw - M; x += stepX) {
+      if (!hits(x, y)) return { x, y };
+    }
+  }
+  return null; // full — caller re-tiles
+}
+
 export function WidgetStrip({ mode }: { mode: string; showChips?: boolean }) {
   const [windows, setWindows] = useState<Record<string, SpatialWidgetState>>(loadSpatialWindows);
   const [widgetData, setWidgetData] = useState<Record<string, any>>({});
@@ -2029,10 +2046,24 @@ export function WidgetStrip({ mode }: { mode: string; showChips?: boolean }) {
     setWindows((current) => {
       const nextZ = Math.max(300, ...Object.values(current).map((state) => state.z)) + 1;
       const existing = current[id];
-      const next = existing
-        ? { ...existing, mode: focus ? "expanded" : existing.mode === "minimized" ? "normal" : existing.mode, z: nextZ }
-        : defaultSpatialWindow(id, Object.keys(current).length, focus);
-      return { ...current, [id]: next };
+      if (existing) {
+        const next = { ...existing, mode: focus ? "expanded" : existing.mode === "minimized" ? "normal" : existing.mode, z: nextZ };
+        return { ...current, [id]: next };
+      }
+      const base = defaultSpatialWindow(id, Object.keys(current).length, focus);
+      // Expanded/focus windows are meant to dominate — place as-is.
+      if (focus) return { ...current, [id]: { ...base, z: nextZ } };
+      // Normal window: drop it into the first clear slot so it covers nothing.
+      const slot = findFreeSlot(current, base.w, base.h);
+      if (slot) return { ...current, [id]: { ...base, ...slot, z: nextZ } };
+      // Screen is full — add it, then re-tile everything so nothing overlaps.
+      const withNew = { ...current, [id]: { ...base, z: nextZ } };
+      const ids = Object.keys(withNew).filter((k) => withNew[k].mode !== "minimized");
+      const rects = tileLayout(ids);
+      const tiled = { ...withNew };
+      let z = 300;
+      for (const k of ids) { const rr = rects[k]; if (rr) tiled[k] = { ...tiled[k], mode: "normal", x: rr.x, y: rr.y, w: rr.w, h: rr.h, z: ++z }; }
+      return tiled;
     });
     void refresh(id);
   }, [refresh]);

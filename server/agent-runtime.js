@@ -335,7 +335,15 @@ function createAgentRuntime({ getSettings, toolGateway, codeKnowledge, memorySto
         || /\b(add|remind|schedule|reschedule|move|cancel|delete|mark|complete|finish|finished|jot|note|log|book|set ?up|pencil in)\b/i.test(rawLower)
         || /\b(task|to-?do|reminder|my day|my agenda|my plate|my schedule|my tasks?|my reminders?|my events?)\b/i.test(rawLower)
         || /\bcalendar\b/i.test(rawLower);
-      if (typedAssistantIntent && !namesSiteOrScreen) {
+      // A JARVIS widget/panel is an in-app surface, never the OS desktop — a computer_use
+      // lane is always wrong for it. An explicit "widget"/"panel" word wins even when the
+      // owner also said "screen" (they mean their JARVIS screen, not the desktop).
+      const explicitWidget = /\b(widgets?|panels?)\b/i.test(rawLower);
+      const widgetIntent = explicitWidget
+        || /\b(tidy|arrange|declutter)\b/i.test(rawLower)
+        || /\bwhat(?:'s| is| are)\b[^?]*\b(open|up)\b/i.test(rawLower);
+      if ((typedAssistantIntent && !namesSiteOrScreen)
+        || (widgetIntent && (explicitWidget || !namesSiteOrScreen))) {
         execution.lane = "none";
         execution.tools = [];
       }
