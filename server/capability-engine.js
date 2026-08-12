@@ -222,6 +222,16 @@ function createCapabilityEngine({
       return iso ? { iso, hadTime: r.hadTime, dateOnly: !r.hadTime } : null;
     } catch { return null; }
   };
+  // Smart default duration by event type — a "quick sync" is not an hour, a "lunch" is not 30 min.
+  // Used when the owner gives a start but no explicit end. Beats a flat 1-hour block for every event.
+  const defaultDurationMs = (title, phrase) => {
+    const t = `${title || ""} ${phrase || ""}`.toLowerCase();
+    if (/\b(quick|brief)\b.*\b(sync|call|chat|catch ?up)\b|\bstandup\b|\bquick (sync|call|chat)\b/.test(t)) return 15 * 60000;
+    if (/\b(lunch|dinner|breakfast|brunch|interview|workout|gym|movie|dentist|doctor|appointment|meeting with|1:1|one on one|review)\b/.test(t)) return 60 * 60000;
+    if (/\b(coffee|call|sync|chat|catch ?up|check ?in|1-?on-?1)\b/.test(t)) return 30 * 60000;
+    if (/\b(focus|deep work|block|study|writing|coding)\b/.test(t)) return 90 * 60000;
+    return 60 * 60000; // sensible default
+  };
   // Fuzzy-match a local ATLAS item by title for complete/reschedule/cancel. The owner says "mark the
   // plumber task done" / "move lunch", not an id, so score candidates by token overlap with the query
   // and require at least one shared meaningful word so a wrong item is never silently mutated.
@@ -2224,7 +2234,7 @@ function createCapabilityEngine({
       const when = context?.userPrompt ? ownerResolveWhen(context.userPrompt) : null;
       const startAt = when?.iso || ownerIso(args.startAt);
       if (!title || !startAt) throw errorWithStatus("atlas_add_event needs a title and an ISO startAt.", 400);
-      const endAt = ownerIso(args.endAt) || new Date(new Date(startAt).getTime() + 3600_000).toISOString();
+      const endAt = ownerIso(args.endAt) || new Date(new Date(startAt).getTime() + defaultDurationMs(title, context?.userPrompt)).toISOString();
       const item = store.createEvent({ title, startAt, endAt, location: cleanString(args.location, 200) || null, tz: ownerTz(), source: { kind: "chat" } });
       return { ok: true, added: "event", item, message: `Event added — ${item.title}` };
     },
@@ -2309,7 +2319,7 @@ function createCapabilityEngine({
       const when = context?.userPrompt ? ownerResolveWhen(context.userPrompt) : null;
       const startAt = when?.iso || ownerIso(args.startAt);
       if (!title || !startAt) throw errorWithStatus("calendar_create_event needs a title and an ISO startAt.", 400);
-      const endAt = ownerIso(args.endAt) || new Date(new Date(startAt).getTime() + 3600_000).toISOString();
+      const endAt = ownerIso(args.endAt) || new Date(new Date(startAt).getTime() + defaultDurationMs(title, context?.userPrompt)).toISOString();
       const ev = await providers.google.createCalendarEvent({ title, startAt, endAt, location: cleanString(args.location, 300) || null });
       return { ok: true, created: "google-event", id: ev.id, title: ev.summary || title, startAt, endAt, htmlLink: ev.htmlLink || null, message: `Added "${ev.summary || title}" to your Google Calendar.` };
     },
