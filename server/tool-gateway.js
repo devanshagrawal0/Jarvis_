@@ -187,8 +187,17 @@ function createToolGateway({ capabilityEngine, moduleRegistry, codeKnowledge }) 
       || /https?:\/\/[^\s)]+/i.test(prompt)) {
       alwaysUseful.push("research_v2", "web_research_deep", "url_read", "web_research");
     }
-    if (/\b(open|show|focus|expand|close|populate|render|display)\b.*\b(widget|panel|card|hud|module)\b/i.test(prompt)) {
+    if (/\b(open|show|focus|expand|close|populate|render|display)\b.*\b(widgets?|panels?|cards?|hud|modules?)\b/i.test(prompt)) {
       alwaysUseful.push("ui_open_widget", "ui_focus_widget", "ui_close_widget", "ui_populate", "ui_render_card");
+    }
+    // W1: widget command & control — move / resize / arrange open windows.
+    if (/\b(move|drag|put|place|shift|resize|shrink|grow|enlarge|maximi[sz]e|minimi[sz]e|bigger|smaller)\b.*\b(widgets?|panels?|windows?|cards?|modules?|it|that)\b/i.test(prompt)
+      || /\b(widgets?|panels?|windows?|modules?)\b.*\b(top[- ]?(?:left|right)|bottom[- ]?(?:left|right)|left|right|center|corner|smaller|bigger)\b/i.test(prompt)) {
+      alwaysUseful.push("ui_move_widget", "ui_resize_widget", "ui_open_widget", "ui_focus_widget");
+    }
+    if (/\b(arrange|tidy|organi[sz]e|tile|cascade|clean ?up|declutter|lay ?out|line up|stack|neaten)\b.*\b(widgets?|panels?|windows?|screen|workspace|everything|them|all)\b/i.test(prompt)
+      || /\b(tidy|arrange|organi[sz]e|clean ?up|declutter)\b.*\b(up|my)\b/i.test(prompt)) {
+      alwaysUseful.push("ui_arrange_widgets", "ui_open_widget", "ui_move_widget", "ui_resize_widget");
     }
     if (/\b(make|create|generate|write|build|compose|draft|turn .* into)\b/i.test(prompt)
       && /\b(report|brief|briefing|document|doc|pdf|deck|slides?|presentation|study sheet|one[- ]pager|artifact|write[- ]up|summary sheet|trading brief|research brief)\b/i.test(prompt)) {

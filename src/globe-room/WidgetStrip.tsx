@@ -1916,6 +1916,68 @@ function defaultSpatialWindow(id: string, order: number, focus = false): Spatial
   return { id, mode: "normal", x: 22 + column * 42, y: 14 + row * 44, w, h, z: 100 + order };
 }
 
+// ─── W1: widget command & control — Jarvis moves / resizes / arranges windows ──
+// Pure geometry so the brain can say "put the calendar top-right", "make it small",
+// "tidy my widgets" and get a clean, viewport-clamped, non-overlapping result.
+
+const SIZE_PRESETS: Record<string, { w: number; h: number }> = {
+  small: { w: 400, h: 360 },
+  medium: { w: 580, h: 500 },
+  large: { w: 800, h: 640 },
+};
+
+function clampRect(x: number, y: number, w: number, h: number) {
+  const vw = window.innerWidth, vh = window.innerHeight;
+  const cw = Math.min(w, vw - 24), ch = Math.min(h, vh - 24);
+  return {
+    x: Math.round(Math.max(12, Math.min(x, vw - cw - 12))),
+    y: Math.round(Math.max(12, Math.min(y, vh - ch - 12))),
+    w: Math.round(cw), h: Math.round(ch),
+  };
+}
+
+// A named screen region → top-left corner for a widget of size w×h.
+function positionToXY(position: string, w: number, h: number) {
+  const vw = window.innerWidth, vh = window.innerHeight, M = 18;
+  const cx = Math.round((vw - w) / 2), cy = Math.round((vh - h) / 2);
+  const left = M, right = Math.round(vw - w - M), top = M, bottom = Math.round(vh - h - M);
+  const key = (position || "").toLowerCase().trim().replace(/[\s_]+/g, "-");
+  const map: Record<string, { x: number; y: number }> = {
+    "top-left": { x: left, y: top }, "top-right": { x: right, y: top },
+    "bottom-left": { x: left, y: bottom }, "bottom-right": { x: right, y: bottom },
+    "center": { x: cx, y: cy }, "middle": { x: cx, y: cy },
+    "left": { x: left, y: cy }, "right": { x: right, y: cy },
+    "top": { x: cx, y: top }, "bottom": { x: cx, y: bottom },
+  };
+  return map[key] || { x: cx, y: cy };
+}
+
+// Even grid over N ids — no overlap, leaves room for the command bar at the bottom.
+function tileLayout(ids: string[]): Record<string, { x: number; y: number; w: number; h: number }> {
+  const vw = window.innerWidth, vh = window.innerHeight;
+  const M = 18, G = 14, topPad = 16, bottomPad = 104;
+  const n = ids.length;
+  const out: Record<string, { x: number; y: number; w: number; h: number }> = {};
+  if (n === 0) return out;
+  const cols = Math.ceil(Math.sqrt(n));
+  const rows = Math.ceil(n / cols);
+  const cw = Math.floor((vw - M * 2 - G * (cols - 1)) / cols);
+  const ch = Math.floor((vh - topPad - bottomPad - G * (rows - 1)) / rows);
+  ids.forEach((id, i) => {
+    const c = i % cols, r = Math.floor(i / cols);
+    out[id] = { x: M + c * (cw + G), y: topPad + r * (ch + G), w: Math.max(300, cw), h: Math.max(220, ch) };
+  });
+  return out;
+}
+
+// Diagonal cascade — medium windows stepped from the top-left.
+function cascadeLayout(ids: string[]): Record<string, { x: number; y: number; w: number; h: number }> {
+  const w = 560, h = 460, step = 40, M = 26;
+  const out: Record<string, { x: number; y: number; w: number; h: number }> = {};
+  ids.forEach((id, i) => { out[id] = clampRect(M + i * step, M + i * step, w, h); });
+  return out;
+}
+
 export function WidgetStrip({ mode }: { mode: string; showChips?: boolean }) {
   const [windows, setWindows] = useState<Record<string, SpatialWidgetState>>(loadSpatialWindows);
   const [widgetData, setWidgetData] = useState<Record<string, any>>({});
@@ -1989,6 +2051,55 @@ export function WidgetStrip({ mode }: { mode: string; showChips?: boolean }) {
       if (detail.type === "populate-widget" && id) {
         setWidgetData((current) => ({ ...current, [id]: { ...(detail.data || {}), __state: detail.state || "live", __fetchedAt: new Date().toISOString() } }));
         openWidget(id, Boolean(detail.focus));
+      }
+      if (detail.type === "move-widget" && id) {
+        setWindows((current) => {
+          const cur = current[id];
+          if (!cur) return current;
+          let x = Number.isFinite(detail.x) ? Number(detail.x) : undefined;
+          let y = Number.isFinite(detail.y) ? Number(detail.y) : undefined;
+          if (x === undefined || y === undefined) {
+            const p = positionToXY(String(detail.position || "center"), cur.w, cur.h);
+            x = p.x; y = p.y;
+          }
+          const r = clampRect(x, y, cur.w, cur.h);
+          const nextZ = Math.max(300, ...Object.values(current).map((s) => s.z)) + 1;
+          return { ...current, [id]: { ...cur, x: r.x, y: r.y, mode: cur.mode === "minimized" ? "normal" : cur.mode, z: nextZ } };
+        });
+      }
+      if (detail.type === "resize-widget" && id) {
+        setWindows((current) => {
+          const cur = current[id];
+          if (!cur) return current;
+          const size = String(detail.size || "").toLowerCase().trim();
+          const nextZ = Math.max(300, ...Object.values(current).map((s) => s.z)) + 1;
+          if (size === "minimize" || size === "minimized") return { ...current, [id]: { ...cur, mode: "minimized" } };
+          if (["expand", "expanded", "maximize", "maximise", "full", "fullscreen"].includes(size)) {
+            const f = defaultSpatialWindow(id, 0, true);
+            return { ...current, [id]: { ...cur, mode: "expanded", x: f.x, y: f.y, w: f.w, h: f.h, z: nextZ } };
+          }
+          const preset = SIZE_PRESETS[size];
+          const w = Number.isFinite(detail.w) ? Number(detail.w) : preset?.w;
+          const h = Number.isFinite(detail.h) ? Number(detail.h) : preset?.h;
+          if (!w || !h) return current;
+          const r = clampRect(cur.x, cur.y, w, h);
+          return { ...current, [id]: { ...cur, mode: "normal", x: r.x, y: r.y, w: r.w, h: r.h, z: nextZ } };
+        });
+      }
+      if (detail.type === "arrange-widgets") {
+        setWindows((current) => {
+          const layout = String(detail.layout || "tile").toLowerCase().trim();
+          const ids = Object.keys(current).filter((k) => current[k].mode !== "minimized");
+          if (ids.length === 0) return current;
+          const rects = (layout === "cascade" || layout === "stack") ? cascadeLayout(ids) : tileLayout(ids);
+          const next = { ...current };
+          let z = 300;
+          for (const k of ids) {
+            const rr = rects[k];
+            if (rr) next[k] = { ...next[k], mode: "normal", x: rr.x, y: rr.y, w: rr.w, h: rr.h, z: ++z };
+          }
+          return next;
+        });
       }
     }
     document.addEventListener("jarvis:open-widget", handleOpen);

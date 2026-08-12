@@ -359,6 +359,9 @@ function createCapabilityEngine({
     ["ui_focus_widget", "Open a real current-shell JARVIS widget in expanded focus mode.", "observe", false],
     ["ui_close_widget", "Close the currently shown JARVIS widget or a specified widget.", "observe", false],
     ["ui_populate", "Populate a current-shell widget with explicitly supplied response data and a freshness state.", "observe", false],
+    ["ui_move_widget", "Move an already-open JARVIS widget to a screen position: top-left, top-right, bottom-left, bottom-right, center, left, right, top, or bottom. Open the widget first if it is not open.", "observe", false],
+    ["ui_resize_widget", "Resize an already-open JARVIS widget: size 'small', 'medium', or 'large'; or 'expand'/'maximize' to full focus; or 'minimize'. Open the widget first if it is not open.", "observe", false],
+    ["ui_arrange_widgets", "Tidy every open JARVIS widget into a clean non-overlapping layout: 'tile' (an even grid, the default) or 'cascade' (stacked with a diagonal offset). Use for 'arrange / tidy / organize / clean up my widgets'.", "observe", false],
     ["ui_render_card", "Render a safe declarative information, warning, metric, or checklist card in the JARVIS response surface.", "observe", false],
     ["compose_artifact", "Create a verified Work Composer artifact as Markdown and HTML with sources, brief metadata, and verification receipts.", "prepare", false],
     ["artifact_status", "List recent Work Composer artifacts or inspect one artifact verification record.", "observe", false],
@@ -577,6 +580,15 @@ function createCapabilityEngine({
     { name: "ui_populate", description: description("ui_populate"), parameters: { type: "OBJECT", properties: {
       id: { type: "STRING" }, state: { type: "STRING" }, data: { type: "OBJECT" },
     }, required: ["id", "data"] } },
+    { name: "ui_move_widget", description: description("ui_move_widget"), parameters: { type: "OBJECT", properties: {
+      id: { type: "STRING" }, position: { type: "STRING", description: "top-left, top-right, bottom-left, bottom-right, center, left, right, top, or bottom." },
+    }, required: ["id", "position"] } },
+    { name: "ui_resize_widget", description: description("ui_resize_widget"), parameters: { type: "OBJECT", properties: {
+      id: { type: "STRING" }, size: { type: "STRING", description: "small, medium, large, expand, maximize, or minimize." },
+    }, required: ["id", "size"] } },
+    { name: "ui_arrange_widgets", description: description("ui_arrange_widgets"), parameters: { type: "OBJECT", properties: {
+      layout: { type: "STRING", description: "tile (grid, default) or cascade." },
+    } } },
     { name: "ui_render_card", description: description("ui_render_card"), parameters: { type: "OBJECT", properties: {
       kind: { type: "STRING" }, title: { type: "STRING" }, body: { type: "STRING" },
       items: { type: "ARRAY", items: { type: "STRING" } }, value: { type: "STRING" }, status: { type: "STRING" },
@@ -2718,6 +2730,22 @@ function createCapabilityEngine({
       type: "populate-widget", id: cleanString(args.id, 60), state: cleanString(args.state || "live", 20),
       data: args.data && typeof args.data === "object" ? args.data : {},
     } }),
+    ui_move_widget: async (args) => {
+      const id = cleanString(args.id, 60);
+      if (!id) throw errorWithStatus("Which widget should I move, sir?", 400);
+      const position = (cleanString(args.position, 24) || "center").toLowerCase();
+      return { ok: true, uiAction: { type: "move-widget", id, position }, message: `Moved the ${id} widget to ${position}, sir.` };
+    },
+    ui_resize_widget: async (args) => {
+      const id = cleanString(args.id, 60);
+      if (!id) throw errorWithStatus("Which widget should I resize, sir?", 400);
+      const size = (cleanString(args.size, 24) || "medium").toLowerCase();
+      return { ok: true, uiAction: { type: "resize-widget", id, size }, message: `Resized the ${id} widget to ${size}, sir.` };
+    },
+    ui_arrange_widgets: async (args) => {
+      const layout = (cleanString(args.layout, 24) || "tile").toLowerCase();
+      return { ok: true, uiAction: { type: "arrange-widgets", layout }, message: `Tidied your open widgets into a ${layout} layout, sir.` };
+    },
     ui_render_card: async (args) => ({ card: {
       kind: cleanString(args.kind || "info", 30), title: cleanString(args.title, 160),
       body: cleanString(args.body, 4000), value: cleanString(args.value, 200), status: cleanString(args.status, 30),
