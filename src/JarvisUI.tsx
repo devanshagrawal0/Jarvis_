@@ -5,6 +5,7 @@ import { JarvisCommandBar } from "./globe-room/JarvisCommandBar";
 import { JarvisMarkdown } from "./JarvisMarkdown";
 import { WidgetLauncher } from "./globe-room/WidgetLauncher";
 import { WidgetStrip } from "./globe-room/WidgetStrip";
+import { StageSurface } from "./StageSurface";
 import { HelixRoom } from "./rooms/HelixRoom";
 import { HelixV2 } from "./rooms/helix/v2/HelixV2";
 import { ApexRoom } from "./rooms/ApexRoom";
@@ -1009,6 +1010,7 @@ export function JarvisUI() {
       </div> : null}
 
       <WidgetStrip mode="main" showChips={false} />
+      <StageSurface />
       <WidgetLauncher open={launcherOpen} onClose={() => setLauncherOpen(false)} />
 
       <JarvisCommandBar

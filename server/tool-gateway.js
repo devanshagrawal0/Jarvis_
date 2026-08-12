@@ -149,6 +149,10 @@ function createToolGateway({ capabilityEngine, moduleRegistry, codeKnowledge }) 
     if (/\bi (?:had|met|did|finished|wrapped|attended|went to|got|took|spoke|talked|called)\b/i.test(prompt) || /\blog (?:that|it|this)\b/i.test(prompt) || /\bjust (?:had|finished|wrapped|got out of|met)\b/i.test(prompt)) {
       alwaysUseful.push("atlas_log_past", "atlas_add_event");
     }
+    // W0 — the Stage. Any request to open/show a panel/surface/stage and put text on it exposes stage_show.
+    if (/\b(panel|stage|surface|window|card)\b/i.test(prompt) && /\b(open|show|write|put|display|make|bring up|pop up|create|render)\b/i.test(prompt)) {
+      alwaysUseful.push("stage_show");
+    }
     // Undo — reverse the last Today/calendar change. Exposed on undo/revert/nevermind so a bare "undo
     // that" reliably reaches the tool (it carries no other noun).
     if (/\b(undo|revert|nevermind|never mind|take that back|take it back|oops|scratch that|reverse that|undo that)\b/i.test(prompt)) alwaysUseful.push("atlas_undo", "atlas_today");
