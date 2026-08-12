@@ -865,7 +865,7 @@ export function JarvisUI() {
               {streaming && <span className="jr-cursor" />}
             </div>
           )}
-          {activityEvents.length > 0 ? (
+          {streaming && activityEvents.length > 0 ? (
             <div className="jr-activity-rail" aria-label="JARVIS activity">
               {activityEvents.slice(-7).map((event) => (
                 <div className="jr-activity-row" data-status={event.status} key={event.id}>
@@ -874,13 +874,8 @@ export function JarvisUI() {
               ))}
             </div>
           ) : null}
-          {!streaming && !hasError && (meta.model || (meta.sources && meta.sources.length > 0) || (meta.artifacts && meta.artifacts.length > 0)) ? (
+          {!streaming && !hasError && ((meta.sources && meta.sources.length > 0) || (meta.artifacts && meta.artifacts.length > 0)) ? (
             <div className="jr-meta" style={{ marginTop: 10, display: "flex", flexWrap: "wrap", gap: 6, alignItems: "center", fontSize: 11 }}>
-              {meta.model ? (
-                <span style={{ padding: "2px 8px", border: "1px solid rgba(120,200,255,0.25)", borderRadius: 10, color: "#7fb8e6", opacity: 0.85 }}>
-                  via {meta.model.replace("gemini-", "")}
-                </span>
-              ) : null}
               {(meta.sources || []).slice(0, 4).map((s, i) => (
                 <a key={i} href={s.url} target="_blank" rel="noreferrer"
                    style={{ padding: "2px 8px", border: "1px solid rgba(120,200,255,0.2)", borderRadius: 10, color: "#8fd0ff", textDecoration: "none", maxWidth: 220, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
@@ -905,12 +900,6 @@ export function JarvisUI() {
               })}
             </div>
           ) : null}
-          {!streaming && (meta.usage || meta.strength || meta.timing) ? <div className="jr-meta" style={{ marginTop: 8, display: "flex", gap: 9, fontSize: 10.5, color: "rgba(180,225,250,.58)" }}>
-            {meta.strength ? <span>{meta.strength}</span> : null}
-            {meta.usage?.totalTokens ? <span>{meta.usage.totalTokens.toLocaleString()} tokens</span> : null}
-            {typeof meta.usage?.costUsd === "number" ? <span>${meta.usage.costUsd.toFixed(4)}</span> : null}
-            {meta.timing?.totalMs ? <span>{(meta.timing.totalMs / 1000).toFixed(1)}s</span> : null}
-          </div> : null}
           {(meta.cards || []).length ? <div className="jr-cards">{meta.cards!.map((card, index) => (
             card.kind === "contact-choice" && card.candidates?.length
               ? <ContactChoiceCard key={`contact-${index}`} card={card} onChoose={chooseContact} />
