@@ -2050,7 +2050,14 @@ export function WidgetStrip({ mode }: { mode: string; showChips?: boolean }) {
       const nextZ = Math.max(300, ...Object.values(current).map((state) => state.z)) + 1;
       const existing = current[id];
       if (existing) {
-        const next = { ...existing, mode: focus ? "expanded" : existing.mode === "minimized" ? "normal" : existing.mode, z: nextZ };
+        // Focus/expand must actually grow the window to full-screen dims — "expanded" mode is only a
+        // border style in CSS, the size lives in state, so re-focusing an open widget must resize it
+        // too (otherwise "expand it" flips a class and nothing visibly changes).
+        if (focus) {
+          const f = defaultSpatialWindow(id, 0, true);
+          return { ...current, [id]: { ...existing, mode: "expanded", x: f.x, y: f.y, w: f.w, h: f.h, z: nextZ } };
+        }
+        const next = { ...existing, mode: existing.mode === "minimized" ? "normal" : existing.mode, z: nextZ };
         return { ...current, [id]: next };
       }
       const base = defaultSpatialWindow(id, Object.keys(current).length, focus);
@@ -2087,24 +2094,29 @@ export function WidgetStrip({ mode }: { mode: string; showChips?: boolean }) {
         openWidget(id, Boolean(detail.focus));
       }
       if (detail.type === "move-widget" && id) {
+        if (!WIDGETS.some((w) => w.id === id)) return; // ignore unknown widget ids
         setWindows((current) => {
-          const cur = current[id];
-          if (!cur) return current;
+          const nextZ = Math.max(300, ...Object.values(current).map((s) => s.z)) + 1;
+          // Open it if it isn't already, so the move is a real, visible effect (never a silent no-op).
+          const cur = current[id] || defaultSpatialWindow(id, Object.keys(current).length, false);
+          // A minimized or expanded (full-screen) widget cannot visibly "move" — normalise its size
+          // first, otherwise a full-screen widget nudged to a corner still fills the screen.
+          let w = cur.w, h = cur.h, mode = cur.mode;
+          if (mode !== "normal") { w = SIZE_PRESETS.medium.w; h = SIZE_PRESETS.medium.h; mode = "normal"; }
           let x = Number.isFinite(detail.x) ? Number(detail.x) : undefined;
           let y = Number.isFinite(detail.y) ? Number(detail.y) : undefined;
           if (x === undefined || y === undefined) {
-            const p = positionToXY(String(detail.position || "center"), cur.w, cur.h);
+            const p = positionToXY(String(detail.position || "center"), w, h);
             x = p.x; y = p.y;
           }
-          const r = clampRect(x, y, cur.w, cur.h);
-          const nextZ = Math.max(300, ...Object.values(current).map((s) => s.z)) + 1;
-          return { ...current, [id]: { ...cur, x: r.x, y: r.y, mode: cur.mode === "minimized" ? "normal" : cur.mode, z: nextZ } };
+          const r = clampRect(x, y, w, h);
+          return { ...current, [id]: { ...cur, mode, x: r.x, y: r.y, w: r.w, h: r.h, z: nextZ } };
         });
       }
       if (detail.type === "resize-widget" && id) {
+        if (!WIDGETS.some((w) => w.id === id)) return;
         setWindows((current) => {
-          const cur = current[id];
-          if (!cur) return current;
+          const cur = current[id] || defaultSpatialWindow(id, Object.keys(current).length, false);
           const size = String(detail.size || "").toLowerCase().trim();
           const nextZ = Math.max(300, ...Object.values(current).map((s) => s.z)) + 1;
           if (size === "minimize" || size === "minimized") return { ...current, [id]: { ...cur, mode: "minimized" } };

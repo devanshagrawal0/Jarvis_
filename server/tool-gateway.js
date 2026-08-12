@@ -191,8 +191,8 @@ function createToolGateway({ capabilityEngine, moduleRegistry, codeKnowledge }) 
       alwaysUseful.push("ui_open_widget", "ui_focus_widget", "ui_close_widget", "ui_populate", "ui_render_card");
     }
     // W1: widget command & control — move / resize / arrange open windows.
-    if (/\b(move|drag|put|place|shift|resize|shrink|grow|enlarge|maximi[sz]e|minimi[sz]e|bigger|smaller)\b.*\b(widgets?|panels?|windows?|cards?|modules?|it|that)\b/i.test(prompt)
-      || /\b(widgets?|panels?|windows?|modules?)\b.*\b(top[- ]?(?:left|right)|bottom[- ]?(?:left|right)|left|right|center|corner|smaller|bigger)\b/i.test(prompt)) {
+    if (/\b(move|drag|put|place|shift|resize|shrink|grow|enlarge|expand|collapse|maximi[sz]e|minimi[sz]e|bigger|smaller|full ?screen|fullscreen|focus)\b.*\b(widgets?|panels?|windows?|cards?|modules?|it|this|that)\b/i.test(prompt)
+      || /\b(widgets?|panels?|windows?|modules?)\b.*\b(top[- ]?(?:left|right)|bottom[- ]?(?:left|right)|left|right|center|corner|smaller|bigger|full ?screen)\b/i.test(prompt)) {
       alwaysUseful.push("ui_move_widget", "ui_resize_widget", "ui_open_widget", "ui_focus_widget");
     }
     if (/\b(arrange|tidy|organi[sz]e|tile|cascade|clean ?up|declutter|lay ?out|line up|stack|neaten)\b.*\b(widgets?|panels?|windows?|screen|workspace|everything|them|all)\b/i.test(prompt)

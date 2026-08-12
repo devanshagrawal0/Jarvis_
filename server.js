@@ -3321,14 +3321,14 @@ const HUD_WIDGETS = [
   { id: "graph", label: "Graph", re: /\b(?:knowledge\s+)?graph\b/i, kind: "widget" },
   { id: "helix", label: "Helix", re: /\bhelix\b/i, kind: "room" },
 ];
-function detectWidgetOpen(text) {
+function detectWidgetOpen(text, focusedWidget = "") {
   const p = String(text || "");
   if (p.length > 90) return null; // HUD commands are short; skip long prose
   // If the prompt names an internal VIEW (a tab / segment / filter), don't just open the
   // widget — let the brain drive the view via ui_set_widget_view (W2).
   if (/\b(positions?|orderbook|order book|fills?|markets?|alerts?|portfolio|missions?|specialists?|connected|disconnected|needs? action|explore|continuity|architecture)\b/i.test(p)) return null;
-  if (!/\b(open|show|pull up|pop up|launch|bring up|display|expand|maximi[sz]e|go to)\b/i.test(p)) return null;
-  const focus = /\b(focus mode|in focus|full ?screen|expand(?:ed)?|maximi[sz]e)\b/i.test(p);
+  if (!/\b(open|show|pull up|pop up|launch|bring up|display|expand|maximi[sz]e|go to|focus)\b/i.test(p)) return null;
+  const focus = /\b(focus mode|in focus|full ?screen|expand(?:ed)?|maximi[sz]e|focus)\b/i.test(p);
   const hasWidgetWord = /\b(widget|panel|tab|card|module)\b/i.test(p);
   for (const w of HUD_WIDGETS) {
     if (!w.re.test(p)) continue;
@@ -3337,6 +3337,14 @@ function detectWidgetOpen(text) {
     // profile ("open my profile") are unambiguous, so they're exempt.
     if (!hasWidgetWord && !focus && w.kind !== "room" && w.id !== "profile") continue;
     return { id: w.id, label: w.label, focus, kind: w.kind };
+  }
+  // No widget named — but if the owner said "it / this / that" and we know which widget is
+  // focused on screen, resolve the pronoun to it. This is why "expand it" / "focus this" now act
+  // on the widget the owner is looking at instead of narrating fake success through the brain.
+  const fw = String(focusedWidget || "").trim();
+  if (fw && /^[a-z]+$/i.test(fw) && /\b(it|this|that|the widget|current one|current)\b/i.test(p)) {
+    const def = HUD_WIDGETS.find((w) => w.id === fw);
+    return { id: fw, label: def ? def.label : fw, focus, kind: def ? def.kind : "widget" };
   }
   return null;
 }
@@ -3454,7 +3462,7 @@ async function fetchWeatherContext(loc) {
   return parts.join(" ");
 }
 
-async function callGemini({ prompt, imageData, attachments = [], mode, sessionId = "", deviceId = "", source = "", history = [], strength, deepResearch, clientContext = null, onTextDelta, onProgress, onEvent, forceModel, forceThinkingLevel }) {
+async function callGemini({ prompt, imageData, attachments = [], mode, sessionId = "", deviceId = "", source = "", history = [], strength, deepResearch, clientContext = null, focusedWidget = "", openWidgets = null, onTextDelta, onProgress, onEvent, forceModel, forceThinkingLevel }) {
   // Feed the browser's real timezone / geolocation for THIS turn so weather, "near me",
   // and local-time answers use where the owner actually is, not the seeded home.
   if (userContext && clientContext) { try { userContext.setClientSignal(clientContext); } catch { /* bad payload — keep seeded location */ } }
@@ -4694,6 +4702,10 @@ async function callGemini({ prompt, imageData, attachments = [], mode, sessionId
               // The owner's raw words this turn — lets time-taking tools (atlas/calendar) re-resolve
               // "tomorrow"/"next monday"/etc deterministically instead of trusting the model's date math.
               userPrompt: rawUserMessage(prompt),
+              // The widget actually focused on screen right now + the full open set — lets UI tools
+              // ground "move it"/"expand this" in what the owner is looking at, not a stale chat mention.
+              focusedWidget: focusedWidget || "",
+              openWidgets: Array.isArray(openWidgets) ? openWidgets : [],
               ...((functionCall.name === "computer_use" || functionCall.name.startsWith("browser_"))
                 ? (prepared.route?.executionLane?.lane && prepared.route.executionLane.lane !== "none"
                     ? {
@@ -11198,7 +11210,7 @@ ${entryText}`;
     // drives the on-screen globe-room widgets directly (never the Kalshi *website*).
     // Emits a uiActions payload the HUD listens for. Deterministic, no model call.
     if (!data.imageData) {
-      const widgetAction = detectWidgetOpen(prompt);
+      const widgetAction = detectWidgetOpen(prompt, typeof data.focusedWidget === "string" ? data.focusedWidget : "");
       if (widgetAction) {
         const focusTxt = widgetAction.focus ? " in focus mode" : "";
         const txt = `Opening the ${widgetAction.label} ${widgetAction.kind}${focusTxt}.`;
@@ -11233,6 +11245,8 @@ ${entryText}`;
       source: "chat",
       history,
       clientContext: data.clientContext, // real browser tz + geolocation → current-location answers
+      focusedWidget: typeof data.focusedWidget === "string" ? data.focusedWidget : "", // which widget is in front on screen
+      openWidgets: Array.isArray(data.openWidgets) ? data.openWidgets : [], // full open set (for UI tools)
       strength: cortexExecution.strength, // Eco / Balanced / Max; legacy Prime migrates to Max
       deepResearch: data.deepResearch, // Cortex v4 P1.4 — Research mode: Fast (grounding) vs Deep (pipeline)
       // One Cortex product, three real effort levels:

@@ -627,16 +627,22 @@ export function JarvisUI() {
       if (preparedFiles.length) setActivity(`Prepared ${preparedFiles.length} attachment${preparedFiles.length === 1 ? "" : "s"}`);
       const primaryInline = preparedFiles.find((file) => file.dataUrl);
       const remainingAttachments = primaryInline ? preparedFiles.filter((file) => file !== primaryInline) : preparedFiles;
-      // W1 awareness: tell the brain which widgets are on screen right now, so it can
-      // answer "what's open?", close/arrange them, and avoid re-opening what's already up.
+      // W1/W2 awareness: tell the brain which widgets are on screen right now (so it can answer
+      // "what's open?", close/arrange them) AND which one is focused/in front — so "move it",
+      // "expand this", "switch to markets" resolve to the widget the owner is actually looking at,
+      // not a stale one mentioned earlier in chat.
       let openWidgets: { id: string; mode: string }[] = [];
+      let focusedWidget = "";
       try {
         const spatial = JSON.parse(localStorage.getItem("jarvis.spatial-widgets.v1") || "{}");
-        openWidgets = Object.values(spatial).map((w: any) => ({ id: String(w.id), mode: String(w.mode || "normal") }));
+        const all = Object.values(spatial) as any[];
+        openWidgets = all.map((w) => ({ id: String(w.id), mode: String(w.mode || "normal") }));
+        const front = all.filter((w) => w.mode !== "minimized").sort((a, b) => (b.z || 0) - (a.z || 0))[0];
+        focusedWidget = front ? String(front.id) : "";
       } catch { /* no workspace yet */ }
       const result = await streamPost<BrainResponse>(
         "/api/chat/stream",
-        { prompt: text, mode: primaryInline ? "vision" : "command", model, strength, deepResearch: research === "deep", imageData: primaryInline?.dataUrl, attachments: remainingAttachments, clientContext: CLIENT_CONTEXT, openWidgets },
+        { prompt: text, mode: primaryInline ? "vision" : "command", model, strength, deepResearch: research === "deep", imageData: primaryInline?.dataUrl, attachments: remainingAttachments, clientContext: CLIENT_CONTEXT, openWidgets, focusedWidget },
         (delta) => { setActivity(""); setResponse((r) => r + delta); },
         (phase, message) => {
           setActivity(message);

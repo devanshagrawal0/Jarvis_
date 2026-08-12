@@ -47,6 +47,35 @@ function cleanString(value, max = 500) {
   return String(value || "").trim().slice(0, max);
 }
 
+// Widget name/alias -> canonical id, for grounding "it/this/that" in what the owner actually named.
+const WIDGET_ALIASES = {
+  kalshi: "kalshi", weather: "weather", vitals: "vitals", system: "vitals", cpu: "vitals",
+  today: "today", calendar: "today", agenda: "today", schedule: "today",
+  memory: "memory", agents: "agents", agent: "agents", connections: "connections", connection: "connections",
+  projects: "projects", project: "projects", modules: "modules", module: "modules",
+  vision: "vision", receipts: "receipts", receipt: "receipts", graph: "graph", contacts: "contacts", contact: "contacts",
+  profile: "profile", trust: "trust", devices: "devices", device: "devices", runtime: "runtime",
+  helix: "helix", synapse: "synapse",
+};
+function widgetNamedInText(text) {
+  const t = String(text || "").toLowerCase();
+  for (const alias of Object.keys(WIDGET_ALIASES)) {
+    if (new RegExp(`\\b${alias}s?\\b`).test(t)) return WIDGET_ALIASES[alias];
+  }
+  return null;
+}
+// Resolve which widget a UI command targets. If the OWNER's own words name a widget, trust that.
+// Otherwise the command used "it/this/that" (or nothing) -> target the widget actually focused on
+// screen. Only fall back to the model's guessed id when neither signal exists. This is why "move it"
+// no longer grabs a stale widget from chat history: coreference is grounded in the live screen.
+function resolveWidgetTarget(argId, context) {
+  const named = widgetNamedInText(context && context.userPrompt);
+  if (named) return named;
+  const focused = cleanString(context && context.focusedWidget, 60);
+  if (focused) return focused;
+  return cleanString(argId, 60);
+}
+
 function parsePowerShellJson(output, label = "PowerShell") {
   const raw = String(output || "").replace(/^\uFEFF/, "").trim();
   if (!raw) throw errorWithStatus(`${label} returned no JSON output.`, 502);
@@ -2730,21 +2759,21 @@ function createCapabilityEngine({
       url: cleanString(args.url, 2000),
       maxChars: asNumber(args.maxChars, 18000, 500, 60000),
     }),
-    ui_open_widget: async (args) => ({ uiAction: { type: "open-widget", id: cleanString(args.id, 60), focus: false } }),
-    ui_focus_widget: async (args) => ({ uiAction: { type: "open-widget", id: cleanString(args.id, 60), focus: true } }),
+    ui_open_widget: async (args, context) => ({ uiAction: { type: "open-widget", id: resolveWidgetTarget(args.id, context), focus: false } }),
+    ui_focus_widget: async (args, context) => ({ uiAction: { type: "open-widget", id: resolveWidgetTarget(args.id, context), focus: true } }),
     ui_close_widget: async (args) => ({ uiAction: { type: "close-widget", id: cleanString(args.id, 60) } }),
     ui_populate: async (args) => ({ uiAction: {
       type: "populate-widget", id: cleanString(args.id, 60), state: cleanString(args.state || "live", 20),
       data: args.data && typeof args.data === "object" ? args.data : {},
     } }),
-    ui_move_widget: async (args) => {
-      const id = cleanString(args.id, 60);
+    ui_move_widget: async (args, context) => {
+      const id = resolveWidgetTarget(args.id, context);
       if (!id) throw errorWithStatus("Which widget should I move, sir?", 400);
       const position = (cleanString(args.position, 24) || "center").toLowerCase();
-      return { ok: true, uiAction: { type: "move-widget", id, position }, message: `Moved the ${id} widget to ${position}, sir.` };
+      return { ok: true, uiAction: { type: "move-widget", id, position }, message: `Moved the ${id} widget to the ${position}, sir.` };
     },
-    ui_resize_widget: async (args) => {
-      const id = cleanString(args.id, 60);
+    ui_resize_widget: async (args, context) => {
+      const id = resolveWidgetTarget(args.id, context);
       if (!id) throw errorWithStatus("Which widget should I resize, sir?", 400);
       const size = (cleanString(args.size, 24) || "medium").toLowerCase();
       return { ok: true, uiAction: { type: "resize-widget", id, size }, message: `Resized the ${id} widget to ${size}, sir.` };
@@ -2753,8 +2782,8 @@ function createCapabilityEngine({
       const layout = (cleanString(args.layout, 24) || "tile").toLowerCase();
       return { ok: true, uiAction: { type: "arrange-widgets", layout }, message: `Tidied your open widgets into a ${layout} layout, sir.` };
     },
-    ui_set_widget_view: async (args) => {
-      const id = cleanString(args.id, 60);
+    ui_set_widget_view: async (args, context) => {
+      const id = resolveWidgetTarget(args.id, context);
       if (!id) throw errorWithStatus("Which widget's view should I change, sir?", 400);
       const view = (cleanString(args.view, 40) || "").toLowerCase();
       const filter = (cleanString(args.filter, 40) || "").toLowerCase();
