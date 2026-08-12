@@ -18,7 +18,7 @@ const { trace } = require("./automation/trace");
 const { createContactStore } = require("./contacts");
 const { enrichCandidates } = require("./automation/identity-enrichment");
 const atlasCapture = require("./atlas/atlas-capture");
-const { resolveWhen } = require("./atlas/when-resolver");
+const { resolveWhen, resolveWindow } = require("./atlas/when-resolver");
 
 const execFileAsync = promisify(execFile);
 const CONFIRMATIONS_FILE = "confirmations.json";
@@ -227,6 +227,16 @@ function createCapabilityEngine({
   // complete -> reopen, move -> move back). Almost no assistant offers a real undo.
   const undoStack = [];
   const pushUndo = (describe, undo) => { undoStack.push({ describe, undo, at: Date.now() }); if (undoStack.length > 25) undoStack.shift(); };
+  // Resolve a window phrase ("this afternoon", "tomorrow morning") to owner-local ISO start/end.
+  const ownerResolveWindow = (phrase) => {
+    try {
+      const w = resolveWindow(String(phrase || ""), ownerNowParts());
+      if (!w || typeof atlasCapture.zonedWallToIso !== "function") return null;
+      const startIso = atlasCapture.zonedWallToIso(w.start.y, w.start.mo, w.start.d, w.start.h, w.start.mi, ownerTz());
+      const endIso = atlasCapture.zonedWallToIso(w.end.y, w.end.mo, w.end.d, w.end.h, w.end.mi, ownerTz());
+      return startIso && endIso ? { startIso, endIso, label: w.label } : null;
+    } catch { return null; }
+  };
   // Smart default duration by event type — a "quick sync" is not an hour, a "lunch" is not 30 min.
   // Used when the owner gives a start but no explicit end. Beats a flat 1-hour block for every event.
   const defaultDurationMs = (title, phrase) => {
@@ -461,6 +471,7 @@ function createCapabilityEngine({
     ["atlas_reschedule_event", "Move or rename one of the owner's LOCAL Today events (not Google Calendar). Pass `title` to identify the event and `newStartAt` (ISO 8601, owner-local) to move it, and/or `newTitle` to rename. Use for 'move lunch to 1pm', 'push the dentist appt to 4', 'rename X to Y'. Finds the best-matching upcoming event and updates it in place (no duplicate). Returns the updated event — never claim it moved unless this returns ok.", "execute", false],
     ["atlas_cancel_item", "Cancel/remove one of the owner's LOCAL Today items — a task, event, or reminder. Pass `title` to identify it and optional `kind` ('task'|'event'|'reminder') to disambiguate. Use for 'cancel lunch', 'delete the plumber task', 'remove that reminder'. This deletes local data, so it is confirmed with the owner first; do NOT say it's removed until the confirmation completes. Returns what was cancelled.", "execute", false],
     ["atlas_undo", "Undo the owner's most recent Today/calendar change — reverse the last add/complete/move (add→delete, complete→reopen, move→move back). Use the moment the owner says 'undo', 'undo that', 'nevermind', 'take that back', 'revert that', 'oops undo'. Runs immediately. Returns what was undone, or says there's nothing to undo.", "execute", false],
+    ["atlas_clear_window", "Bulk-clear the owner's LOCAL events across a whole time window in one shot — 'clear my afternoon', 'cancel everything tomorrow morning', 'wipe my evening', 'clear the rest of today', 'cancel my friday'. Pass `window` = the owner's window phrase exactly as they said it (e.g. 'this afternoon', 'tomorrow morning', 'after 3pm today', 'friday evening'). It finds every local event in that window and cancels them together. This deletes multiple items, so it is confirmed with the owner first (the preview shows how many and which). Undoable afterwards. Returns the count and titles.", "commit", true],
     ["calendar_list_events", "Read the owner's REAL Google Calendar over a time window. Call this whenever the owner asks what's on their (Google) calendar, whether something is on it, their meetings/events, or to confirm an event exists. timeMin/timeMax are ISO 8601 (default: now to +7 days). This is your ONLY way to see the real Google Calendar — never claim you can't check it.", "observe", false],
     ["calendar_create_event", "Create a real event on the owner's Google Calendar (the actual calendar, not the local Today list). Use when the owner says 'add to my calendar', 'put X on my calendar', 'schedule X', or 'add an event'. YOU extract title, and startAt as an ISO 8601 timestamp in the owner's local time WITH offset; optional endAt (default +1h) and location. This is a real external write — it is confirmed with the owner before it goes through, so do NOT say it's done until the confirmation completes.", "commit", true],
     ["calendar_move_event", "Move/reschedule an existing Google Calendar event to a new time. First call calendar_list_events to find the event and its id, then call this with eventId and newStartAt (ISO 8601, owner-local with offset). Confirmed before it goes through.", "commit", true],
@@ -612,6 +623,9 @@ function createCapabilityEngine({
       kind: { type: "STRING", description: "Optional 'task' | 'event' | 'reminder' to disambiguate which kind to cancel." },
     }, required: ["title"] } },
     { name: "atlas_undo", description: description("atlas_undo"), parameters: { type: "OBJECT", properties: {} } },
+    { name: "atlas_clear_window", description: description("atlas_clear_window"), parameters: { type: "OBJECT", properties: {
+      window: { type: "STRING", description: "The owner's time-window phrase, e.g. 'this afternoon', 'tomorrow morning', 'after 3pm today', 'friday evening', 'the rest of today'." },
+    }, required: ["window"] } },
     { name: "calendar_list_events", description: description("calendar_list_events"), parameters: { type: "OBJECT", properties: {
       timeMin: { type: "STRING", description: "Optional ISO 8601 window start; defaults to now." },
       timeMax: { type: "STRING", description: "Optional ISO 8601 window end; defaults to 7 days from now." },
@@ -2356,6 +2370,23 @@ function createCapabilityEngine({
       if (!last) return { ok: false, message: "There's nothing to undo." };
       try { last.undo(); return { ok: true, undone: last.describe, message: `Undone — ${last.describe}.` }; }
       catch { return { ok: false, message: `I couldn't undo ${last.describe}.` }; }
+    },
+    atlas_clear_window: async (args, context) => {
+      const store = atlas();
+      if (!store) throw errorWithStatus("The day-model (ATLAS) is not available in this runtime.", 412);
+      const phrase = cleanString(args.window, 120) || cleanString(context?.userPrompt, 200);
+      const win = ownerResolveWindow(phrase);
+      if (!win) return { ok: false, message: `I couldn't work out which time window "${phrase}" means. Try 'this afternoon' or 'tomorrow morning'.` };
+      const s = new Date(win.startIso).getTime(), e = new Date(win.endIso).getTime();
+      const hits = (store.eventsBetween(win.startIso, win.endIso) || []).filter((ev) => {
+        const es = new Date(ev.startAt).getTime();
+        return es >= s && es <= e; // event STARTS within the window
+      });
+      if (!hits.length) return { ok: true, cleared: 0, message: `Nothing scheduled in your ${win.label === "day" ? "that day" : win.label}. Nothing to clear.` };
+      const snapshot = hits.map((ev) => ({ title: ev.title, startAt: ev.startAt, endAt: ev.endAt, location: ev.location || null }));
+      for (const ev of hits) store.deleteEvent(ev.id);
+      pushUndo(`cleared ${hits.length} event(s) in your ${win.label}`, () => { for (const it of snapshot) store.createEvent({ ...it, tz: ownerTz(), source: { kind: "chat" } }); });
+      return { ok: true, cleared: hits.length, titles: hits.map((h) => h.title), message: `Cleared ${hits.length} event${hits.length === 1 ? "" : "s"} from your ${win.label}: ${hits.map((h) => h.title).join(", ")}.` };
     },
     calendar_list_events: async (args) => {
       if (!providers?.google?.listCalendarEvents) throw errorWithStatus("Google Calendar isn't connected.", 412);

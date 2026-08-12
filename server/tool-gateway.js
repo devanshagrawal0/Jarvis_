@@ -148,6 +148,10 @@ function createToolGateway({ capabilityEngine, moduleRegistry, codeKnowledge }) 
     // Undo — reverse the last Today/calendar change. Exposed on undo/revert/nevermind so a bare "undo
     // that" reliably reaches the tool (it carries no other noun).
     if (/\b(undo|revert|nevermind|never mind|take that back|take it back|oops|scratch that|reverse that|undo that)\b/i.test(prompt)) alwaysUseful.push("atlas_undo", "atlas_today");
+    // Bulk window clear — "clear my afternoon", "cancel everything tomorrow morning", "wipe my evening".
+    if (/\b(clear|wipe|cancel everything|cancel all|clear out|free up|empty)\b/i.test(prompt) && /\b(morning|afternoon|evening|night|today|tomorrow|rest of|monday|tuesday|wednesday|thursday|friday|saturday|sunday|schedule|calendar|day)\b/i.test(prompt)) {
+      alwaysUseful.push("atlas_clear_window", "atlas_today");
+    }
     // The owner's REAL Google Calendar (read + write). Any mention of "calendar" exposes the Google
     // calendar tools so the model can actually check it / write it — never fall back to a web search.
     if (/\bcalendar\b/i.test(prompt)) {

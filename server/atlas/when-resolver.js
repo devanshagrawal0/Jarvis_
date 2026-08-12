@@ -180,4 +180,38 @@ function resolveWhen(phrase, now) {
   return { y, mo, d, h, mi, hadDate, hadTime, confident, dow: dowOf(y, mo, d) };
 }
 
-module.exports = { resolveWhen, WEEKDAYS, MONTHS, daysInMonth };
+// Resolve a TIME-WINDOW phrase ("this afternoon", "tomorrow morning", "after 3pm today", "friday
+// evening", "the rest of today") to owner-local start/end wall-clock parts. Powers bulk ops like
+// "clear my afternoon" / "cancel everything tomorrow morning". Returns { start, end, label } | null.
+function resolveWindow(phrase, now) {
+  const t = String(phrase || "").toLowerCase();
+  if (!t.trim()) return null;
+  // Pick the day.
+  let day;
+  if (/\bday after tomorrow\b/.test(t)) day = addDays(now.y, now.mo, now.d, 2);
+  else if (/\btomorrow\b/.test(t)) day = addDays(now.y, now.mo, now.d, 1);
+  else {
+    const wm = t.match(/\b(sunday|sun|monday|mon|tuesday|tues|tue|wednesday|weds|wed|thursday|thurs|thur|thu|friday|fri|saturday|sat)\b/);
+    if (wm) { let delta = (WEEKDAYS[wm[1]] - now.dow + 7) % 7; if (delta === 0 && /\bnext\b/.test(t)) delta = 7; day = addDays(now.y, now.mo, now.d, delta); }
+    else day = { y: now.y, mo: now.mo, d: now.d };
+  }
+  const isToday = day.y === now.y && day.mo === now.mo && day.d === now.d;
+  let sh = 0, sm = 0, eh = 23, em = 59, label = "day";
+  if (/\bmorning\b/.test(t)) { sh = 5; eh = 12; em = 0; label = "morning"; }
+  else if (/\bafternoon\b/.test(t)) { sh = 12; eh = 17; em = 0; label = "afternoon"; }
+  else if (/\bevening\b/.test(t)) { sh = 17; eh = 21; em = 0; label = "evening"; }
+  else if (/\bnight\b/.test(t)) { sh = 21; eh = 23; em = 59; label = "night"; }
+  else {
+    const after = t.match(/\bafter\s+(\d{1,2})(?::(\d{2}))?\s*(a\.?m\.?|p\.?m\.?)?/);
+    const before = t.match(/\bbefore\s+(\d{1,2})(?::(\d{2}))?\s*(a\.?m\.?|p\.?m\.?)?/);
+    const to24 = (h, ap) => { h = +h; if (ap && ap.replace(/\./g, "") === "pm" && h < 12) h += 12; if (ap && ap.replace(/\./g, "") === "am" && h === 12) h = 0; if (!ap && h <= 7) h += 12; return h; };
+    if (after) { sh = to24(after[1], after[3]); sm = +(after[2] || 0); label = `after ${after[1]}${after[3] || ""}`; }
+    else if (before) { eh = to24(before[1], before[3]); em = +(before[2] || 0); label = `before ${before[1]}${before[3] || ""}`; }
+    else if (/\brest of (?:the )?day\b|\brest of today\b/.test(t)) { if (isToday) { sh = now.h; sm = now.mi; } label = "rest of the day"; }
+  }
+  // "rest of my afternoon/morning" — clip the band to now if it's today.
+  if (isToday && (sh * 60 + sm) < (now.h * 60 + now.mi) && /\brest of\b/.test(t)) { sh = now.h; sm = now.mi; }
+  return { start: { y: day.y, mo: day.mo, d: day.d, h: sh, mi: sm }, end: { y: day.y, mo: day.mo, d: day.d, h: eh, mi: em }, label, isToday };
+}
+
+module.exports = { resolveWhen, resolveWindow, WEEKDAYS, MONTHS, daysInMonth };
