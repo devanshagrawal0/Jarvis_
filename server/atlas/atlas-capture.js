@@ -149,11 +149,23 @@ function detectRecurrence(text) {
   if ((m = t.match(/\bevery\s+afternoon\b/i))) return { freq: "daily", defHour: 14, phrase: m[0] };
   if ((m = t.match(/\b(every\s*day|everyday|daily|each\s+day)\b/i))) return { freq: "daily", phrase: m[0] };
   if ((m = t.match(/\b(every\s+week|weekly)\b/i))) return { freq: "weekly", phrase: m[0] };
+  // Interval recurrence — "every 2 hours", "every 30 minutes", "hourly". Repeats at a fixed gap
+  // (nagging/chained reminders), re-armed by the scheduler.
+  if ((m = t.match(/\bevery\s+(\d+)\s*(hours?|hrs?|minutes?|mins?)\b/i))) {
+    const n = parseInt(m[1], 10); const mins = /hour|hr/i.test(m[2]) ? n * 60 : n;
+    if (mins >= 1) return { freq: "interval", intervalMins: mins, phrase: m[0] };
+  }
+  if ((m = t.match(/\bevery\s+(?:hour|hr)\b/i)) || (m = t.match(/\bhourly\b/i))) return { freq: "interval", intervalMins: 60, phrase: m[0] };
+  if ((m = t.match(/\bevery\s+half\s+hour\b/i))) return { freq: "interval", intervalMins: 30, phrase: m[0] };
   return null;
 }
 
 // The next instant strictly after `afterMs` that matches the recurrence, at hh:mm local (tz).
 function nextOccurrence(rec, afterMs, tz, hh, mm) {
+  // Interval recurrence just adds a fixed gap — no clock-time alignment.
+  if (rec.freq === "interval" && Number.isFinite(rec.intervalMins) && rec.intervalMins >= 1) {
+    return new Date(afterMs + rec.intervalMins * 60_000).toISOString();
+  }
   const H = Number.isFinite(hh) ? hh : (rec.defHour ?? 9);
   const M = Number.isFinite(mm) ? mm : 0;
   const base = tzParts(tz, afterMs);
@@ -275,6 +287,10 @@ function recurrenceLabel(rec) {
   if (rec.freq === "daily") return "daily";
   if (rec.freq === "weekdays") return "every weekday";
   if (rec.freq === "weekly") return `every ${WD_NAMES[rec.weekday] || "week"}`;
+  if (rec.freq === "interval" && Number.isFinite(rec.intervalMins)) {
+    const m = rec.intervalMins;
+    return m % 60 === 0 ? `every ${m / 60} hour${m / 60 === 1 ? "" : "s"}` : `every ${m} minutes`;
+  }
   return "";
 }
 function applyCapture(store, parsed, ctx = {}) {
