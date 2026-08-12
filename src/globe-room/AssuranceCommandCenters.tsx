@@ -1,5 +1,8 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import "./AssuranceCommandCenters.css";
+
+// W2: view command shape shared by widgets the brain can drive.
+type ViewCmd = { view: string; filter: string; select: string; nonce: number };
 
 function when(value?: string) {
   if (!value) return "never";
@@ -30,11 +33,21 @@ function Meter({ label, value, sub, tone = "cyan" }: { label: string; value: str
   return <article className={`as-meter as-${tone}`}><span>{label}</span><strong>{value}</strong><small>{sub}</small></article>;
 }
 
-export function ConnectionsCommandCenter({ data, loading }: { data: any; loading: boolean }) {
+export function ConnectionsCommandCenter({ data, loading, viewCmd }: { data: any; loading: boolean; viewCmd?: ViewCmd }) {
   const providers = Object.entries(data?.providers || {}) as [string, any][];
   const [filter, setFilter] = useState<"all" | "connected" | "action">("all");
   const [query, setQuery] = useState("");
   const [selectedKey, setSelectedKey] = useState("");
+
+  // W2: apply an externally-driven segment ("filter connections to what needs attention").
+  useEffect(() => {
+    if (!viewCmd?.nonce) return;
+    const v = `${viewCmd.view} ${viewCmd.filter}`.toLowerCase();
+    if (/\b(connected|online|live|healthy|working)\b/.test(v)) setFilter("connected");
+    else if (/\b(action|disconnected|offline|broken|needs|attention|missing|down|fix)\b/.test(v)) setFilter("action");
+    else if (/\ball\b/.test(v)) setFilter("all");
+    if (viewCmd.select) setSelectedKey(viewCmd.select.toLowerCase());
+  }, [viewCmd?.nonce]); // eslint-disable-line react-hooks/exhaustive-deps
   const filtered = providers.filter(([key, provider]) => {
     const connected = Boolean(provider?.connected);
     const matches = `${key} ${provider?.label} ${provider?.model} ${provider?.lastError}`.toLowerCase().includes(query.toLowerCase());

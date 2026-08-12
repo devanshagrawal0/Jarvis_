@@ -205,6 +205,11 @@ function createToolGateway({ capabilityEngine, moduleRegistry, codeKnowledge }) 
       || /\b(which|list)\b.*\b(widgets?|panels?|windows?)\b.*\b(open)\b/i.test(prompt)) {
       alwaysUseful.push("ui_close_widget", "ui_arrange_widgets", "ui_focus_widget");
     }
+    // W2: drive widget CONTENT — switch a tab / segment / filter inside a widget.
+    if (/\b(switch|show|go to|jump to|pull up|display|view|filter|change|flip|take me to)\b.*\b(tab|positions?|orderbook|order book|fills?|markets?|alerts?|portfolio|missions?|specialists?|connected|disconnected|needs? action|explore|continuity|architecture)\b/i.test(prompt)
+      || /\b(kalshi|connections?|agents?|memory|widget|panel)\b.*\b(tab|positions?|orderbook|order book|fills?|markets?|alerts?|portfolio|missions?|specialists?|filter|segment|view|explore|continuity|architecture)\b/i.test(prompt)) {
+      alwaysUseful.push("ui_set_widget_view", "ui_open_widget", "ui_focus_widget");
+    }
     if (/\b(make|create|generate|write|build|compose|draft|turn .* into)\b/i.test(prompt)
       && /\b(report|brief|briefing|document|doc|pdf|deck|slides?|presentation|study sheet|one[- ]pager|artifact|write[- ]up|summary sheet|trading brief|research brief)\b/i.test(prompt)) {
       alwaysUseful.push("compose_artifact", "artifact_status", "web_research_deep", "url_read");

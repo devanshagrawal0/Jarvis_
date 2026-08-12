@@ -1,8 +1,10 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { api } from "../api";
 import "./MemoryCommandCenter.css";
 
 type MemoryTab = "explore" | "continuity" | "architecture";
+// W2: view command shape the brain drives widgets with.
+type ViewCmd = { view: string; filter: string; select: string; nonce: number };
 
 function command(text: string) {
   document.dispatchEvent(new CustomEvent("jarvis:command", { detail: { text, files: [] } }));
@@ -22,11 +24,21 @@ function Metric({ label, value, note, tone = "cyan" }: { label: string; value: n
   return <article className={`mc-metric mc-${tone}`}><span>{label}</span><strong>{value}</strong><small>{note}</small></article>;
 }
 
-export function MemoryCommandCenter({ data, loading }: { data: any; loading: boolean }) {
+export function MemoryCommandCenter({ data, loading, viewCmd }: { data: any; loading: boolean; viewCmd?: ViewCmd }) {
   const [tab, setTab] = useState<MemoryTab>("explore");
   const [query, setQuery] = useState("");
   const [type, setType] = useState("all");
   const [selectedUri, setSelectedUri] = useState("");
+
+  // W2: apply an externally-driven tab ("switch memory to continuity / architecture").
+  useEffect(() => {
+    if (!viewCmd?.nonce) return;
+    const v = `${viewCmd.view} ${viewCmd.filter}`.toLowerCase();
+    if (/\b(continuity|timeline|history|sessions?)\b/.test(v)) setTab("continuity");
+    else if (/\b(architecture|structure|graph|schema|system)\b/.test(v)) setTab("architecture");
+    else if (/\b(explore|search|browse|memories|objects?)\b/.test(v)) setTab("explore");
+    if (viewCmd.select) setSelectedUri(viewCmd.select);
+  }, [viewCmd?.nonce]); // eslint-disable-line react-hooks/exhaustive-deps
   const [remoteResults, setRemoteResults] = useState<any[] | null>(null);
   const [searching, setSearching] = useState(false);
   const [trace, setTrace] = useState<any>(null);

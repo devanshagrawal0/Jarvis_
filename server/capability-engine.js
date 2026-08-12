@@ -362,6 +362,7 @@ function createCapabilityEngine({
     ["ui_move_widget", "Move an already-open JARVIS widget to a screen position: top-left, top-right, bottom-left, bottom-right, center, left, right, top, or bottom. Open the widget first if it is not open.", "observe", false],
     ["ui_resize_widget", "Resize an already-open JARVIS widget: size 'small', 'medium', or 'large'; or 'expand'/'maximize' to full focus; or 'minimize'. Open the widget first if it is not open.", "observe", false],
     ["ui_arrange_widgets", "Tidy every open JARVIS widget into a clean non-overlapping layout: 'tile' (an even grid, the default) or 'cascade' (stacked with a diagonal offset). Use for 'arrange / tidy / organize / clean up my widgets'.", "observe", false],
+    ["ui_set_widget_view", "Change WHAT an already-open JARVIS widget is showing (its internal view), without moving the window: switch a tab/segment, apply a filter, or select an item. Kalshi views: portfolio, positions, markets, orderbook, fills, alerts. Connections views: all, connected, action (needs attention). Agents views: missions, specialists. Memory views: explore, continuity, architecture. Opens the widget first if needed.", "observe", false],
     ["ui_render_card", "Render a safe declarative information, warning, metric, or checklist card in the JARVIS response surface.", "observe", false],
     ["compose_artifact", "Create a verified Work Composer artifact as Markdown and HTML with sources, brief metadata, and verification receipts.", "prepare", false],
     ["artifact_status", "List recent Work Composer artifacts or inspect one artifact verification record.", "observe", false],
@@ -589,6 +590,12 @@ function createCapabilityEngine({
     { name: "ui_arrange_widgets", description: description("ui_arrange_widgets"), parameters: { type: "OBJECT", properties: {
       layout: { type: "STRING", description: "tile (grid, default) or cascade." },
     } } },
+    { name: "ui_set_widget_view", description: description("ui_set_widget_view"), parameters: { type: "OBJECT", properties: {
+      id: { type: "STRING" },
+      view: { type: "STRING", description: "The tab/segment to show, e.g. positions, markets, orderbook, portfolio, missions, specialists, explore, connected, action." },
+      filter: { type: "STRING", description: "Optional secondary filter, e.g. a status (running, failed) for agents." },
+      select: { type: "STRING", description: "Optional item to select, e.g. a Kalshi market ticker." },
+    }, required: ["id", "view"] } },
     { name: "ui_render_card", description: description("ui_render_card"), parameters: { type: "OBJECT", properties: {
       kind: { type: "STRING" }, title: { type: "STRING" }, body: { type: "STRING" },
       items: { type: "ARRAY", items: { type: "STRING" } }, value: { type: "STRING" }, status: { type: "STRING" },
@@ -2745,6 +2752,16 @@ function createCapabilityEngine({
     ui_arrange_widgets: async (args) => {
       const layout = (cleanString(args.layout, 24) || "tile").toLowerCase();
       return { ok: true, uiAction: { type: "arrange-widgets", layout }, message: `Tidied your open widgets into a ${layout} layout, sir.` };
+    },
+    ui_set_widget_view: async (args) => {
+      const id = cleanString(args.id, 60);
+      if (!id) throw errorWithStatus("Which widget's view should I change, sir?", 400);
+      const view = (cleanString(args.view, 40) || "").toLowerCase();
+      const filter = (cleanString(args.filter, 40) || "").toLowerCase();
+      const select = cleanString(args.select, 80);
+      if (!view && !filter && !select) throw errorWithStatus("What view should I switch it to, sir?", 400);
+      const label = [view, filter, select].filter(Boolean).join(" · ");
+      return { ok: true, uiAction: { type: "set-view", id, view, filter, select }, message: `Showing ${label} in the ${id} widget, sir.` };
     },
     ui_render_card: async (args) => ({ card: {
       kind: cleanString(args.kind || "info", 30), title: cleanString(args.title, 160),

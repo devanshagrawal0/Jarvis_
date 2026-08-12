@@ -1,6 +1,9 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { api, post } from "../api";
 import "./OperationalCommandCenters.css";
+
+// W2: view command shape the brain drives widgets with.
+type ViewCmd = { view: string; filter: string; select: string; nonce: number };
 
 function ago(value?: string) {
   if (!value) return "never";
@@ -75,7 +78,7 @@ export function ProjectsCommandCenter({ data, loading }: { data: any; loading: b
   </div>;
 }
 
-export function AgentsCommandCenter({ data, loading, onRefresh }: { data: any; loading: boolean; onRefresh: () => void }) {
+export function AgentsCommandCenter({ data, loading, onRefresh, viewCmd }: { data: any; loading: boolean; onRefresh: () => void; viewCmd?: ViewCmd }) {
   const specialists: any[] = Array.isArray(data?.agents) ? data.agents : [];
   const missions: any[] = [...(data?.durableMissions || []), ...(data?.deployableMissions || [])];
   const [view, setView] = useState<"missions" | "specialists">("missions");
@@ -83,6 +86,17 @@ export function AgentsCommandCenter({ data, loading, onRefresh }: { data: any; l
   const [query, setQuery] = useState("");
   const [selectedId, setSelectedId] = useState("");
   const [notice, setNotice] = useState("");
+
+  // W2: apply an externally-driven view ("show specialists", "show failed missions").
+  useEffect(() => {
+    if (!viewCmd?.nonce) return;
+    const v = `${viewCmd.view} ${viewCmd.filter}`.toLowerCase();
+    if (/\b(specialists?|agents?|roster|team)\b/.test(v)) setView("specialists");
+    else if (/\b(missions?|tasks?|runs?|jobs?)\b/.test(v)) setView("missions");
+    const st = ["running", "executing", "queued", "pending", "paused", "failed", "completed", "done"].find((s) => v.includes(s));
+    if (st) setStatus(st === "executing" ? "running" : st === "done" ? "completed" : st);
+    else if (/\ball\b/.test(v)) setStatus("all");
+  }, [viewCmd?.nonce]); // eslint-disable-line react-hooks/exhaustive-deps
   const filtered = missions.filter((mission) => {
     const state = String(mission.status || "unknown").toLowerCase();
     return (status === "all" || state === status) && `${mission.title} ${mission.objective} ${mission.role}`.toLowerCase().includes(query.toLowerCase());

@@ -2618,9 +2618,14 @@ function compactToolValue(value, depth = 0) {
 
 // "observe" tools read the world; they never change it. The registry already tiers every tool, so
 // the honesty rule keys off that rather than a hand-maintained list that would drift.
+// EXCEPTION: the UI-surface tools (ui_* / stage_*) are "observe" risk only in the sense that they
+// need no confirmation — they DO change the on-screen state (open/close/move/arrange a widget, drive
+// its view, write the Stage). Counting them as read-only made a successful widget command get
+// rewritten as "I didn't complete that", so they are excluded here.
 function observeOnlyTools() {
   const definitions = Array.isArray(capabilityEngine?.definitions) ? capabilityEngine.definitions : [];
-  return new Set(definitions.filter((item) => item.risk === "observe").map((item) => item.name));
+  const UI_MUTATING = /^(ui_|stage_)/;
+  return new Set(definitions.filter((item) => item.risk === "observe" && !UI_MUTATING.test(item.name)).map((item) => item.name));
 }
 
 // Every approval the engine has prepared for this turn, in the shape the UI renders.
@@ -3319,6 +3324,9 @@ const HUD_WIDGETS = [
 function detectWidgetOpen(text) {
   const p = String(text || "");
   if (p.length > 90) return null; // HUD commands are short; skip long prose
+  // If the prompt names an internal VIEW (a tab / segment / filter), don't just open the
+  // widget — let the brain drive the view via ui_set_widget_view (W2).
+  if (/\b(positions?|orderbook|order book|fills?|markets?|alerts?|portfolio|missions?|specialists?|connected|disconnected|needs? action|explore|continuity|architecture)\b/i.test(p)) return null;
   if (!/\b(open|show|pull up|pop up|launch|bring up|display|expand|maximi[sz]e|go to)\b/i.test(p)) return null;
   const focus = /\b(focus mode|in focus|full ?screen|expand(?:ed)?|maximi[sz]e)\b/i.test(p);
   const hasWidgetWord = /\b(widget|panel|tab|card|module)\b/i.test(p);
@@ -11153,12 +11161,13 @@ ${entryText}`;
     const openList = Array.isArray(data.openWidgets)
       ? data.openWidgets.filter((w) => w && w.id).map((w) => (w.mode === "minimized" ? `${w.id} (minimized)` : String(w.id))).slice(0, 24)
       : [];
-    // Only frame the turn with widget awareness when it is actually about the widgets —
-    // otherwise the extra text would perturb lane routing on unrelated prompts.
-    const asksWidgets = /\b(widgets?|panels?)\b/i.test(prompt)
-      || /\bwhat(?:'s| is| are)\b[^?]*\b(open|up)\b/i.test(prompt)
+    // Frame the turn with widget awareness ONLY for questions that actually need the
+    // open-list ("what's open?", "close everything", "how many widgets"). Action commands
+    // (open/move/resize/switch a NAMED widget) carry their own id, so adding the list just
+    // inflates the prompt and perturbs tool selection (it was pulling in screen_capture).
+    const asksWidgets = /\bwhat(?:'s| is| are)\b[^?]*\b(open|up)\b/i.test(prompt)
       || /\bclose\b[^?]*\b(everything|all)\b/i.test(prompt)
-      || /\b(tidy|arrange|declutter|cascade|tile)\b/i.test(prompt);
+      || /\b(which|list|how many)\b[^?]*\b(widgets?|panels?|windows?)\b/i.test(prompt);
     const widgetAwareness = asksWidgets
       ? (openList.length
           ? `[Your JARVIS widget workspace currently holds: ${openList.join(", ")}. These are in-app panels, not desktop apps. If asked what's open, answer from this list. Rearrange with ui_arrange_widgets; move/resize a named widget; close them all by calling ui_close_widget with no id.]`

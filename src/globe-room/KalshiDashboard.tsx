@@ -383,11 +383,30 @@ const TABS: { id: Tab; label: string }[] = [
   { id: "ALERTS",         label: "Alerts"          },
 ];
 
-export function KalshiDashboard({ data, loading, onClose, onRefresh, embedded }: {
+// W2: map a spoken/typed view word to a dashboard tab.
+const KALSHI_VIEW_TO_TAB: Record<string, Tab> = {
+  portfolio: "PORTFOLIO", account: "PORTFOLIO", balance: "PORTFOLIO",
+  positions: "LIVE_POSITIONS", position: "LIVE_POSITIONS", "live positions": "LIVE_POSITIONS", live_positions: "LIVE_POSITIONS", holdings: "LIVE_POSITIONS",
+  markets: "MARKETS", market: "MARKETS",
+  orderbook: "ORDERBOOK", "order book": "ORDERBOOK", book: "ORDERBOOK", depth: "ORDERBOOK",
+  fills: "FILLS", fill: "FILLS", trades: "FILLS", history: "FILLS",
+  alerts: "ALERTS", alert: "ALERTS",
+};
+
+export function KalshiDashboard({ data, loading, onClose, onRefresh, embedded, viewCmd }: {
   data: any; loading: boolean; onClose: () => void; onRefresh?: () => void; embedded?: boolean;
+  viewCmd?: { view: string; filter: string; select: string; nonce: number };
 }) {
   const [tab,         setTab]         = useState<Tab>("LIVE_POSITIONS");
   const [selTicker,   setSelTicker]   = useState<string | null>(null);
+
+  // Apply an externally-driven view command ("switch Kalshi to my positions").
+  useEffect(() => {
+    if (!viewCmd?.nonce) return;
+    const t = KALSHI_VIEW_TO_TAB[(viewCmd.view || "").trim()];
+    if (t) setTab(t);
+    if (viewCmd.select) { setSelTicker(viewCmd.select.toUpperCase()); if (!t) setTab("ORDERBOOK"); }
+  }, [viewCmd?.nonce]); // eslint-disable-line react-hooks/exhaustive-deps
   const [orderbook,   setOrderbook]   = useState<any>(null);
   const [obLoading,   setObLoading]   = useState(false);
   const [fills,       setFills]       = useState<any[]>([]);
@@ -538,7 +557,7 @@ export function KalshiDashboard({ data, loading, onClose, onRefresh, embedded }:
         background: "rgba(7,9,15,0.95)",
       }}>
         {TABS.map(t => (
-          <button key={t.id} onClick={() => setTab(t.id)} style={{
+          <button key={t.id} onClick={() => setTab(t.id)} data-tab={t.id} data-active={tab === t.id} aria-selected={tab === t.id} role="tab" style={{
             fontSize: 11, fontWeight: tab === t.id ? 700 : 400, padding: "0 16px", cursor: "pointer",
             background: "none", border: "none", letterSpacing: "0.04em", height: "100%",
             color: tab === t.id ? C.text : C.muted,

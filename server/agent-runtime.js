@@ -324,7 +324,8 @@ function createAgentRuntime({ getSettings, toolGateway, codeKnowledge, memorySto
     // and the owner did NOT name a real site or their screen, a computer_use lane is wrong — suppress
     // it and keep the typed tools selectTools already chose. (The gmail connector lane has no
     // computer_use, so it is never suppressed here.)
-    if (execution.lane !== "none" && Array.isArray(execution.tools) && execution.tools.includes("computer_use")) {
+    const SCREEN_LANE_TOOLS = ["computer_use", "screen_capture", "screen_inspect", "screen_act", "desktop_control"];
+    if (execution.lane !== "none" && Array.isArray(execution.tools) && execution.tools.some((t) => SCREEN_LANE_TOOLS.includes(t))) {
       const raw = String(prompt || "");
       const rawLower = raw.toLowerCase();
       const withoutAddr = raw.replace(/\b[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}\b/ig, " ");

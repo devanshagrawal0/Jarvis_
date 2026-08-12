@@ -1998,6 +1998,9 @@ function findFreeSlot(current: Record<string, SpatialWidgetState>, w: number, h:
 export function WidgetStrip({ mode }: { mode: string; showChips?: boolean }) {
   const [windows, setWindows] = useState<Record<string, SpatialWidgetState>>(loadSpatialWindows);
   const [widgetData, setWidgetData] = useState<Record<string, any>>({});
+  // W2: externally-driven view state per widget (which tab/segment/filter to show).
+  // `nonce` bumps each command so a widget re-applies even if the view value repeats.
+  const [widgetView, setWidgetView] = useState<Record<string, { view: string; filter: string; select: string; nonce: number }>>({});
   const [loadingIds, setLoadingIds] = useState<Set<string>>(new Set());
   const windowsRef = useRef(windows);
   const inFlightRef = useRef<Set<string>>(new Set());
@@ -2132,6 +2135,20 @@ export function WidgetStrip({ mode }: { mode: string; showChips?: boolean }) {
           return next;
         });
       }
+      if (detail.type === "set-view" && id) {
+        // Make sure the widget is on screen. Kalshi's tabbed dashboard only exists in
+        // expanded mode, so a Kalshi view command also expands it.
+        openWidget(id, id === "kalshi");
+        setWidgetView((cur) => ({
+          ...cur,
+          [id]: {
+            view: String(detail.view || "").toLowerCase(),
+            filter: String(detail.filter || "").toLowerCase(),
+            select: String(detail.select || ""),
+            nonce: (cur[id]?.nonce || 0) + 1,
+          },
+        }));
+      }
     }
     document.addEventListener("jarvis:open-widget", handleOpen);
     document.addEventListener("jarvis:ui", handleUi);
@@ -2181,14 +2198,14 @@ export function WidgetStrip({ mode }: { mode: string; showChips?: boolean }) {
       case "vitals":      return <VitalsCommandCenter data={data} loading={loading} />;
       case "modules":     return <ModulesCommandCenter data={data} loading={loading} />;
       case "projects":    return <ProjectsCommandCenter data={data} loading={loading} />;
-      case "agents":      return <AgentsCommandCenter data={data} loading={loading} onRefresh={() => void refresh(id)} />;
-      case "connections": return <ConnectionsCommandCenter data={data} loading={loading} />;
+      case "agents":      return <AgentsCommandCenter data={data} loading={loading} onRefresh={() => void refresh(id)} viewCmd={widgetView[id]} />;
+      case "connections": return <ConnectionsCommandCenter data={data} loading={loading} viewCmd={widgetView[id]} />;
       case "trust":       return <TrustCommandCenter data={data} loading={loading} />;
       case "kalshi":      return state.mode === "expanded"
-                            ? <KalshiExpanded {...props} embedded onRefresh={() => refresh(id)} />   // focused view: full tabbed dashboard
+                            ? <KalshiExpanded {...props} embedded onRefresh={() => refresh(id)} viewCmd={widgetView[id]} />   // focused view: full tabbed dashboard
                             : <KalshiCard {...props} embedded onExpand={() => patchWindow(state.id, { mode: "expanded" })} />; // normal view: compact card
       case "vision":      return <VisionCommandCenter data={data} loading={loading} onRefresh={() => void refresh(id)} />;
-      case "memory":      return <MemoryCommandCenter data={data} loading={loading} />;
+      case "memory":      return <MemoryCommandCenter data={data} loading={loading} viewCmd={widgetView[id]} />;
       case "devices":     return <DeviceMeshCommandCenter />;
       case "receipts":    return <ReceiptsCommandCenter data={data} loading={loading} />;
       case "graph":       return <GraphCommandCenter data={data} loading={loading} />;
