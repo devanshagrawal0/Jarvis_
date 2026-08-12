@@ -152,6 +152,10 @@ function createToolGateway({ capabilityEngine, moduleRegistry, codeKnowledge }) 
     if (/\b(clear|wipe|cancel everything|cancel all|clear out|free up|empty)\b/i.test(prompt) && /\b(morning|afternoon|evening|night|today|tomorrow|rest of|monday|tuesday|wednesday|thursday|friday|saturday|sunday|schedule|calendar|day)\b/i.test(prompt)) {
       alwaysUseful.push("atlas_clear_window", "atlas_today");
     }
+    // Bulk MOVE a window to another day — "push my afternoon to tomorrow", "move everything after 3pm to friday".
+    if (/\b(push|move|shift|bump|reschedule)\b.*\bto\b/i.test(prompt) && /\b(everything|all|my (morning|afternoon|evening|day)|after \d|before \d|rest of)\b/i.test(prompt)) {
+      alwaysUseful.push("atlas_move_window", "atlas_today");
+    }
     // The owner's REAL Google Calendar (read + write). Any mention of "calendar" exposes the Google
     // calendar tools so the model can actually check it / write it — never fall back to a web search.
     if (/\bcalendar\b/i.test(prompt)) {
