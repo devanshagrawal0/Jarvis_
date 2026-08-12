@@ -174,7 +174,7 @@ function createToolGateway({ capabilityEngine, moduleRegistry, codeKnowledge }) 
     if (/\b(e-?mail|gmail)\b/i.test(prompt)
       || /\b(send|write|draft|shoot|compose|reply|forward|fire off|drop)\b[^.?!]{0,30}\b(mail|note|message|line|memo|email)\b/i.test(prompt)
       || /[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/.test(prompt)) {
-      alwaysUseful.push("gmail_prepare_email", "gmail_send_prepared", "email_smart", "draft_email");
+      alwaysUseful.push("gmail_prepare_email", "gmail_send_prepared", "email_smart", "draft_email", "resolve_contact");
     }
     if (/\b(latest|recent|most recent|today|tomorrow|current|right now|live|online|news|score|schedule|price|weather|research|look up|google|web|internet|who is|when is|where is|who won|finals|championship|world cup|fifa|things to do|events?)\b/i.test(prompt)) {
       alwaysUseful.push("research_v2", "web_research");

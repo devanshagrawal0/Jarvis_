@@ -478,6 +478,7 @@ function createCapabilityEngine({
     ["calendar_create_event", "Create a real event on the owner's Google Calendar (the actual calendar, not the local Today list). Use when the owner says 'add to my calendar', 'put X on my calendar', 'schedule X', or 'add an event'. YOU extract title, and startAt as an ISO 8601 timestamp in the owner's local time WITH offset; optional endAt (default +1h) and location. This is a real external write — it is confirmed with the owner before it goes through, so do NOT say it's done until the confirmation completes.", "commit", true],
     ["calendar_move_event", "Move/reschedule an existing Google Calendar event to a new time. First call calendar_list_events to find the event and its id, then call this with eventId and newStartAt (ISO 8601, owner-local with offset). Confirmed before it goes through.", "commit", true],
     ["calendar_cancel_event", "Cancel/delete an event from the owner's Google Calendar. First call calendar_list_events to find the event id, then call this with eventId. Confirmed before it goes through.", "commit", true],
+    ["resolve_contact", "Resolve a person's NAME to their email BEFORE sending, when you're not certain there's exactly one saved contact. Returns status 'resolved' (with the single email), 'ambiguous' (with the list of matching contacts — then ASK the owner which one), or 'unknown' (no email on file — then ASK for the address). Runs instantly, sends nothing. Use this first for 'email <name>' whenever a name could match more than one person, so a message never goes to the wrong person.", "observe", false],
     ["email_smart", "PREFERRED one-step email sender. Send an email to a saved contact BY NAME (or to a raw email address) in a single step — no separate draft, no extra approval prompt. Use for casual requests like 'email AJ that I'm running late' or 'send TG a note saying dinner at 8'. If an email is on file for that name it sends immediately and returns sent:true. If NO email is on file it does NOT send and returns status:recipient_unknown — then ask the owner for the address. If the owner supplies a new address (pass it as `email`), it sends and returns a saveSuggestion so you can offer to remember it. Prefer this over gmail_prepare_email/gmail_send_prepared for everyday sends to people.", "execute", false],
     ["contact_add_email", "Save or update a person's email address so future 'email <name>' sends resolve on their own. Use right after email_smart returns a saveSuggestion and the owner agrees, or when the owner says 'save X's email as …'.", "execute", false],
   ].map(([name, description, risk, confirmationRequired]) => ({
@@ -797,6 +798,9 @@ function createCapabilityEngine({
     { name: "gmail_prepare_email", description: description("gmail_prepare_email"), parameters: { type: "OBJECT", properties: { recipient: { type: "STRING" }, subject: { type: "STRING" }, body: { type: "STRING" } }, required: ["recipient", "subject", "body"] } },
     { name: "gmail_send_prepared", description: description("gmail_send_prepared"), parameters: { type: "OBJECT", properties: { draftId: { type: "STRING" }, expectedRecipient: { type: "STRING" }, expectedSubject: { type: "STRING" }, expectedBodyHash: { type: "STRING" } }, required: ["draftId", "expectedRecipient", "expectedSubject", "expectedBodyHash"] } },
     { name: "send_email", description: description("send_email"), parameters: { type: "OBJECT", properties: { recipient: { type: "STRING" }, subject: { type: "STRING" }, body: { type: "STRING" } }, required: ["recipient", "subject", "body"] } },
+    { name: "resolve_contact", description: description("resolve_contact"), parameters: { type: "OBJECT", properties: {
+      name: { type: "STRING", description: "The person's name to look up, e.g. 'Mike', 'Sarah', 'mom'." },
+    }, required: ["name"] } },
     { name: "email_smart", description: description("email_smart"), parameters: { type: "OBJECT", properties: {
       recipient: { type: "STRING", description: "A saved contact's name (e.g. 'AJ', 'TG') OR a full email address." },
       email: { type: "STRING", description: "Optional explicit email address to use when the owner supplies one for a name that isn't saved yet." },
@@ -2916,6 +2920,18 @@ function createCapabilityEngine({
     send_email: async (args) => providers.google.sendEmail((await draftEmail(args)).draft),
     // Contact-aware one-step send: resolve a name -> saved email and send with no extra approval;
     // if nothing is on file, don't send — say so; if a new address is given, send then offer to save.
+    resolve_contact: async (args) => {
+      const name = cleanString(args.name, 120);
+      if (!name) throw errorWithStatus("Give me a name to resolve.", 400);
+      const matches = (typeof contacts.findAll === "function" ? contacts.findAll(name) : []).filter((c) => c.channels?.email?.address);
+      if (!matches.length) return { ok: true, status: "unknown", name, message: `No email on file for ${name}. Ask the owner for the address.` };
+      if (matches.length === 1) return { ok: true, status: "resolved", name: matches[0].name, email: matches[0].channels.email.address };
+      return {
+        ok: true, status: "ambiguous", name,
+        candidates: matches.map((c) => ({ name: c.name, email: c.channels.email.address })),
+        message: `${matches.length} contacts match "${name}": ${matches.map((c) => `${c.name} <${c.channels.email.address}>`).join(", ")}. Ask which one.`,
+      };
+    },
     email_smart: async (args) => {
       const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
       const rawTo = cleanString(args.recipient || args.to || args.name, 320);
@@ -2929,7 +2945,18 @@ function createCapabilityEngine({
         name = cleanString(args.saveAs || args.contactName || "", 120);
       } else {
         name = rawTo;
-        contact = contacts.find(rawTo, { channel: "email" });
+        // Disambiguation — two contacts sharing a name must NEVER be silently collapsed to one (that
+        // is how a mail goes to the wrong person). If more than one saved contact with an email matches
+        // the name, ask which one instead of guessing.
+        const emailMatches = (typeof contacts.findAll === "function" ? contacts.findAll(rawTo) : []).filter((c) => c.channels?.email?.address);
+        if (emailMatches.length > 1) {
+          return {
+            ok: false, sent: false, status: "recipient_ambiguous", name,
+            candidates: emailMatches.map((c) => ({ name: c.name, email: c.channels.email.address })),
+            message: `You have ${emailMatches.length} contacts matching "${name}": ${emailMatches.map((c) => `${c.name} <${c.channels.email.address}>`).join(", ")}. Which one should it go to?`,
+          };
+        }
+        contact = emailMatches[0] || contacts.find(rawTo, { channel: "email" });
         if (contact) email = contact.channels.email.address;
         else if (args.email && EMAIL_RE.test(cleanString(args.email, 320))) email = cleanString(args.email, 320);
       }
