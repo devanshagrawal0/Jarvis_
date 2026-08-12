@@ -4682,6 +4682,9 @@ async function callGemini({ prompt, imageData, attachments = [], mode, sessionId
               sessionId,
               source: source || mode || "chat",
               indirect: untrustedContentInLoop,
+              // The owner's raw words this turn — lets time-taking tools (atlas/calendar) re-resolve
+              // "tomorrow"/"next monday"/etc deterministically instead of trusting the model's date math.
+              userPrompt: rawUserMessage(prompt),
               ...((functionCall.name === "computer_use" || functionCall.name.startsWith("browser_"))
                 ? (prepared.route?.executionLane?.lane && prepared.route.executionLane.lane !== "none"
                     ? {

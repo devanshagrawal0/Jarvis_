@@ -18,6 +18,7 @@ const { trace } = require("./automation/trace");
 const { createContactStore } = require("./contacts");
 const { enrichCandidates } = require("./automation/identity-enrichment");
 const atlasCapture = require("./atlas/atlas-capture");
+const { resolveWhen } = require("./atlas/when-resolver");
 
 const execFileAsync = promisify(execFile);
 const CONFIRMATIONS_FILE = "confirmations.json";
@@ -195,6 +196,31 @@ function createCapabilityEngine({
       try { return atlasCapture.zonedWallToIso(+m[1], +m[2], +m[3], +m[4], +m[5], ownerTz()); } catch { /* fall through */ }
     }
     const d = new Date(s); return Number.isNaN(d.getTime()) ? null : d.toISOString();
+  };
+  // Owner-local "now" broken into parts (y, mo, d, h, mi, dow) in the owner's real timezone — the seed
+  // the deterministic when-resolver needs so "tomorrow"/"next monday"/"in 2 weeks" never depend on the
+  // model's (often wrong) sense of today.
+  const ownerNowParts = () => {
+    const tz = ownerTz();
+    const now = new Date();
+    const p = new Intl.DateTimeFormat("en-US", { timeZone: tz, year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", weekday: "short", hour12: false }).formatToParts(now)
+      .reduce((a, x) => (a[x.type] = x.value, a), {});
+    const dowMap = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };
+    return { y: +p.year, mo: +p.month, d: +p.day, h: +(p.hour === "24" ? 0 : p.hour), mi: +p.minute, dow: dowMap[p.weekday] ?? 0 };
+  };
+  // Deterministically resolve the owner's own words into an owner-local ISO with offset. Returns
+  // { iso, hadTime } or null when the phrase carries no date/time. Used to OVERRIDE the model's date on
+  // atlas/calendar writes so a scheduled item never lands on the wrong day.
+  const ownerResolveWhen = (phrase) => {
+    try {
+      const r = resolveWhen(String(phrase || ""), ownerNowParts());
+      if (!r) return null;
+      const h = r.hadTime ? r.h : 9;   // date-only phrase → default 9am when a clock time is required
+      const mi = r.hadTime ? r.mi : 0;
+      if (typeof atlasCapture.zonedWallToIso !== "function") return null;
+      const iso = atlasCapture.zonedWallToIso(r.y, r.mo, r.d, h, mi, ownerTz());
+      return iso ? { iso, hadTime: r.hadTime, dateOnly: !r.hadTime } : null;
+    } catch { return null; }
   };
   // Fuzzy-match a local ATLAS item by title for complete/reschedule/cancel. The owner says "mark the
   // plumber task done" / "move lunch", not an id, so score candidates by token overlap with the query
@@ -2179,29 +2205,35 @@ function createCapabilityEngine({
       if (!result.ok) return { ok: false, captured: false, message: "That didn't look like a task, reminder, event, or note — nothing was saved." };
       return { ok: true, captured: true, kind: result.kind, message: result.message, item: result.item };
     },
-    atlas_add_task: async (args) => {
+    atlas_add_task: async (args, context) => {
       const store = atlas();
       if (!store) throw errorWithStatus("The day-model (ATLAS) is not available in this runtime.", 412);
       const title = cleanString(args.title, 300);
       if (!title) throw errorWithStatus("atlas_add_task needs a title.", 400);
-      const item = store.createTask({ title, dueAt: ownerIso(args.dueAt), priority: Number.isFinite(args.priority) ? args.priority : 1, tz: ownerTz(), source: { kind: "chat" } });
+      // Deterministic date beats the model's: if the owner named a due date in words, use the resolved
+      // one so "file taxes by friday" / "renew it next week" never lands on the wrong day.
+      const when = context?.userPrompt ? ownerResolveWhen(context.userPrompt) : null;
+      const dueAt = when?.iso || ownerIso(args.dueAt);
+      const item = store.createTask({ title, dueAt, priority: Number.isFinite(args.priority) ? args.priority : 1, tz: ownerTz(), source: { kind: "chat" } });
       return { ok: true, added: "task", item, message: `Task added — ${item.title}` };
     },
-    atlas_add_event: async (args) => {
+    atlas_add_event: async (args, context) => {
       const store = atlas();
       if (!store) throw errorWithStatus("The day-model (ATLAS) is not available in this runtime.", 412);
       const title = cleanString(args.title, 300);
-      const startAt = ownerIso(args.startAt);
+      const when = context?.userPrompt ? ownerResolveWhen(context.userPrompt) : null;
+      const startAt = when?.iso || ownerIso(args.startAt);
       if (!title || !startAt) throw errorWithStatus("atlas_add_event needs a title and an ISO startAt.", 400);
       const endAt = ownerIso(args.endAt) || new Date(new Date(startAt).getTime() + 3600_000).toISOString();
       const item = store.createEvent({ title, startAt, endAt, location: cleanString(args.location, 200) || null, tz: ownerTz(), source: { kind: "chat" } });
       return { ok: true, added: "event", item, message: `Event added — ${item.title}` };
     },
-    atlas_add_reminder: async (args) => {
+    atlas_add_reminder: async (args, context) => {
       const store = atlas();
       if (!store) throw errorWithStatus("The day-model (ATLAS) is not available in this runtime.", 412);
       const title = cleanString(args.title, 300);
-      const fireAt = ownerIso(args.fireAt);
+      const when = context?.userPrompt ? ownerResolveWhen(context.userPrompt) : null;
+      const fireAt = when?.iso || ownerIso(args.fireAt);
       if (!title || !fireAt) throw errorWithStatus("atlas_add_reminder needs a title and an ISO fireAt.", 400);
       const item = store.createReminder({ title, fireAt, tz: ownerTz(), source: { kind: "chat" } });
       return { ok: true, added: "reminder", item, message: `Reminder set — ${item.title}` };
@@ -2271,10 +2303,11 @@ function createCapabilityEngine({
       if (q) events = events.filter((e) => String(e.title || "").toLowerCase().includes(q));
       return { ok: true, source: "google-calendar", count: events.length, events };
     },
-    calendar_create_event: async (args) => {
+    calendar_create_event: async (args, context) => {
       if (!providers?.google?.createCalendarEvent) throw errorWithStatus("Google Calendar isn't connected.", 412);
       const title = cleanString(args.title, 400);
-      const startAt = ownerIso(args.startAt);
+      const when = context?.userPrompt ? ownerResolveWhen(context.userPrompt) : null;
+      const startAt = when?.iso || ownerIso(args.startAt);
       if (!title || !startAt) throw errorWithStatus("calendar_create_event needs a title and an ISO startAt.", 400);
       const endAt = ownerIso(args.endAt) || new Date(new Date(startAt).getTime() + 3600_000).toISOString();
       const ev = await providers.google.createCalendarEvent({ title, startAt, endAt, location: cleanString(args.location, 300) || null });
