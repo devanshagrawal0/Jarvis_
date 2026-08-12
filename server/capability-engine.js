@@ -456,7 +456,7 @@ function createCapabilityEngine({
     ["atlas_today", "Read the owner's LIVE day from ATLAS/Today: open tasks, pending reminders, today's and upcoming calendar events (their local events AND their real Google Calendar), and who they're waiting on. Call this WHENEVER the owner asks about their day, schedule, agenda, tasks, to-dos, reminders, what they're forgetting, what's next, or 'plan my day'. You DO have access to this — never say you don't; this tool IS your access. Returns structured data for you to summarize.", "observe", false],
     ["atlas_add_task", "Add a to-do/task to the owner's Today list. YOU extract the fields — do not make the owner rephrase. title is the task in a few words; dueAt is an ISO 8601 timestamp if they gave a due time (compute it from the current date/time provided to you, in the owner's timezone), else omit. Use for 'add a task to…', 'I need to…', 'remind me to <do X>' (no fire time). It saves immediately, no confirmation.", "execute", false],
     ["atlas_add_event", "Add a calendar event to the owner's Today (local day-model). YOU extract the fields: title (a few words, e.g. 'Dinner'), startAt as an ISO 8601 timestamp you compute from the current date/time in the owner's timezone (e.g. 'dinner at 9:15pm' today → today's date at 21:15 local), optional endAt (default 1h after start), optional location. Use for 'add <event> at <time>', 'schedule <event>', 'lunch with Sam tomorrow at 1'. Saves immediately, no confirmation. (This is the LOCAL day-model; to put it on the owner's real Google Calendar use the calendar tools instead.)", "execute", false],
-    ["atlas_add_reminder", "Add a durable reminder that fires once at a specific time. YOU extract: title (what to remind about) and fireAt as an ISO 8601 timestamp computed from the current date/time in the owner's timezone. Use for 'remind me to <X> at <time>', 'nudge me at 5'. Saves immediately, no confirmation.", "execute", false],
+    ["atlas_add_reminder", "Add a durable reminder. YOU extract: title (what to remind about) and fireAt as an ISO 8601 timestamp computed from the current date/time in the owner's timezone. Use for 'remind me to <X> at <time>', 'nudge me at 5'. RECURRING reminders are supported and repeat automatically — for 'remind me every weekday at 9', 'every monday', 'daily at 8pm', just pass the title and fireAt; the tool detects the recurrence from the owner's words and re-arms it after each fire. Saves immediately, no confirmation.", "execute", false],
     ["atlas_complete_task", "Mark one of the owner's LOCAL Today tasks as done/completed. Pass `title` = a few words identifying the task ('call the plumber', 'file taxes'); the tool finds the best-matching OPEN task and completes it. Use for 'mark X done', 'I finished X', 'check off X', 'that's done'. Saves immediately. Returns which task it completed (or says none matched) — never claim a task is done unless this returns ok.", "execute", false],
     ["atlas_reschedule_event", "Move or rename one of the owner's LOCAL Today events (not Google Calendar). Pass `title` to identify the event and `newStartAt` (ISO 8601, owner-local) to move it, and/or `newTitle` to rename. Use for 'move lunch to 1pm', 'push the dentist appt to 4', 'rename X to Y'. Finds the best-matching upcoming event and updates it in place (no duplicate). Returns the updated event — never claim it moved unless this returns ok.", "execute", false],
     ["atlas_cancel_item", "Cancel/remove one of the owner's LOCAL Today items — a task, event, or reminder. Pass `title` to identify it and optional `kind` ('task'|'event'|'reminder') to disambiguate. Use for 'cancel lunch', 'delete the plumber task', 'remove that reminder'. This deletes local data, so it is confirmed with the owner first; do NOT say it's removed until the confirmation completes. Returns what was cancelled.", "execute", false],
@@ -2261,18 +2261,29 @@ function createCapabilityEngine({
       if (!store) throw errorWithStatus("The day-model (ATLAS) is not available in this runtime.", 412);
       const title = cleanString(args.title, 300);
       const when = context?.userPrompt ? ownerResolveWhen(context.userPrompt) : null;
+      // Recurrence — "every weekday at 9", "every monday", "daily at 8pm". The recurrence engine +
+      // scheduler re-arm make it actually repeat. Detect it from the owner's words.
+      const rec = context?.userPrompt && typeof atlasCapture.detectRecurrence === "function" ? atlasCapture.detectRecurrence(context.userPrompt) : null;
       // Never fabricate a time. If the owner's words carry NO time or date signal at all (e.g. "remind
       // me about my flight"), the model tends to invent one (9am tomorrow). Detect the absence and ask
-      // instead of silently scheduling a made-up time.
-      const hasTemporal = /\b(\d{1,2}(:\d{2})?\s*(a\.?m\.?|p\.?m\.?)?|noon|midnight|morning|afternoon|evening|tonight|tomorrow|today|tmrw|next|this|monday|tuesday|wednesday|thursday|friday|saturday|sunday|mon|tue|wed|thu|fri|sat|sun|in \d|end of|start of|beginning of|jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\b/i.test(String(context?.userPrompt || args.fireAt || ""));
-      if (context?.userPrompt && !when && !hasTemporal) {
+      // instead of silently scheduling a made-up time. (A recurrence phrase counts as temporal.)
+      const hasTemporal = !!rec || /\b(\d{1,2}(:\d{2})?\s*(a\.?m\.?|p\.?m\.?)?|noon|midnight|morning|afternoon|evening|tonight|tomorrow|today|tmrw|next|this|monday|tuesday|wednesday|thursday|friday|saturday|sunday|mon|tue|wed|thu|fri|sat|sun|in \d|end of|start of|beginning of|jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\b/i.test(String(context?.userPrompt || args.fireAt || ""));
+      if (context?.userPrompt && !when && !rec && !hasTemporal) {
         return { ok: false, status: "needs_time", message: `When should I remind you to ${title.replace(/^remind me to /i, "") || "do that"}?` };
       }
-      const fireAt = when?.iso || ownerIso(args.fireAt);
+      let fireAt = when?.iso || ownerIso(args.fireAt);
+      if (rec) {
+        // First fire = the next matching occurrence at the requested clock time (or the recurrence's
+        // default hour), computed deterministically — so "every weekday at 9" starts on the right day.
+        let hh = rec.defHour ?? 9, mm = 0;
+        if (when?.iso) { const p = new Intl.DateTimeFormat("en-US", { timeZone: ownerTz(), hour: "2-digit", minute: "2-digit", hour12: false }).formatToParts(new Date(when.iso)).reduce((a, x) => (a[x.type] = x.value, a), {}); hh = Number(p.hour === "24" ? 0 : p.hour); mm = Number(p.minute); }
+        try { fireAt = atlasCapture.nextOccurrence(rec, Date.now(), ownerTz(), hh, mm) || fireAt; } catch { /* keep fireAt */ }
+      }
       if (!title || !fireAt) throw errorWithStatus("atlas_add_reminder needs a title and an ISO fireAt.", 400);
-      const item = store.createReminder({ title, fireAt, tz: ownerTz(), source: { kind: "chat" } });
+      const item = store.createReminder({ title, fireAt, tz: ownerTz(), recurrence: rec || undefined, source: { kind: "chat" } });
       pushUndo(`set reminder "${item.title}"`, () => store.cancelReminder(item.id));
-      return { ok: true, added: "reminder", item, message: `Reminder set — ${item.title}` };
+      const recLabel = rec && typeof atlasCapture.recurrenceLabel === "function" ? atlasCapture.recurrenceLabel(rec) : (rec ? "recurring" : "");
+      return { ok: true, added: "reminder", item, recurring: !!rec, message: rec ? `Recurring reminder set — ${item.title} (${recLabel}).` : `Reminder set — ${item.title}` };
     },
     atlas_complete_task: async (args) => {
       const store = atlas();

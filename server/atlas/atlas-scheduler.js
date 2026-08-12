@@ -11,6 +11,8 @@
 // internals and stays unit-testable. Recurrence is intentionally NOT expanded here — that is the
 // Wave-2 temporal engine's job; Wave-1 reminders are one-shot.
 
+const { nextOccurrence, DEFAULT_TZ } = require("./atlas-capture");
+
 function createAtlasScheduler({ store, deliver, intervalMs = 20_000, logger = console } = {}) {
   if (!store) throw new Error("atlas-scheduler needs a store");
   let timer = null;
@@ -26,6 +28,20 @@ function createAtlasScheduler({ store, deliver, intervalMs = 20_000, logger = co
       // notifications, which is the worse failure for a personal assistant. Surface it instead.
       logger?.warn?.(`[atlas] reminder ${reminder.id} claimed but delivery failed: ${e?.message || e}`);
     }
+    // RE-ARM recurring reminders. Recurrence was stored but nothing ever created the NEXT occurrence,
+    // so "remind me every weekday at 9" fired exactly once and then never again. After a recurring
+    // reminder fires, schedule its next instance at the same local clock time.
+    try {
+      const rec = reminder.recurrence;
+      if (rec && store && typeof store.createReminder === "function" && typeof nextOccurrence === "function") {
+        const tz = reminder.tz || DEFAULT_TZ;
+        const p = new Intl.DateTimeFormat("en-US", { timeZone: tz, hour: "2-digit", minute: "2-digit", hour12: false })
+          .formatToParts(new Date(reminder.fireAt)).reduce((a, x) => (a[x.type] = x.value, a), {});
+        const hh = Number(p.hour === "24" ? 0 : p.hour), mm = Number(p.minute);
+        const nextIso = nextOccurrence(rec, Date.now(), tz, hh, mm);
+        if (nextIso) store.createReminder({ title: reminder.title, fireAt: nextIso, tz, recurrence: rec, source: { kind: "recurrence" } });
+      }
+    } catch (e) { logger?.warn?.(`[atlas] recurring re-arm failed for ${reminder.id}: ${e?.message || e}`); }
   }
 
   async function tick(asOfIso) {
