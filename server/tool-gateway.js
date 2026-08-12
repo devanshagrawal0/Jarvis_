@@ -145,6 +145,10 @@ function createToolGateway({ capabilityEngine, moduleRegistry, codeKnowledge }) 
     if (atlasRead) alwaysUseful.push("atlas_today");
     if (atlasWrite) alwaysUseful.push("atlas_add_task", "atlas_add_event", "atlas_add_reminder", "atlas_capture");
     if (atlasMutate) alwaysUseful.push("atlas_today", "atlas_complete_task", "atlas_reschedule_event", "atlas_cancel_item");
+    // Retroactive log — past-tense "I had/met/finished/did X at <time>" records what already happened.
+    if (/\bi (?:had|met|did|finished|wrapped|attended|went to|got|took|spoke|talked|called)\b/i.test(prompt) || /\blog (?:that|it|this)\b/i.test(prompt) || /\bjust (?:had|finished|wrapped|got out of|met)\b/i.test(prompt)) {
+      alwaysUseful.push("atlas_log_past", "atlas_add_event");
+    }
     // Undo — reverse the last Today/calendar change. Exposed on undo/revert/nevermind so a bare "undo
     // that" reliably reaches the tool (it carries no other noun).
     if (/\b(undo|revert|nevermind|never mind|take that back|take it back|oops|scratch that|reverse that|undo that)\b/i.test(prompt)) alwaysUseful.push("atlas_undo", "atlas_today");

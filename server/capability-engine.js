@@ -473,6 +473,7 @@ function createCapabilityEngine({
     ["atlas_undo", "Undo the owner's most recent Today/calendar change — reverse the last add/complete/move (add→delete, complete→reopen, move→move back). Use the moment the owner says 'undo', 'undo that', 'nevermind', 'take that back', 'revert that', 'oops undo'. Runs immediately. Returns what was undone, or says there's nothing to undo.", "execute", false],
     ["atlas_clear_window", "Bulk-clear the owner's LOCAL events across a whole time window in one shot — 'clear my afternoon', 'cancel everything tomorrow morning', 'wipe my evening', 'clear the rest of today', 'cancel my friday'. Pass `window` = the owner's window phrase exactly as they said it (e.g. 'this afternoon', 'tomorrow morning', 'after 3pm today', 'friday evening'). It finds every local event in that window and cancels them together. This deletes multiple items, so it is confirmed with the owner first (the preview shows how many and which). Undoable afterwards. Returns the count and titles.", "commit", true],
     ["atlas_move_window", "Bulk-MOVE every LOCAL event in a time window to another day in one shot — 'push my afternoon to tomorrow', 'move everything after 3pm to friday', 'shift my morning to monday', 'bump today's meetings to next week'. Pass `window` (the source window phrase, e.g. 'this afternoon', 'after 3pm today') and `target` (the destination day phrase, e.g. 'tomorrow', 'friday', 'next monday'). Each event keeps its time-of-day and duration, only the date shifts. Confirmed first with a preview; undoable. Returns count and titles.", "commit", true],
+    ["atlas_log_past", "Retroactively LOG something that already happened, for time-tracking — 'I had lunch with John at 1pm', 'log that I met the client at 11', 'I finished the report at 3pm', 'just wrapped a call with Sam'. Pass `title` (what happened) and the time is taken from the owner's words. It records a past event at that time TODAY (the tool pulls the clock time back so it lands in the past, not the future). Use ONLY for things the owner says already happened (past tense: had/met/finished/did/wrapped). Saves immediately, undoable.", "execute", false],
     ["calendar_list_events", "Read the owner's REAL Google Calendar over a time window. Call this whenever the owner asks what's on their (Google) calendar, whether something is on it, their meetings/events, or to confirm an event exists. timeMin/timeMax are ISO 8601 (default: now to +7 days). This is your ONLY way to see the real Google Calendar — never claim you can't check it.", "observe", false],
     ["calendar_create_event", "Create a real event on the owner's Google Calendar (the actual calendar, not the local Today list). Use when the owner says 'add to my calendar', 'put X on my calendar', 'schedule X', or 'add an event'. YOU extract title, and startAt as an ISO 8601 timestamp in the owner's local time WITH offset; optional endAt (default +1h) and location. This is a real external write — it is confirmed with the owner before it goes through, so do NOT say it's done until the confirmation completes.", "commit", true],
     ["calendar_move_event", "Move/reschedule an existing Google Calendar event to a new time. First call calendar_list_events to find the event and its id, then call this with eventId and newStartAt (ISO 8601, owner-local with offset). Confirmed before it goes through.", "commit", true],
@@ -631,6 +632,10 @@ function createCapabilityEngine({
       window: { type: "STRING", description: "Source window phrase, e.g. 'this afternoon', 'after 3pm today', 'my morning'." },
       target: { type: "STRING", description: "Destination day phrase, e.g. 'tomorrow', 'friday', 'next monday', 'next week'." },
     }, required: ["window", "target"] } },
+    { name: "atlas_log_past", description: description("atlas_log_past"), parameters: { type: "OBJECT", properties: {
+      title: { type: "STRING", description: "What happened, e.g. 'Lunch with John', 'Client call'." },
+      at: { type: "STRING", description: "Optional ISO 8601 time it happened; usually left blank — the time is resolved from the owner's words." },
+    }, required: ["title"] } },
     { name: "calendar_list_events", description: description("calendar_list_events"), parameters: { type: "OBJECT", properties: {
       timeMin: { type: "STRING", description: "Optional ISO 8601 window start; defaults to now." },
       timeMax: { type: "STRING", description: "Optional ISO 8601 window end; defaults to 7 days from now." },
@@ -2416,6 +2421,24 @@ function createCapabilityEngine({
       }
       pushUndo(`moved ${hits.length} event(s) from your ${win.label}`, () => { for (const b of before) store.updateEvent(b.id, { startAt: b.startAt, endAt: b.endAt }); });
       return { ok: true, moved: hits.length, titles: hits.map((h) => h.title), message: `Moved ${hits.length} event${hits.length === 1 ? "" : "s"} to ${args.target}: ${hits.map((h) => h.title).join(", ")}.` };
+    },
+    atlas_log_past: async (args, context) => {
+      const store = atlas();
+      if (!store) throw errorWithStatus("The day-model (ATLAS) is not available in this runtime.", 412);
+      const title = cleanString(args.title, 300);
+      if (!title) throw errorWithStatus("atlas_log_past needs a title.", 400);
+      const when = context?.userPrompt ? ownerResolveWhen(context.userPrompt) : null;
+      let iso = when?.iso || ownerIso(args.at);
+      // Retroactive: the resolver forward-dates times into the FUTURE, but a logged event already
+      // happened — pull it back a day so it lands in the past (today), not tomorrow. If no time was
+      // given, use now.
+      if (iso && new Date(iso).getTime() > Date.now()) iso = new Date(new Date(iso).getTime() - 86400_000).toISOString();
+      if (!iso) iso = new Date().toISOString();
+      const endAt = new Date(new Date(iso).getTime() + 3600_000).toISOString();
+      const item = store.createEvent({ title, startAt: iso, endAt, tz: ownerTz(), kind: "logged", source: { kind: "log-past" } });
+      pushUndo(`logged "${item.title}"`, () => store.deleteEvent(item.id));
+      const at = new Intl.DateTimeFormat("en-US", { timeZone: ownerTz(), hour: "numeric", minute: "2-digit" }).format(new Date(iso));
+      return { ok: true, logged: true, item, message: `Logged — ${item.title} at ${at}.` };
     },
     calendar_list_events: async (args) => {
       if (!providers?.google?.listCalendarEvents) throw errorWithStatus("Google Calendar isn't connected.", 412);

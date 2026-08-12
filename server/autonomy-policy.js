@@ -83,7 +83,7 @@ function evaluateAutonomy({ definition, tool, args, profile, context, recentActi
     // Completing / rescheduling a LOCAL Today item is reversible (re-open, move back) and mirrors the
     // owner clicking on their own board, so it runs without a confirmation click. atlas_cancel_item is
     // deliberately NOT here — it deletes local data, so it keeps the confirmation gate.
-    "atlas_complete_task", "atlas_reschedule_event", "atlas_undo"]);
+    "atlas_complete_task", "atlas_reschedule_event", "atlas_undo", "atlas_log_past"]);
   // Arbitrary code execution is never routine. `run_command` shells out with
   // -ExecutionPolicy Bypass, and its own blocklist is a resource-exhaustion heuristic rather than
   // a security boundary — every entry is trivially expressible another way (ForEach-Object for
