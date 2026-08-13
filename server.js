@@ -4092,7 +4092,10 @@ async function callGemini({ prompt, imageData, attachments = [], mode, sessionId
   // Max effort (Pro, high thinking) is deliberately slow — give it
   // generous headroom so it NEVER aborts with a "restriction"/budget error mid-answer.
   // It streams tokens, so the user sees progress the whole time.
-  const responseBudgetMs = browserWorkflow || screenWorkflow || screenPrompt ? 60_000 : forceModel === GEMINI_MODELS.reasoning ? 120_000 : GEMINI_TOTAL_BUDGET_MS;
+  // A Stage render builds a full block structure (more tokens than a chat reply); the default 22s
+  // budget was clipping content-heavy renders and dropping them to the widget-deflection fallback.
+  const stageRenderTurn = Array.isArray(functionDeclarations) && functionDeclarations.some((t) => t && t.name === "stage_render");
+  const responseBudgetMs = browserWorkflow || screenWorkflow || screenPrompt ? 60_000 : forceModel === GEMINI_MODELS.reasoning ? 120_000 : stageRenderTurn ? 60_000 : GEMINI_TOTAL_BUDGET_MS;
   const modelDeadline = started + responseBudgetMs;
   // Cortex v4 · 2.1 — bounded universal loop. Normal chat now gets up to 6 rounds so
   // the model can call tools AND synthesize a natural answer from their results
@@ -4530,6 +4533,7 @@ async function callGemini({ prompt, imageData, attachments = [], mode, sessionId
     // denied as "indirect" before an approval card can even appear. Only gmail READ tools belong here.
     const UNTRUSTED_CONTENT_TOOL = /^(?:url_read|web_research|web_research_deep|research_v2|browser_|screen_|computer_use|read_clipboard|gmail_(?:read|list|search|thread|message|get)|instagram_|canvas_|news_headlines|device_files|device_latest_image)/i;
     let untrustedContentInLoop = false;
+    let stageRenderRetries = 0; // a forced Stage render can come back empty intermittently — retry before deflecting
     for (let turn = 0; turn < maxToolTurns; turn += 1) {
       let data = {};
       let response;
@@ -4570,7 +4574,11 @@ async function callGemini({ prompt, imageData, attachments = [], mode, sessionId
         // gate uses — so "did retrieval run" and "does the gate require it" can never disagree),
         // but NOT on action/artifact turns, which need their function tools (grounding strips them).
         const wantsFresh = (prepared.route.fresh || needsFreshInfo(rawUserMessage(promptStr))) && !prepared.route.action && !prepared.route.workComposer;
-        const useGrounding = !useCompute && !useMaps && Boolean(wantsFresh && !prepared.route.deepResearch);
+        // A Stage RENDER request must keep its function tools — grounding strips them, which left the
+        // stage tools unavailable for real-world topics (football stats, planet sizes) and the turn
+        // deflected. Rendering from the model's own knowledge beats a grounded search that can't render.
+        const stageWanted = turn === 0 && Array.isArray(functionDeclarations) && functionDeclarations.some((t) => t && t.name === "stage_render");
+        const useGrounding = !useCompute && !useMaps && !stageWanted && Boolean(wantsFresh && !prepared.route.deepResearch);
         const sendFns = !useGrounding && !useCompute && !useMaps && functionDeclarations.length > 0;
         // Set by the execution-lane router when the prompt names a commit verb and a surface. It is
         // a deterministic classification, not the model's opinion, so it is the right thing to make
@@ -4578,6 +4586,10 @@ async function callGemini({ prompt, imageData, attachments = [], mode, sessionId
         // lane — never on model-derived signals like route.action, which the router can source from
         // the LLM. Widening WHICH prompts get an email lane belongs in emailIntent(), not here.)
         const forceToolCall = Boolean(prepared.route?.executionLane) && prepared.route.executionLane.lane !== "none";
+        // W3: when the gateway has exposed stage_render (a deterministic signal that this turn is a
+        // Stage/render request), MAKE the opening turn call a tool — otherwise the model can return
+        // nothing and the turn falls through to the canned "the X widget has the live view" deflection.
+        const forceStageRender = Array.isArray(functionDeclarations) && functionDeclarations.some((t) => t && t.name === "stage_render");
         const tools = [];
         if (useCompute) tools.push({ code_execution: {} });
         else if (useMaps) tools.push({ google_maps: {} });
@@ -4615,7 +4627,11 @@ async function callGemini({ prompt, imageData, attachments = [], mode, sessionId
               // the turn as an action already meant. Strictly first turn only: ANY forces a call on
               // EVERY turn, so leaving it on after the tool result comes back would make the model
               // call another tool instead of answering, forever.
-              ...(sendFns ? { toolConfig: { functionCallingConfig: { mode: forceToolCall && turn === 0 ? "ANY" : "AUTO" } } } : {}),
+              ...(sendFns ? { toolConfig: { functionCallingConfig:
+                (forceStageRender && turn === 0)
+                  ? { mode: "ANY", allowedFunctionNames: ["stage_render", "stage_show"] } // a Stage request MUST render (not pick a noisy tool or return empty)
+                  : { mode: forceToolCall && turn === 0 ? "ANY" : "AUTO" }
+              } } : {}),
               generationConfig: {
                 // Cortex Max (Pro) is a thinking model — reasoning tokens count against
                 // the output budget, so give it far more room or the answer comes back empty.
@@ -4626,11 +4642,15 @@ async function callGemini({ prompt, imageData, attachments = [], mode, sessionId
                 maxOutputTokens: forceModel === GEMINI_MODELS.reasoning ? 8000 : mode === "vision" ? 1600 : prepared.route.complexity === "deep" ? 4500 : prepared.route.bigAsk ? 3500 : 2600,
                 // Effort dial sets Pro's thinking depth (low/medium/high) — a real, visible
                 // reasoning + cost difference. Falls back to the per-route default otherwise.
-                ...((forceThinkingLevel && /^gemini-3/.test(model))
-                  ? { thinkingConfig: { thinkingLevel: forceThinkingLevel } }
-                  : thinkingConfigFor(model, prepared.route)
-                    ? { thinkingConfig: thinkingConfigFor(model, prepared.route) }
-                    : {}),
+                // A Stage render is formatting, not reasoning — force minimal thinking so it never
+                // over-thinks a "3 stats" panel into a 45s timeout. This wins over the route default.
+                ...(stageRenderTurn
+                  ? { thinkingConfig: /^gemini-3/.test(model) ? { thinkingLevel: "low" } : { thinkingBudget: 0 } }
+                  : (forceThinkingLevel && /^gemini-3/.test(model))
+                    ? { thinkingConfig: { thinkingLevel: forceThinkingLevel } }
+                    : thinkingConfigFor(model, prepared.route)
+                      ? { thinkingConfig: thinkingConfigFor(model, prepared.route) }
+                      : {}),
               },
             }),
           });
@@ -4677,7 +4697,19 @@ async function callGemini({ prompt, imageData, attachments = [], mode, sessionId
       const functionCalls = candidateParts.filter((part) => part.functionCall).map((part) => part.functionCall);
       const text = candidateParts.map((part) => part.text).filter(Boolean).join("\n").trim();
       if (text) finalText = text;
-      if (!functionCalls.length) break;
+      if (!functionCalls.length) {
+        // A forced Stage render that returned nothing (intermittent empty from the model) — retry
+        // turn 0 up to twice before giving up, instead of falling through to the widget-deflection.
+        // (Recompute the stage-render check here; forceStageRender is scoped to the model loop above.)
+        const isStageTurn = Array.isArray(functionDeclarations) && functionDeclarations.some((t) => t && t.name === "stage_render");
+        if (isStageTurn && turn === 0 && !text && stageRenderRetries < 2) {
+          stageRenderRetries += 1;
+          contents.pop(); // drop the empty model turn we just recorded
+          turn -= 1;      // redo the opening turn
+          continue;
+        }
+        break;
+      }
       if (turn === maxToolTurns - 1) {
         finalText = "I stopped because the request exceeded the maximum tool-call depth.";
         break;

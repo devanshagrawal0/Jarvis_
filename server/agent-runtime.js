@@ -306,13 +306,19 @@ function createAgentRuntime({ getSettings, toolGateway, codeKnowledge, memorySto
           : continuationAction
             ? `${historyTail}\n${prompt}`
             : prompt;
+    // A request to RENDER a Stage/panel/dashboard is an action (it produces a surface), but the
+    // router often labels it "conversation" so no tools get selected and stage_render never gets a
+    // chance. Treat it as tool-worthy so the gateway can expose the Stage tools. (Exposure only —
+    // the brain still decides what to render.)
+    const stageIntent = /\b(panel|stage|surface|dashboard|breakdown|rundown|scorecard)\b/i.test(prompt)
+      && /\b(open|show|make|build|create|render|give|generate|display|put|write|bring up|pop up)\b/i.test(prompt);
     // T4c: intent-aware tool limit — deep/complex gets 12, browser/screen/mesh gets 10, action 8, else 5
     const toolLimit = route.complexity === "deep" ? 12
       : (browserTask || screenTask || meshTask) ? 10
-        : (route.action || route.agentSwarm || continuationAction) ? 8
+        : (route.action || route.agentSwarm || continuationAction || stageIntent) ? 8
           : 5;
     let selectedTools = forgeGenerative ? []
-      : (route.action || route.code || route.personal || route.fresh || browserTask || meshTask || forgeTask || continuationAction
+      : (route.action || route.code || route.personal || route.fresh || browserTask || meshTask || forgeTask || continuationAction || stageIntent
         ? toolGateway.selectTools(toolPrompt, { limit: toolLimit, intent: route.intent, route })
         : []);
     const execution = forgeGenerative ? { lane: "none", tools: [] } : routeExecutionLane(prompt, settings);
