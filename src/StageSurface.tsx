@@ -11,15 +11,15 @@ type StageState = { title: string; content: string; key: number } | null;
 type Rect = { x: number; y: number; w: number; h: number };
 
 const MIN_W = 380, MIN_H = 240;
-// Fixed, non-content height: header + dividers + meta row + action bar + borders + body padding.
-const CHROME = 140;
+// Fixed, non-content height: header + dividers + action bar + borders + body padding (no meta row).
+const CHROME = 106;
 
 let stageSeq = 0;
 
 function defaultRect(): Rect {
   const vw = window.innerWidth, vh = window.innerHeight;
-  const w = Math.min(460, Math.max(320, Math.round(vw * 0.3)));
-  const h = Math.min(440, Math.max(240, Math.round(vh * 0.42)));
+  const w = Math.min(414, Math.max(300, Math.round(vw * 0.27)));
+  const h = Math.min(400, Math.max(230, Math.round(vh * 0.4)));
   const x = Math.max(20, vw - w - 32);
   const y = Math.max(20, Math.round(vh * 0.11));
   return { x, y, w, h };
@@ -34,17 +34,17 @@ const STYLE = `
   font-family: "Inter", "Segoe UI", system-ui, -apple-system, sans-serif;
   /* layered glass: top sheen -> body -> bottom depth, plus a cool inner glow near the border */
   background:
-    linear-gradient(180deg, rgba(34,60,96,.42), rgba(10,18,32,0) 34%),
-    radial-gradient(140% 90% at 50% -12%, rgba(46,104,170,.24), transparent 56%),
-    linear-gradient(180deg, rgba(11,19,33,.97), rgba(6,11,20,.98));
-  border: 1.5px solid rgba(112,210,255,.62);
+    linear-gradient(180deg, rgba(30,52,84,.28), rgba(10,18,32,0) 34%),
+    radial-gradient(140% 90% at 50% -12%, rgba(40,90,148,.16), transparent 56%),
+    linear-gradient(180deg, rgba(10,17,30,.97), rgba(5,10,18,.98));
+  border: 1.25px solid rgba(104,190,236,.42);
   box-shadow:
-    0 0 0 1px rgba(112,210,255,.10),
-    0 32px 100px rgba(0,0,0,.66),
-    0 0 60px rgba(70,190,255,.30),
-    inset 0 1px 0 rgba(160,220,255,.20),
-    inset 0 -46px 90px rgba(2,8,18,.55),
-    inset 0 0 64px rgba(24,66,118,.14);
+    0 0 0 1px rgba(104,190,236,.07),
+    0 30px 90px rgba(0,0,0,.62),
+    0 0 42px rgba(64,168,228,.18),
+    inset 0 1px 0 rgba(150,205,240,.13),
+    inset 0 -44px 84px rgba(2,8,18,.5),
+    inset 0 0 60px rgba(22,60,108,.10);
   backdrop-filter: blur(24px) saturate(1.2); -webkit-backdrop-filter: blur(24px) saturate(1.2);
   overflow: hidden; will-change: transform, width, height;
 }
@@ -68,24 +68,24 @@ const STYLE = `
 /* header — extra side padding so the dot and buttons clear the corner brackets */
 .jr-stage-bar { display: flex; align-items: center; gap: 10px; flex: none; height: 42px; padding: 0 13px 0 24px;
   cursor: grab; user-select: none;
-  background: linear-gradient(180deg, rgba(38,66,104,.18), rgba(38,66,104,0)); }
+  background: linear-gradient(180deg, rgba(34,58,92,.12), rgba(34,58,92,0)); }
 .jr-stage-bar:active { cursor: grabbing; }
-.jr-stage-dot { width: 7px; height: 7px; border-radius: 50%; flex: none; background: #64d6ff;
-  box-shadow: 0 0 10px #64d6ff; }
-.jr-stage-vsep { width: 1px; height: 16px; background: rgba(120,200,255,.3); flex: none; }
-.jr-stage-title { font-size: 12.5px; font-weight: 600; letter-spacing: .12em; text-transform: uppercase; color: #e8f4ff;
+.jr-stage-dot { width: 7px; height: 7px; border-radius: 50%; flex: none; background: #52b6e0;
+  box-shadow: 0 0 7px rgba(82,182,224,.7); }
+.jr-stage-vsep { width: 1px; height: 15px; background: rgba(110,185,235,.22); flex: none; }
+.jr-stage-title { font-size: 12.5px; font-weight: 600; letter-spacing: .12em; text-transform: uppercase; color: #cadcec;
   flex: 1 1 auto; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.jr-stage-tag { font-size: 9.5px; letter-spacing: .22em; color: rgba(110,205,250,.85); text-transform: uppercase; flex: none; }
-.jr-stage-x { appearance: none; width: 30px; height: 30px; border-radius: 9px; flex: none;
-  border: 1px solid rgba(120,200,255,.26); background: rgba(120,200,255,.06); color: #cdeaff; cursor: pointer;
-  font-size: 13px; line-height: 1; display: grid; place-items: center; transition: background .15s, border-color .15s; }
-.jr-stage-x:hover { background: rgba(255,96,96,.16); border-color: rgba(255,120,120,.5); color: #ffdada; }
+.jr-stage-tag { font-size: 9.5px; letter-spacing: .22em; color: rgba(102,180,220,.7); text-transform: uppercase; flex: none; }
+.jr-stage-x { appearance: none; width: 28px; height: 28px; border-radius: 8px; flex: none;
+  border: 1px solid rgba(110,185,235,.2); background: rgba(110,185,235,.05); color: #a9c8e0; cursor: pointer;
+  font-size: 12px; line-height: 1; display: grid; place-items: center; transition: background .15s, border-color .15s; }
+.jr-stage-x:hover { background: rgba(255,96,96,.14); border-color: rgba(255,120,120,.42); color: #ffcaca; }
 /* dividers */
 .jr-stage-div { height: 1px; margin: 0 20px; flex: none;
-  background: linear-gradient(90deg, transparent, rgba(120,200,255,.28) 8%, rgba(120,200,255,.28) 92%, transparent); }
+  background: linear-gradient(90deg, transparent, rgba(110,185,235,.18) 8%, rgba(110,185,235,.18) 92%, transparent); }
 /* body — a faint recess under the header for depth */
-.jr-stage-body { flex: 1 1 auto; overflow: auto; padding: 13px 22px 14px 22px; color: #dde9f8; font-size: 13.5px; line-height: 1.5;
-  box-shadow: inset 0 10px 18px -18px rgba(0,0,0,.65); }
+.jr-stage-body { flex: 1 1 auto; overflow: auto; padding: 13px 22px 14px 22px; color: #cdd9e8; font-size: 13.5px; line-height: 1.5;
+  box-shadow: inset 0 10px 18px -18px rgba(0,0,0,.6); }
 .jr-stage-body::-webkit-scrollbar { width: 8px; }
 .jr-stage-body::-webkit-scrollbar-thumb { background: rgba(96,204,255,.28); border-radius: 8px; }
 /* footer meta */
@@ -99,17 +99,17 @@ const STYLE = `
   font-size: 8.5px; letter-spacing: .16em; text-transform: uppercase; color: #cdebff; }
 .jr-stage-online i { width: 6px; height: 6px; border-radius: 50%; background: #63d6ff; box-shadow: 0 0 8px #63d6ff; }
 /* action bar — inset content so nothing meets the bottom corner brackets */
-.jr-stage-acts { flex: none; display: flex; align-items: center; height: 38px; padding: 0 14px 2px 24px;
-  background: linear-gradient(0deg, rgba(30,54,88,.12), rgba(30,54,88,0)); }
-.jr-stage-act { display: inline-flex; align-items: center; gap: 6px; padding: 0 11px; height: 24px; border-radius: 7px; background: none; border: 0;
-  color: #d6e7f8; cursor: pointer; font-size: 9.5px; letter-spacing: .12em; text-transform: uppercase; transition: color .15s, background .15s; }
-.jr-stage-act svg { color: #64d6ff; width: 12px; height: 12px; }
-.jr-stage-act:hover { color: #ffffff; background: rgba(120,200,255,.08); }
-.jr-stage-act[data-on="true"] svg, .jr-stage-act[data-on="true"] { color: #74e2ff; }
-.jr-stage-asep { width: 1px; height: 14px; background: rgba(120,200,255,.2); flex: none; }
-.jr-stage-more { margin-left: auto; width: 26px; height: 26px; border-radius: 8px; flex: none;
-  border: 1px solid rgba(120,200,255,.2); background: rgba(120,200,255,.05); color: #bfe6ff; cursor: pointer;
-  font-size: 12px; display: grid; place-items: center; }
+.jr-stage-acts { flex: none; display: flex; align-items: center; height: 33px; padding: 0 12px 2px 22px;
+  background: linear-gradient(0deg, rgba(28,50,82,.1), rgba(28,50,82,0)); }
+.jr-stage-act { display: inline-flex; align-items: center; gap: 5px; padding: 0 9px; height: 21px; border-radius: 6px; background: none; border: 0;
+  color: #b7c8da; cursor: pointer; font-size: 9px; letter-spacing: .1em; text-transform: uppercase; transition: color .15s, background .15s; }
+.jr-stage-act svg { color: #4a9fc4; width: 11px; height: 11px; }
+.jr-stage-act:hover { color: #eef6ff; background: rgba(110,185,235,.07); }
+.jr-stage-act[data-on="true"] svg, .jr-stage-act[data-on="true"] { color: #62c4e6; }
+.jr-stage-asep { width: 1px; height: 12px; background: rgba(110,185,235,.16); flex: none; }
+.jr-stage-more { margin-left: auto; width: 24px; height: 24px; border-radius: 7px; flex: none;
+  border: 1px solid rgba(110,185,235,.16); background: rgba(110,185,235,.04); color: #a7c4dc; cursor: pointer;
+  font-size: 11px; display: grid; place-items: center; }
 .jr-stage-grip { position: absolute; right: 4px; bottom: 4px; width: 14px; height: 14px; cursor: nwse-resize; z-index: 3; opacity: .8;
   background: linear-gradient(135deg, transparent 52%, rgba(120,200,255,.5) 52%, rgba(120,200,255,.5) 64%, transparent 64%, transparent 76%, rgba(120,200,255,.5) 76%);
   border-bottom-right-radius: 16px; }
@@ -217,9 +217,6 @@ export function StageSurface() {
   return (
     <div className="jr-stage deploy" key={stage.key} role="dialog" aria-label={stage.title}
       style={{ left: rect.x, top: rect.y, width: rect.w, height: rect.h }}>
-      <span className="jr-stage-cnr tl" /><span className="jr-stage-cnr tr" />
-      <span className="jr-stage-cnr bl" /><span className="jr-stage-cnr br" />
-
       <div className="jr-stage-bar" onPointerDown={startDrag("move")}>
         <span className="jr-stage-dot" />
         <span className="jr-stage-vsep" />
@@ -234,13 +231,6 @@ export function StageSurface() {
         <div ref={contentRef}>
           <JarvisMarkdown text={stage.content} />
         </div>
-      </div>
-
-      <div className="jr-stage-foot">
-        <span className="jr-stage-meta">
-          ID: <b>{meta.id}</b><span className="sp">·</span>CREATED: <b>{meta.date}</b><span className="sp">·</span><b>{meta.time}</b>
-        </span>
-        <span className="jr-stage-online"><i />Online</span>
       </div>
 
       <div className="jr-stage-div" />
