@@ -126,4 +126,58 @@ function detectWidgetView(text, ctx = {}) {
   return { id: owner.id, view, label, say: `Showing ${view} in the ${label} widget, sir.`, uiAction: { type: "set-view", id: owner.id, view } };
 }
 
-module.exports = { detectWidgetControl, detectWidgetView };
+// ── Move + arrange ────────────────────────────────────────────────────────────────────────────
+// Direct spatial commands the brain used to handle slowly/unreliably. Emit move-widget /
+// arrange-widgets uiActions with the exact position/layout vocab the frontend understands.
+
+const MOVE_VERB = /\b(move|drag|put|place|shift|snap|send|slide|reposition|stick|dock|nudge|cent(?:er|re))\b/i;
+const ARRANGE_VERB = /\b(arrange|tidy|tile|cascade|stack|organi[sz]e|line\s*up|lay\s*out|clean\s*up)\b/i;
+const WIDGET_SURFACE = /\b(widgets?|panels?|windows?|screen|workspace|desktop|everything|the hud|my hud)\b/i;
+
+// Map free text to one of the frontend's position keys, or null.
+function parsePosition(s) {
+  const t = s.toLowerCase();
+  const vert = /\b(top|upper)\b/.test(t) ? "top" : /\b(bottom|lower)\b/.test(t) ? "bottom" : "";
+  const horiz = /\bleft\b/.test(t) ? "left" : /\bright\b/.test(t) ? "right" : "";
+  if (vert && horiz) return `${vert}-${horiz}`;
+  if (/\b(cent(?:er|re)|middle)\b/.test(t)) return "center";
+  return vert || horiz || null;
+}
+
+function detectWidgetMove(text, ctx = {}) {
+  const p = String(text || "").trim();
+  if (!p || p.length > 90 || !MOVE_VERB.test(p)) return null;
+  const position = parsePosition(p);
+  if (!position) return null; // "move on", "send the email" — no spatial target
+
+  const widgets = Array.isArray(ctx.widgets) ? ctx.widgets : [];
+  const focused = String(ctx.focusedWidget || "").trim().toLowerCase();
+  const open = Array.isArray(ctx.openWidgets) ? ctx.openWidgets.filter((w) => w && w.id) : [];
+  const named = widgets.find((w) => w.re && w.re.test(p)) || null;
+  const hasNoun = /\b(widgets?|panels?|windows?|cards?)\b/i.test(p);
+  const hasCoref = /\b(it|this|that|the (?:one|widget|panel|window|card))\b/i.test(p);
+  const isCornerOrCenter = position.includes("-") || position === "center";
+
+  let targetId = null;
+  if (named) targetId = named.id;
+  else if (hasNoun && focused) targetId = focused;
+  // Bare coreference ("move it top-right") is allowed ONLY for a corner/center — a single edge like
+  // "right" collides with normal speech ("send it to the right person").
+  else if (hasCoref && focused && isCornerOrCenter) targetId = focused;
+  if (!targetId) return null;
+  if (open.length && !open.some((w) => w.id === targetId) && !named) return null;
+
+  const label = (widgets.find((w) => w.id === targetId) || {}).label || targetId;
+  return { id: targetId, position, label, say: `Moved the ${label} widget to the ${position.replace("-", " ")}, sir.`, uiAction: { type: "move-widget", id: targetId, position } };
+}
+
+function detectWidgetArrange(text, ctx = {}) {
+  const p = String(text || "").trim();
+  if (!p || p.length > 90 || !ARRANGE_VERB.test(p)) return null;
+  // Must be about the widget surface, or "stack the boxes" / "arrange a meeting" would fire.
+  if (!WIDGET_SURFACE.test(p)) return null;
+  const layout = /\b(cascade|stack)\b/i.test(p) ? "cascade" : "tile";
+  return { layout, say: `Tidied your widgets into a ${layout} layout, sir.`, uiAction: { type: "arrange-widgets", layout } };
+}
+
+module.exports = { detectWidgetControl, detectWidgetView, detectWidgetMove, detectWidgetArrange };

@@ -42,7 +42,7 @@ const { clientIp: coopClientIp } = require("./server/coop-transport");
 const { createMissionEngine } = require("./server/mission-engine");
 const { createCodeKnowledge } = require("./server/code-knowledge");
 const { createToolGateway } = require("./server/tool-gateway");
-const { detectWidgetControl, detectWidgetView } = require("./server/widget-control");
+const { detectWidgetControl, detectWidgetView, detectWidgetMove, detectWidgetArrange } = require("./server/widget-control");
 const { createAgentRuntime } = require("./server/agent-runtime");
 const { createReActExecutor } = require("./server/react-loop");
 const { createActivityGraph } = require("./server/pc-activity-graph");
@@ -11223,6 +11223,24 @@ ${entryText}`;
         sendEvent({ type: "event", event: { kind: "ui", status: "complete", label: "Widget control", detail: `${control.action} · ${control.label}` } });
         sendEvent({ type: "delta", text: control.say });
         sendEvent({ type: "done", result: { response: control.say, model: "hud", sources: [], uiActions: [control.uiAction] } });
+        res.end();
+        return;
+      }
+    }
+    // Deterministic widget MOVE / ARRANGE — "move the kalshi widget to the top right", "tile my
+    // widgets", "cascade the windows". Same fast-path; emits the move/arrange uiAction directly with
+    // the frontend's own position/layout vocab. Guarded so "move on" / "arrange a meeting" fall through.
+    if (!data.imageData) {
+      const move = detectWidgetMove(prompt, {
+        focusedWidget: typeof data.focusedWidget === "string" ? data.focusedWidget : "",
+        openWidgets: Array.isArray(data.openWidgets) ? data.openWidgets : [],
+        widgets: HUD_WIDGETS,
+      }) || detectWidgetArrange(prompt, {});
+      if (move) {
+        const detail = move.position ? `${move.label} · ${move.position}` : `arrange · ${move.layout}`;
+        sendEvent({ type: "event", event: { kind: "ui", status: "complete", label: move.position ? "Widget moved" : "Widgets arranged", detail } });
+        sendEvent({ type: "delta", text: move.say });
+        sendEvent({ type: "done", result: { response: move.say, model: "hud", sources: [], uiActions: [move.uiAction] } });
         res.end();
         return;
       }
