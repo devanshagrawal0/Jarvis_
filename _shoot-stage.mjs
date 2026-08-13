@@ -8,13 +8,14 @@ page.on("pageerror", (e) => console.log("PAGEERR:", e.message));
 await page.goto("http://localhost:8799", { waitUntil: "networkidle", timeout: 60000 }).catch(() => {});
 await page.waitForTimeout(3500);
 
-await page.evaluate(() => {
+const MODE = process.argv[3] || "note";
+const PAYLOAD = MODE === "briefing"
+  ? { title: "Stocks Today", content: "## Market Briefing\n\n**S&P 500** +0.6% — led by tech, breadth improving into the close.\n\n**Nasdaq** +0.9% — semiconductors strong on AI demand chatter.\n\n**Nvidia** +2.1% · **Apple** flat pre-earnings · **Tesla** -1.4% on a delivery miss.\n\n**Oil** +0.8%; energy names firm. **10Y yield** ticked up to 4.28%.\n\n**Takeaway:** risk-on tone, but watch tomorrow's CPI print for the next leg." }
+  : { title: "Note", content: "This is a quick two-line note on your Stage surface.\n\nAll systems are online and ready for your command." };
+await page.evaluate((p) => {
   try { localStorage.setItem("jarvis.spatial-widgets.v1", "{}"); } catch {}
-  document.dispatchEvent(new CustomEvent("jarvis:ui", { detail: { type: "stage-show", data: {
-    title: "Note",
-    content: "This is a quick two-line note on your Stage surface.\n\nAll systems are online and ready for your command.",
-  } } }));
-});
+  document.dispatchEvent(new CustomEvent("jarvis:ui", { detail: { type: "stage-show", data: p } }));
+}, PAYLOAD);
 
 await page.waitForSelector(".jr-stage", { timeout: 8000 }).catch(() => {});
 await page.waitForTimeout(1400);
