@@ -42,6 +42,7 @@ const { clientIp: coopClientIp } = require("./server/coop-transport");
 const { createMissionEngine } = require("./server/mission-engine");
 const { createCodeKnowledge } = require("./server/code-knowledge");
 const { createToolGateway } = require("./server/tool-gateway");
+const { detectWidgetControl } = require("./server/widget-control");
 const { createAgentRuntime } = require("./server/agent-runtime");
 const { createReActExecutor } = require("./server/react-loop");
 const { createActivityGraph } = require("./server/pc-activity-graph");
@@ -11206,6 +11207,26 @@ ${entryText}`;
       if (!res.destroyed) res.write(`${JSON.stringify({ turnId, sequence: ++eventSequence, timestamp: isoNow(), ...event })}\n`);
     };
     sendEvent({ type: "event", event: { kind: "run", status: "running", label: "Request accepted", detail: data.deepResearch ? "Deep research" : "Standard response" } });
+    // Deterministic widget CONTROL — normalize/unfocus, minimize, resize: the commands the brain
+    // used to FAKE ("Switched… sir" while nothing moved) because the tool was never handed to it.
+    // Pure function, same fast-path as detectWidgetOpen. It runs FIRST so a negation like
+    // "un-expand it" is claimed as normalize before the open-matcher below sees the "expand" inside
+    // it. It only fires on an unambiguous command with a real, open target; anything else returns
+    // null and falls straight through, so normal chat is untouched and pays ~0ms. Never fakes success.
+    if (!data.imageData) {
+      const control = detectWidgetControl(prompt, {
+        focusedWidget: typeof data.focusedWidget === "string" ? data.focusedWidget : "",
+        openWidgets: Array.isArray(data.openWidgets) ? data.openWidgets : [],
+        widgets: HUD_WIDGETS,
+      });
+      if (control) {
+        sendEvent({ type: "event", event: { kind: "ui", status: "complete", label: "Widget control", detail: `${control.action} · ${control.label}` } });
+        sendEvent({ type: "delta", text: control.say });
+        sendEvent({ type: "done", result: { response: control.say, model: "hud", sources: [], uiActions: [control.uiAction] } });
+        res.end();
+        return;
+      }
+    }
     // Cortex v4 · P1.3 — HUD control lane. "Open/show the <widget> [in focus mode]"
     // drives the on-screen globe-room widgets directly (never the Kalshi *website*).
     // Emits a uiActions payload the HUD listens for. Deterministic, no model call.
