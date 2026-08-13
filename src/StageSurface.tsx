@@ -12,7 +12,7 @@ type Rect = { x: number; y: number; w: number; h: number };
 
 const MIN_W = 380, MIN_H = 240;
 // Fixed, non-content height: header + dividers + meta row + action bar + borders + body padding.
-const CHROME = 158;
+const CHROME = 140;
 
 let stageSeq = 0;
 
@@ -66,9 +66,9 @@ const STYLE = `
 .jr-stage-rail::after { content: ""; position: absolute; left: 0; top: 98px; width: 3px; height: 110px;
   background-image: radial-gradient(rgba(120,200,255,.4) 42%, transparent 44%); background-size: 3px 8px; opacity: .5; }
 /* header — extra side padding so the dot and buttons clear the corner brackets */
-.jr-stage-bar { display: flex; align-items: center; gap: 11px; flex: none; height: 46px; padding: 0 14px 0 28px;
+.jr-stage-bar { display: flex; align-items: center; gap: 10px; flex: none; height: 42px; padding: 0 13px 0 24px;
   cursor: grab; user-select: none;
-  background: linear-gradient(180deg, rgba(38,66,104,.20), rgba(38,66,104,0)); }
+  background: linear-gradient(180deg, rgba(38,66,104,.18), rgba(38,66,104,0)); }
 .jr-stage-bar:active { cursor: grabbing; }
 .jr-stage-dot { width: 7px; height: 7px; border-radius: 50%; flex: none; background: #64d6ff;
   box-shadow: 0 0 10px #64d6ff; }
@@ -84,32 +84,32 @@ const STYLE = `
 .jr-stage-div { height: 1px; margin: 0 20px; flex: none;
   background: linear-gradient(90deg, transparent, rgba(120,200,255,.28) 8%, rgba(120,200,255,.28) 92%, transparent); }
 /* body — a faint recess under the header for depth */
-.jr-stage-body { flex: 1 1 auto; overflow: auto; padding: 15px 17px 16px 20px; color: #e0ecfa; font-size: 14px; line-height: 1.55;
-  box-shadow: inset 0 12px 20px -18px rgba(0,0,0,.7); }
+.jr-stage-body { flex: 1 1 auto; overflow: auto; padding: 13px 22px 14px 22px; color: #dde9f8; font-size: 13.5px; line-height: 1.5;
+  box-shadow: inset 0 10px 18px -18px rgba(0,0,0,.65); }
 .jr-stage-body::-webkit-scrollbar { width: 8px; }
 .jr-stage-body::-webkit-scrollbar-thumb { background: rgba(96,204,255,.28); border-radius: 8px; }
 /* footer meta */
-.jr-stage-foot { flex: none; display: flex; align-items: center; justify-content: space-between; padding: 6px 22px 9px 20px; gap: 12px; }
-.jr-stage-meta { font-size: 9.5px; letter-spacing: .08em; color: rgba(96,182,218,.85); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+.jr-stage-foot { flex: none; display: flex; align-items: center; justify-content: space-between; padding: 5px 20px 6px 22px; gap: 12px; }
+.jr-stage-meta { font-size: 9px; letter-spacing: .06em; color: rgba(96,182,218,.8); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   font-family: ui-monospace, "SF Mono", "Cascadia Code", Consolas, monospace; }
 .jr-stage-meta b { color: #a6dcf2; font-weight: 600; }
-.jr-stage-meta .sp { opacity: .45; margin: 0 6px; }
-.jr-stage-online { display: inline-flex; align-items: center; gap: 7px; flex: none; padding: 4px 11px; border-radius: 16px;
-  border: 1px solid rgba(120,200,255,.3); background: rgba(120,200,255,.05);
-  font-size: 9px; letter-spacing: .18em; text-transform: uppercase; color: #cdebff; }
+.jr-stage-meta .sp { opacity: .45; margin: 0 5px; }
+.jr-stage-online { display: inline-flex; align-items: center; gap: 6px; flex: none; padding: 3px 10px; border-radius: 14px;
+  border: 1px solid rgba(120,200,255,.28); background: rgba(120,200,255,.05);
+  font-size: 8.5px; letter-spacing: .16em; text-transform: uppercase; color: #cdebff; }
 .jr-stage-online i { width: 6px; height: 6px; border-radius: 50%; background: #63d6ff; box-shadow: 0 0 8px #63d6ff; }
 /* action bar — inset content so nothing meets the bottom corner brackets */
-.jr-stage-acts { flex: none; display: flex; align-items: center; height: 46px; padding: 2px 16px 4px 26px;
-  background: linear-gradient(0deg, rgba(30,54,88,.14), rgba(30,54,88,0)); }
-.jr-stage-act { display: inline-flex; align-items: center; gap: 7px; padding: 0 13px; height: 28px; border-radius: 8px; background: none; border: 0;
-  color: #dcecfb; cursor: pointer; font-size: 10.5px; letter-spacing: .13em; text-transform: uppercase; transition: color .15s, background .15s; }
-.jr-stage-act svg { color: #64d6ff; width: 13px; height: 13px; }
+.jr-stage-acts { flex: none; display: flex; align-items: center; height: 38px; padding: 0 14px 2px 24px;
+  background: linear-gradient(0deg, rgba(30,54,88,.12), rgba(30,54,88,0)); }
+.jr-stage-act { display: inline-flex; align-items: center; gap: 6px; padding: 0 11px; height: 24px; border-radius: 7px; background: none; border: 0;
+  color: #d6e7f8; cursor: pointer; font-size: 9.5px; letter-spacing: .12em; text-transform: uppercase; transition: color .15s, background .15s; }
+.jr-stage-act svg { color: #64d6ff; width: 12px; height: 12px; }
 .jr-stage-act:hover { color: #ffffff; background: rgba(120,200,255,.08); }
 .jr-stage-act[data-on="true"] svg, .jr-stage-act[data-on="true"] { color: #74e2ff; }
-.jr-stage-asep { width: 1px; height: 16px; background: rgba(120,200,255,.22); flex: none; }
-.jr-stage-more { margin-left: auto; width: 30px; height: 30px; border-radius: 9px; flex: none;
-  border: 1px solid rgba(120,200,255,.22); background: rgba(120,200,255,.05); color: #bfe6ff; cursor: pointer;
-  display: grid; place-items: center; }
+.jr-stage-asep { width: 1px; height: 14px; background: rgba(120,200,255,.2); flex: none; }
+.jr-stage-more { margin-left: auto; width: 26px; height: 26px; border-radius: 8px; flex: none;
+  border: 1px solid rgba(120,200,255,.2); background: rgba(120,200,255,.05); color: #bfe6ff; cursor: pointer;
+  font-size: 12px; display: grid; place-items: center; }
 .jr-stage-grip { position: absolute; right: 4px; bottom: 4px; width: 14px; height: 14px; cursor: nwse-resize; z-index: 3; opacity: .8;
   background: linear-gradient(135deg, transparent 52%, rgba(120,200,255,.5) 52%, rgba(120,200,255,.5) 64%, transparent 64%, transparent 76%, rgba(120,200,255,.5) 76%);
   border-bottom-right-radius: 16px; }
@@ -219,7 +219,6 @@ export function StageSurface() {
       style={{ left: rect.x, top: rect.y, width: rect.w, height: rect.h }}>
       <span className="jr-stage-cnr tl" /><span className="jr-stage-cnr tr" />
       <span className="jr-stage-cnr bl" /><span className="jr-stage-cnr br" />
-      <span className="jr-stage-rail" />
 
       <div className="jr-stage-bar" onPointerDown={startDrag("move")}>
         <span className="jr-stage-dot" />
