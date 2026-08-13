@@ -388,8 +388,8 @@ function createCapabilityEngine({
     ["ui_focus_widget", "Open a real current-shell JARVIS widget in expanded focus mode.", "observe", false],
     ["ui_close_widget", "Close the currently shown JARVIS widget or a specified widget.", "observe", false],
     ["ui_populate", "Populate a current-shell widget with explicitly supplied response data and a freshness state.", "observe", false],
-    ["ui_move_widget", "Move an already-open JARVIS widget to a screen position: top-left, top-right, bottom-left, bottom-right, center, left, right, top, or bottom. Open the widget first if it is not open.", "observe", false],
-    ["ui_resize_widget", "Resize an already-open JARVIS widget: size 'small', 'medium', or 'large'; or 'expand'/'maximize' to full focus; or 'minimize'. Open the widget first if it is not open.", "observe", false],
+    ["ui_move_widget", "Move a JARVIS widget to a screen position: top-left, top-right, bottom-left, bottom-right, center, left, right, top, or bottom. If the owner named a widget, pass its id; if they said 'it'/'this'/'that' or named none ('move to the top right'), OMIT id — it targets the widget currently focused on screen. Never ask which widget when one is on screen.", "observe", false],
+    ["ui_resize_widget", "Resize a JARVIS widget: size 'small', 'medium', or 'large'; or 'expand'/'maximize' to full focus; or 'minimize'. If the owner named a widget, pass its id; otherwise OMIT id to target the focused widget. Never ask which widget when one is on screen.", "observe", false],
     ["ui_arrange_widgets", "Tidy every open JARVIS widget into a clean non-overlapping layout: 'tile' (an even grid, the default) or 'cascade' (stacked with a diagonal offset). Use for 'arrange / tidy / organize / clean up my widgets'.", "observe", false],
     ["ui_set_widget_view", "Change WHAT an already-open JARVIS widget is showing (its internal view), without moving the window: switch a tab/segment, apply a filter, or select an item. Kalshi views: portfolio, positions, markets, orderbook, fills, alerts. Connections views: all, connected, action (needs attention). Agents views: missions, specialists. Memory views: explore, continuity, architecture. Opens the widget first if needed.", "observe", false],
     ["ui_render_card", "Render a safe declarative information, warning, metric, or checklist card in the JARVIS response surface.", "observe", false],
@@ -611,20 +611,20 @@ function createCapabilityEngine({
       id: { type: "STRING" }, state: { type: "STRING" }, data: { type: "OBJECT" },
     }, required: ["id", "data"] } },
     { name: "ui_move_widget", description: description("ui_move_widget"), parameters: { type: "OBJECT", properties: {
-      id: { type: "STRING" }, position: { type: "STRING", description: "top-left, top-right, bottom-left, bottom-right, center, left, right, top, or bottom." },
-    }, required: ["id", "position"] } },
+      id: { type: "STRING", description: "Widget id ONLY if the owner named one. Omit for 'it'/'this'/'move to the corner' — the focused widget is used." }, position: { type: "STRING", description: "top-left, top-right, bottom-left, bottom-right, center, left, right, top, or bottom." },
+    }, required: ["position"] } },
     { name: "ui_resize_widget", description: description("ui_resize_widget"), parameters: { type: "OBJECT", properties: {
-      id: { type: "STRING" }, size: { type: "STRING", description: "small, medium, large, expand, maximize, or minimize." },
-    }, required: ["id", "size"] } },
+      id: { type: "STRING", description: "Widget id ONLY if the owner named one. Omit for 'it'/'this' — the focused widget is used." }, size: { type: "STRING", description: "small, medium, large, expand, maximize, or minimize." },
+    }, required: ["size"] } },
     { name: "ui_arrange_widgets", description: description("ui_arrange_widgets"), parameters: { type: "OBJECT", properties: {
       layout: { type: "STRING", description: "tile (grid, default) or cascade." },
     } } },
     { name: "ui_set_widget_view", description: description("ui_set_widget_view"), parameters: { type: "OBJECT", properties: {
-      id: { type: "STRING" },
+      id: { type: "STRING", description: "Widget id ONLY if the owner named one. Omit for 'switch to markets'/'show positions' — the focused widget is used." },
       view: { type: "STRING", description: "The tab/segment to show, e.g. positions, markets, orderbook, portfolio, missions, specialists, explore, connected, action." },
       filter: { type: "STRING", description: "Optional secondary filter, e.g. a status (running, failed) for agents." },
       select: { type: "STRING", description: "Optional item to select, e.g. a Kalshi market ticker." },
-    }, required: ["id", "view"] } },
+    }, required: ["view"] } },
     { name: "ui_render_card", description: description("ui_render_card"), parameters: { type: "OBJECT", properties: {
       kind: { type: "STRING" }, title: { type: "STRING" }, body: { type: "STRING" },
       items: { type: "ARRAY", items: { type: "STRING" } }, value: { type: "STRING" }, status: { type: "STRING" },

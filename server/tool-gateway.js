@@ -192,7 +192,10 @@ function createToolGateway({ capabilityEngine, moduleRegistry, codeKnowledge }) 
     }
     // W1: widget command & control — move / resize / arrange open windows.
     if (/\b(move|drag|put|place|shift|resize|shrink|grow|enlarge|expand|collapse|maximi[sz]e|minimi[sz]e|bigger|smaller|full ?screen|fullscreen|focus)\b.*\b(widgets?|panels?|windows?|cards?|modules?|it|this|that)\b/i.test(prompt)
-      || /\b(widgets?|panels?|windows?|modules?)\b.*\b(top[- ]?(?:left|right)|bottom[- ]?(?:left|right)|left|right|center|corner|smaller|bigger|full ?screen)\b/i.test(prompt)) {
+      || /\b(widgets?|panels?|windows?|modules?)\b.*\b(top[- ]?(?:left|right)|bottom[- ]?(?:left|right)|left|right|center|corner|smaller|bigger|full ?screen)\b/i.test(prompt)
+      // A move/place verb + a screen position implies a widget move even with no noun
+      // ("move to top right", "put it bottom left", "shift to the corner") — resolve to the focused widget.
+      || /\b(move|drag|put|place|shift|send|nudge|snap)\b.{0,20}\b(top[- ]?(?:left|right)|bottom[- ]?(?:left|right)|corner|(?:the )?(?:left|right|centre|center|middle|top|bottom))\b/i.test(prompt)) {
       alwaysUseful.push("ui_move_widget", "ui_resize_widget", "ui_open_widget", "ui_focus_widget");
     }
     if (/\b(arrange|tidy|organi[sz]e|tile|cascade|clean ?up|declutter|lay ?out|line up|stack|neaten)\b.*\b(widgets?|panels?|windows?|screen|workspace|everything|them|all)\b/i.test(prompt)
