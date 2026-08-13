@@ -2124,10 +2124,13 @@ export function WidgetStrip({ mode }: { mode: string; showChips?: boolean }) {
             const f = defaultSpatialWindow(id, 0, true);
             return { ...current, [id]: { ...cur, mode: "expanded", x: f.x, y: f.y, w: f.w, h: f.h, z: nextZ } };
           }
-          const preset = SIZE_PRESETS[size];
-          const w = Number.isFinite(detail.w) ? Number(detail.w) : preset?.w;
-          const h = Number.isFinite(detail.h) ? Number(detail.h) : preset?.h;
-          if (!w || !h) return current;
+          // Any size that isn't minimize/expand restores a NORMAL window. Unknown words like
+          // "normal"/"standard"/"restore"/"unfocus" fall back to medium instead of silently
+          // doing nothing — previously an unrecognized size returned unchanged, so "normal view"
+          // left a focused widget still focused while Jarvis claimed it had switched.
+          const preset = SIZE_PRESETS[size] || SIZE_PRESETS.medium;
+          const w = Number.isFinite(detail.w) ? Number(detail.w) : preset.w;
+          const h = Number.isFinite(detail.h) ? Number(detail.h) : preset.h;
           const r = clampRect(cur.x, cur.y, w, h);
           return { ...current, [id]: { ...cur, mode: "normal", x: r.x, y: r.y, w: r.w, h: r.h, z: nextZ } };
         });
