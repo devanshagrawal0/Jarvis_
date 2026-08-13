@@ -507,6 +507,7 @@ function createCapabilityEngine({
     ["atlas_clear_window", "Bulk-clear the owner's LOCAL events across a whole time window in one shot — 'clear my afternoon', 'cancel everything tomorrow morning', 'wipe my evening', 'clear the rest of today', 'cancel my friday'. Pass `window` = the owner's window phrase exactly as they said it (e.g. 'this afternoon', 'tomorrow morning', 'after 3pm today', 'friday evening'). It finds every local event in that window and cancels them together. This deletes multiple items, so it is confirmed with the owner first (the preview shows how many and which). Undoable afterwards. Returns the count and titles.", "commit", true],
     ["atlas_move_window", "Bulk-MOVE every LOCAL event in a time window to another day in one shot — 'push my afternoon to tomorrow', 'move everything after 3pm to friday', 'shift my morning to monday', 'bump today's meetings to next week'. Pass `window` (the source window phrase, e.g. 'this afternoon', 'after 3pm today') and `target` (the destination day phrase, e.g. 'tomorrow', 'friday', 'next monday'). Each event keeps its time-of-day and duration, only the date shifts. Confirmed first with a preview; undoable. Returns count and titles.", "commit", true],
     ["stage_show", "Open Jarvis's own on-screen STAGE panel and display text/markdown in it. Use whenever the owner asks to open a panel / surface / stage and show, write, or put something on it — e.g. 'open a panel and write hello', 'show me a note that says X', 'put X on the stage', 'open a surface with …'. YOU pass the exact content (markdown allowed). It appears instantly on the owner's screen; nothing is saved. This is Jarvis's own generative surface — the beginning of the Stage.", "observe", false],
+    ["stage_render", "Render a STRUCTURED surface on Jarvis's Stage from typed blocks, instead of plain text. Prefer this over stage_show whenever the answer is better SHOWN than written — key metrics, a ranked/checklist list, a sectioned breakdown, a dashboard-style summary. Pass `blocks`: an ordered array; each block has a `type` of 'heading', 'text', 'stat' (label + value + optional delta like '+2.1%'), 'list' (items[]), or 'divider'. Group related numbers as consecutive 'stat' blocks (they lay out side by side). Blocks render top-to-bottom on the owner's screen; nothing is saved.", "observe", false],
     ["atlas_log_past", "Retroactively LOG something that already happened, for time-tracking — 'I had lunch with John at 1pm', 'log that I met the client at 11', 'I finished the report at 3pm', 'just wrapped a call with Sam'. Pass `title` (what happened) and the time is taken from the owner's words. It records a past event at that time TODAY (the tool pulls the clock time back so it lands in the past, not the future). Use ONLY for things the owner says already happened (past tense: had/met/finished/did/wrapped). Saves immediately, undoable.", "execute", false],
     ["calendar_list_events", "Read the owner's REAL Google Calendar over a time window. Call this whenever the owner asks what's on their (Google) calendar, whether something is on it, their meetings/events, or to confirm an event exists. timeMin/timeMax are ISO 8601 (default: now to +7 days). This is your ONLY way to see the real Google Calendar — never claim you can't check it.", "observe", false],
     ["calendar_create_event", "Create a real event on the owner's Google Calendar (the actual calendar, not the local Today list). Use when the owner says 'add to my calendar', 'put X on my calendar', 'schedule X', or 'add an event'. YOU extract title, and startAt as an ISO 8601 timestamp in the owner's local time WITH offset; optional endAt (default +1h) and location. This is a real external write — it is confirmed with the owner before it goes through, so do NOT say it's done until the confirmation completes.", "commit", true],
@@ -690,6 +691,17 @@ function createCapabilityEngine({
       title: { type: "STRING", description: "Optional short title for the Stage panel; defaults to 'Jarvis'." },
       content: { type: "STRING", description: "The text/markdown to display on the Stage. This is what the owner will see." },
     }, required: ["content"] } },
+    { name: "stage_render", description: description("stage_render"), parameters: { type: "OBJECT", properties: {
+      title: { type: "STRING", description: "Short title for the Stage panel." },
+      blocks: { type: "ARRAY", description: "Ordered blocks to render top-to-bottom.", items: { type: "OBJECT", properties: {
+        type: { type: "STRING", description: "One of: heading, text, stat, list, divider." },
+        text: { type: "STRING", description: "For 'heading' or 'text' blocks." },
+        label: { type: "STRING", description: "For a 'stat' block: the metric name (e.g. 'Open tasks')." },
+        value: { type: "STRING", description: "For a 'stat' block: the value (e.g. '12', '$4,320', '68%')." },
+        delta: { type: "STRING", description: "For a 'stat' block: optional change, e.g. '+2.1%' or '-3'." },
+        items: { type: "ARRAY", items: { type: "STRING" }, description: "For a 'list' block: the line items." },
+      } } },
+    }, required: ["blocks"] } },
     { name: "calendar_list_events", description: description("calendar_list_events"), parameters: { type: "OBJECT", properties: {
       timeMin: { type: "STRING", description: "Optional ISO 8601 window start; defaults to now." },
       timeMax: { type: "STRING", description: "Optional ISO 8601 window end; defaults to 7 days from now." },
@@ -2504,6 +2516,21 @@ function createCapabilityEngine({
       if (!content) throw errorWithStatus("The Stage needs some content to show.", 400);
       const title = cleanString(args.title, 120) || "Jarvis";
       return { ok: true, shown: true, uiAction: { type: "stage-show", data: { title, content } }, message: "On your screen, sir." };
+    },
+    // W3 — the generative Stage. Render typed blocks (heading/text/stat/list/divider) instead of prose.
+    stage_render: async (args) => {
+      const title = cleanString(args.title, 120) || "Jarvis";
+      const raw = Array.isArray(args.blocks) ? args.blocks : [];
+      const blocks = raw.map((b) => {
+        const type = cleanString(b && b.type, 20).toLowerCase();
+        if (type === "stat") return { type: "stat", label: cleanString(b.label, 60), value: cleanString(b.value, 40), delta: cleanString(b.delta, 24) };
+        if (type === "list") return { type: "list", items: Array.isArray(b.items) ? b.items.map((i) => cleanString(i, 400)).filter(Boolean).slice(0, 24) : [] };
+        if (type === "heading") return { type: "heading", text: cleanString(b.text, 160) };
+        if (type === "divider") return { type: "divider" };
+        return { type: "text", text: cleanString(b.text, 4000) };
+      }).filter((b) => b.type === "divider" || b.text || b.value || b.label || (b.items && b.items.length));
+      if (!blocks.length) throw errorWithStatus("The Stage needs some blocks to render, sir.", 400);
+      return { ok: true, shown: true, uiAction: { type: "stage-render", data: { title, blocks } }, message: `Rendered a ${blocks.length}-block surface on your screen, sir.` };
     },
     calendar_list_events: async (args) => {
       if (!providers?.google?.listCalendarEvents) throw errorWithStatus("Google Calendar isn't connected.", 412);

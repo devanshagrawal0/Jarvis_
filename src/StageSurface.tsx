@@ -7,7 +7,14 @@ import { JarvisMarkdown } from "./JarvisMarkdown";
 // row, an ONLINE pill, and an EDIT / EXPAND / PIN action bar. Draggable by its
 // title bar, resizable from the corner, and it sizes its height to its content.
 
-type StageState = { title: string; content: string; key: number } | null;
+// W3: typed blocks the brain can emit for a structured surface (vs plain markdown).
+type Block =
+  | { type: "heading"; text: string }
+  | { type: "text"; text: string }
+  | { type: "stat"; label?: string; value?: string; delta?: string }
+  | { type: "list"; items: string[] }
+  | { type: "divider" };
+type StageState = { title: string; content?: string; blocks?: Block[]; key: number } | null;
 type Rect = { x: number; y: number; w: number; h: number };
 
 const MIN_W = 380, MIN_H = 240;
@@ -113,11 +120,62 @@ const STYLE = `
 .jr-stage-grip { position: absolute; right: 4px; bottom: 4px; width: 14px; height: 14px; cursor: nwse-resize; z-index: 3; opacity: .8;
   background: linear-gradient(135deg, transparent 52%, rgba(120,200,255,.5) 52%, rgba(120,200,255,.5) 64%, transparent 64%, transparent 76%, rgba(120,200,255,.5) 76%);
   border-bottom-right-radius: 16px; }
+/* W3 — generative blocks */
+.jr-blocks { display: flex; flex-direction: column; gap: 12px; }
+.jr-blk-heading { font-size: 14px; font-weight: 600; color: #dbe8f6; margin: 2px 0 -3px; }
+.jr-blk-text { margin: 0; font-size: 13.5px; line-height: 1.5; color: #c2d0e0; }
+.jr-blk-list { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 7px; }
+.jr-blk-list li { position: relative; padding-left: 16px; font-size: 13px; line-height: 1.45; color: #c6d4e4; }
+.jr-blk-list li::before { content: ""; position: absolute; left: 3px; top: 7px; width: 4px; height: 4px; border-radius: 50%;
+  background: #4a9fc4; box-shadow: 0 0 6px rgba(74,159,196,.55); }
+.jr-blk-stats { display: flex; flex-wrap: wrap; gap: 9px; }
+.jr-blk-stat { flex: 1 1 120px; min-width: 108px; display: flex; flex-direction: column; gap: 2px; padding: 10px 12px; border-radius: 10px;
+  border: 1px solid rgba(96,170,214,.16); background: linear-gradient(180deg, rgba(30,54,86,.26), rgba(16,28,46,.16)); }
+.jr-blk-stat-val { font-size: 20px; font-weight: 650; color: #e6f0fb; letter-spacing: .01em; font-variant-numeric: tabular-nums; line-height: 1.1; }
+.jr-blk-stat-lbl { font-size: 9.5px; letter-spacing: .1em; text-transform: uppercase; color: rgba(150,180,205,.7); }
+.jr-blk-stat-delta { font-size: 11px; font-weight: 600; margin-top: 1px; font-variant-numeric: tabular-nums; }
+.jr-blk-stat-delta.up { color: #5fd3a0; }
+.jr-blk-stat-delta.down { color: #e88a8a; }
+.jr-blk-stat-delta.flat { color: #9fb4c8; }
+.jr-blk-div { height: 1px; background: linear-gradient(90deg, transparent, rgba(110,185,235,.16), transparent); margin: 3px 0; }
 `;
 
 const IconEdit = () => (<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 20h9" /><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z" /></svg>);
 const IconExpand = () => (<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M15 3h6v6" /><path d="M9 21H3v-6" /><path d="M21 3l-7 7" /><path d="M3 21l7-7" /></svg>);
 const IconPin = () => (<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 17v5" /><path d="M9 10.8V4h6v6.8l2 3.2H7Z" /></svg>);
+
+// W3 — render typed blocks. Consecutive 'stat' blocks are grouped into one row of cards.
+function StageBlocks({ blocks }: { blocks: Block[] }) {
+  const out: any[] = [];
+  let i = 0;
+  while (i < blocks.length) {
+    const b = blocks[i];
+    if (b.type === "stat") {
+      const group: Extract<Block, { type: "stat" }>[] = [];
+      while (i < blocks.length && blocks[i].type === "stat") { group.push(blocks[i] as Extract<Block, { type: "stat" }>); i++; }
+      out.push(
+        <div className="jr-blk-stats" key={`stat-${i}`}>
+          {group.map((s, k) => {
+            const dir = /^\s*\+/.test(s.delta || "") ? "up" : /^\s*[-−]/.test(s.delta || "") ? "down" : "flat";
+            return (
+              <div className="jr-blk-stat" key={k}>
+                <span className="jr-blk-stat-val">{s.value || "—"}</span>
+                {s.label ? <span className="jr-blk-stat-lbl">{s.label}</span> : null}
+                {s.delta ? <span className={`jr-blk-stat-delta ${dir}`}>{s.delta}</span> : null}
+              </div>
+            );
+          })}
+        </div>,
+      );
+      continue;
+    }
+    if (b.type === "heading") { out.push(<div className="jr-blk-heading" key={i}>{b.text}</div>); i++; continue; }
+    if (b.type === "list") { out.push(<ul className="jr-blk-list" key={i}>{b.items.map((it, k) => <li key={k}>{it}</li>)}</ul>); i++; continue; }
+    if (b.type === "divider") { out.push(<div className="jr-blk-div" key={i} />); i++; continue; }
+    out.push(<p className="jr-blk-text" key={i}>{b.text}</p>); i++;
+  }
+  return <div className="jr-blocks">{out}</div>;
+}
 
 export function StageSurface() {
   const [stage, setStage] = useState<StageState>(null);
@@ -134,10 +192,8 @@ export function StageSurface() {
       el.id = "jr-stage-style"; el.textContent = STYLE; document.head.appendChild(el);
     }
     const onUi = (e: Event) => {
-      const d = (e as CustomEvent).detail as { type?: string; data?: { title?: string; content?: string } } | undefined;
-      if (d?.type === "stage-show" && d.data?.content) {
-        userSized.current = false;
-        const title = d.data.title || "Jarvis";
+      const d = (e as CustomEvent).detail as { type?: string; data?: { title?: string; content?: string; blocks?: Block[] } } | undefined;
+      const stamp = (title: string) => {
         const now = new Date();
         stageSeq += 1;
         const slug = (title.trim().split(/\s+/)[0] || "").replace(/[^a-z0-9]/gi, "").toUpperCase().slice(0, 8) || "STAGE";
@@ -146,7 +202,19 @@ export function StageSurface() {
           date: `${two(now.getMonth() + 1)}.${two(now.getDate())}.${String(now.getFullYear()).slice(2)}`,
           time: `${two(now.getHours())}:${two(now.getMinutes())}:${two(now.getSeconds())}`,
         });
+      };
+      if (d?.type === "stage-show" && d.data?.content) {
+        userSized.current = false;
+        const title = d.data.title || "Jarvis";
+        stamp(title);
         setStage({ title, content: d.data.content, key: Date.now() });
+        setRect((prev) => prev ?? defaultRect());
+      }
+      if (d?.type === "stage-render" && Array.isArray(d.data?.blocks) && d.data.blocks.length) {
+        userSized.current = false;
+        const title = d.data.title || "Jarvis";
+        stamp(title);
+        setStage({ title, blocks: d.data.blocks, key: Date.now() });
         setRect((prev) => prev ?? defaultRect());
       }
     };
@@ -236,7 +304,7 @@ export function StageSurface() {
 
       <div className="jr-stage-body">
         <div ref={contentRef}>
-          <JarvisMarkdown text={stage.content} />
+          {stage.blocks ? <StageBlocks blocks={stage.blocks} /> : <JarvisMarkdown text={stage.content || ""} />}
         </div>
       </div>
 

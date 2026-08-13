@@ -149,9 +149,15 @@ function createToolGateway({ capabilityEngine, moduleRegistry, codeKnowledge }) 
     if (/\bi (?:had|met|did|finished|wrapped|attended|went to|got|took|spoke|talked|called)\b/i.test(prompt) || /\blog (?:that|it|this)\b/i.test(prompt) || /\bjust (?:had|finished|wrapped|got out of|met)\b/i.test(prompt)) {
       alwaysUseful.push("atlas_log_past", "atlas_add_event");
     }
-    // W0 — the Stage. Any request to open/show a panel/surface/stage and put text on it exposes stage_show.
-    if (/\b(panel|stage|surface|window|card)\b/i.test(prompt) && /\b(open|show|write|put|display|make|bring up|pop up|create|render)\b/i.test(prompt)) {
-      alwaysUseful.push("stage_show");
+    // W0/W3 — the Stage. Any request to open/show a panel/surface/stage exposes stage_show (text) and
+    // stage_render (typed blocks: stats/list/sections). The brain picks text vs blocks.
+    if (/\b(panel|stage|surface|window|card|dashboard)\b/i.test(prompt) && /\b(open|show|write|put|display|make|bring up|pop up|create|render)\b/i.test(prompt)) {
+      alwaysUseful.push("stage_show", "stage_render");
+    }
+    // A structured breakdown / metrics view is a natural fit for the block Stage.
+    if (/\b(breakdown|rundown|dashboard|summary|overview|stats?|metrics|scorecard|at a glance)\b/i.test(prompt)
+      && /\b(panel|stage|surface|show|give|make|build|render|as a)\b/i.test(prompt)) {
+      alwaysUseful.push("stage_render", "stage_show");
     }
     // Undo — reverse the last Today/calendar change. Exposed on undo/revert/nevermind so a bare "undo
     // that" reliably reaches the tool (it carries no other noun).
