@@ -187,12 +187,19 @@ export function StageSurface() {
     const content = contentRef.current;
     if (!content) return;
     const vh = window.innerHeight;
-    const fit = clamp(content.offsetHeight + CHROME, MIN_H, Math.round(vh * 0.92));
+    // Never grow past the command bar at the bottom — cap the panel's bottom just above it.
+    const cb = document.querySelector(".jcb-root");
+    const cbTop = cb ? cb.getBoundingClientRect().top : Math.round(vh * 0.86);
+    const maxBottom = Math.max(220, cbTop - 14);
     setRect((r) => {
       const base = r ?? defaultRect();
-      if (Math.abs(base.h - fit) < 2) return r;
-      const y = Math.min(base.y, Math.max(12, vh - fit - 12));
-      return { ...base, h: fit, y };
+      const wanted = content.offsetHeight + CHROME;
+      const maxH = maxBottom - base.y;               // room from the panel's top down to the bar
+      const h = clamp(wanted, MIN_H, Math.max(MIN_H, maxH));
+      let y = base.y;
+      if (y + h > maxBottom) y = Math.max(12, maxBottom - h); // pull up if it would clip the bar
+      if (Math.abs(base.h - h) < 2 && base.y === y) return r;
+      return { ...base, h, y };
     });
   }, [stage?.key]); // eslint-disable-line react-hooks/exhaustive-deps
 
