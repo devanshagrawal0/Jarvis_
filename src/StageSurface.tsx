@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { JarvisMarkdown } from "./JarvisMarkdown";
 
 // ── W0: The Stage ───────────────────────────────────────────────────────────
@@ -69,6 +69,8 @@ export function StageSurface() {
   const [stage, setStage] = useState<StageState>(null);
   const [rect, setRect] = useState<Rect | null>(null);
   const drag = useRef<{ mode: "move" | "resize"; sx: number; sy: number; r: Rect } | null>(null);
+  const contentRef = useRef<HTMLDivElement>(null); // the content itself — measures its NATURAL height
+  const userSized = useRef(false); // once the owner drags the resize grip, stop auto-sizing this content
 
   useEffect(() => {
     if (!document.getElementById("jr-stage-style")) {
@@ -78,6 +80,7 @@ export function StageSurface() {
     const onUi = (e: Event) => {
       const d = (e as CustomEvent).detail as { type?: string; data?: { title?: string; content?: string } } | undefined;
       if (d?.type === "stage-show" && d.data?.content) {
+        userSized.current = false; // new content → size it to fit again
         setStage({ title: d.data.title || "Jarvis", content: d.data.content, key: Date.now() });
         setRect((prev) => prev ?? defaultRect()); // keep position if already placed, else deploy to default
       }
@@ -112,9 +115,29 @@ export function StageSurface() {
     return () => { window.removeEventListener("pointermove", onMove); window.removeEventListener("pointerup", onUp); };
   }, []);
 
+  // Fit the Stage height to its content: short notes stay compact, long briefings grow up to
+  // ~90% of the screen, and scroll only kicks in past that. Runs whenever new content arrives,
+  // unless the owner has manually resized this content.
+  useLayoutEffect(() => {
+    if (!stage || userSized.current) return;
+    const content = contentRef.current;
+    if (!content) return;
+    const vh = window.innerHeight;
+    // Measure the content's OWN height (not the scroll container, whose scrollHeight is floored at
+    // its client height and so could never shrink). + header (48) + body padding (31) + borders.
+    const fit = clamp(content.offsetHeight + 82, MIN_H, Math.round(vh * 0.9));
+    setRect((r) => {
+      const base = r ?? defaultRect();
+      if (Math.abs(base.h - fit) < 2) return r; // already right — avoid a render loop
+      const y = Math.min(base.y, Math.max(12, vh - fit - 12)); // keep it on screen
+      return { ...base, h: fit, y };
+    });
+  }, [stage?.key]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const startDrag = useCallback((mode: "move" | "resize") => (e: React.PointerEvent) => {
     if (!rect) return;
     e.preventDefault();
+    if (mode === "resize") userSized.current = true; // owner takes over sizing for this content
     drag.current = { mode, sx: e.clientX, sy: e.clientY, r: rect };
     document.body.style.userSelect = "none";
   }, [rect]);
@@ -131,7 +154,9 @@ export function StageSurface() {
         <button className="jr-stage-x" onPointerDown={(e) => e.stopPropagation()} onClick={() => setStage(null)} title="Close (Esc)">×</button>
       </div>
       <div className="jr-stage-body">
-        <JarvisMarkdown text={stage.content} />
+        <div ref={contentRef}>
+          <JarvisMarkdown text={stage.content} />
+        </div>
       </div>
       <div className="jr-stage-grip" onPointerDown={startDrag("resize")} title="Resize" />
     </div>
