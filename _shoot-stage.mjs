@@ -1,0 +1,35 @@
+import { chromium } from "playwright";
+
+const OUT = process.argv[2] || "stage-shot.png";
+const b = await chromium.launch({ args: ["--use-gl=swiftshader", "--enable-webgl", "--ignore-gpu-blocklist"] });
+const page = await b.newPage({ viewport: { width: 1500, height: 950 }, deviceScaleFactor: 2 });
+page.on("pageerror", (e) => console.log("PAGEERR:", e.message));
+
+await page.goto("http://localhost:8799", { waitUntil: "networkidle", timeout: 60000 }).catch(() => {});
+await page.waitForTimeout(3500);
+
+await page.evaluate(() => {
+  try { localStorage.setItem("jarvis.spatial-widgets.v1", "{}"); } catch {}
+  document.dispatchEvent(new CustomEvent("jarvis:ui", { detail: { type: "stage-show", data: {
+    title: "Note",
+    content: "This is a quick two-line note on your Stage surface.\n\nAll systems are online and ready for your command.",
+  } } }));
+});
+
+await page.waitForSelector(".jr-stage", { timeout: 8000 }).catch(() => {});
+await page.waitForTimeout(1400);
+
+const el = await page.$(".jr-stage");
+if (el) {
+  const box = await el.boundingBox();
+  const pad = 46;
+  await page.screenshot({ path: OUT, clip: {
+    x: Math.max(0, box.x - pad), y: Math.max(0, box.y - pad),
+    width: Math.min(1500, box.width + pad * 2), height: Math.min(950, box.height + pad * 2),
+  } });
+  console.log("saved", OUT, "stageBox", JSON.stringify(box));
+} else {
+  await page.screenshot({ path: OUT });
+  console.log("saved fullpage (no .jr-stage found)", OUT);
+}
+await b.close();
