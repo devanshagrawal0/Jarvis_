@@ -172,7 +172,8 @@ function StageBlocks({ blocks }: { blocks: Block[] }) {
     if (b.type === "heading") { out.push(<div className="jr-blk-heading" key={i}>{b.text}</div>); i++; continue; }
     if (b.type === "list") { out.push(<ul className="jr-blk-list" key={i}>{b.items.map((it, k) => <li key={k}>{it}</li>)}</ul>); i++; continue; }
     if (b.type === "divider") { out.push(<div className="jr-blk-div" key={i} />); i++; continue; }
-    out.push(<p className="jr-blk-text" key={i}>{b.text}</p>); i++;
+    // text blocks render markdown so prose (bold, links, sub-bullets) can sit alongside cards
+    out.push(<div className="jr-blk-text" key={i}><JarvisMarkdown text={b.text} /></div>); i++;
   }
   return <div className="jr-blocks">{out}</div>;
 }

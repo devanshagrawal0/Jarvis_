@@ -149,14 +149,13 @@ function createToolGateway({ capabilityEngine, moduleRegistry, codeKnowledge }) 
     if (/\bi (?:had|met|did|finished|wrapped|attended|went to|got|took|spoke|talked|called)\b/i.test(prompt) || /\blog (?:that|it|this)\b/i.test(prompt) || /\bjust (?:had|finished|wrapped|got out of|met)\b/i.test(prompt)) {
       alwaysUseful.push("atlas_log_past", "atlas_add_event");
     }
-    // W0/W3 — the Stage. Any request to open/show a panel/surface/stage exposes stage_show (text) and
-    // stage_render (typed blocks: stats/list/sections). The brain picks text vs blocks.
-    if (/\b(panel|stage|surface|window|card|dashboard)\b/i.test(prompt) && /\b(open|show|write|put|display|make|bring up|pop up|create|render)\b/i.test(prompt)) {
-      alwaysUseful.push("stage_show", "stage_render");
-    }
-    // A structured breakdown / metrics view is a natural fit for the block Stage.
-    if (/\b(breakdown|rundown|dashboard|summary|overview|stats?|metrics|scorecard|at a glance)\b/i.test(prompt)
-      && /\b(panel|stage|surface|show|give|make|build|render|as a)\b/i.test(prompt)) {
+    // W0/W3 — the Stage. Expose BOTH stage tools together whenever a stage/panel/dashboard/
+    // breakdown surface is wanted, so the BRAIN (not a keyword) decides whether to write prose,
+    // render typed blocks, or MIX both in one surface. Keeping them symmetric avoids the trap of
+    // having text available but not blocks (or vice-versa) purely because of phrasing.
+    // (W4's presentation router will remove the keyword gate entirely.)
+    if (/\b(panel|stage|surface|window|card|dashboard|breakdown|rundown|scorecard|at a glance)\b/i.test(prompt)
+      && /\b(open|show|write|put|display|make|bring up|pop up|create|render|give|build|generate)\b/i.test(prompt)) {
       alwaysUseful.push("stage_render", "stage_show");
     }
     // Undo — reverse the last Today/calendar change. Exposed on undo/revert/nevermind so a bare "undo
