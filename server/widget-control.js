@@ -74,4 +74,56 @@ function detectWidgetControl(text, ctx = {}) {
   return { id: targetId, label, action, size, say, uiAction: { type: "resize-widget", id: targetId, size } };
 }
 
-module.exports = { detectWidgetControl };
+// ── View switching ("my kalshi positions", "switch kalshi to fills", "show specialists") ──────
+// Emits a set-view uiAction the frontend already understands (each widget maps the view word to its
+// own tab, and kalshi auto-expands). This replaces the old broken path where the brain tried to
+// FETCH the data via an API, failed, and just reported the failure instead of showing the widget.
+//
+// Guarded so it never hijacks a real data QUESTION: "how many positions", "what's it worth" fall to
+// the brain. View words are split into hard (fire when the widget is named/inferred) and soft
+// (need an explicit show-verb) so a statement like "kalshi is my favorite market" doesn't fire.
+
+const VALUE_Q = /\b(worth|valued?|how much|how many|number of|total|profit|loss|pnl|p&l|balance|gains?|percent|%|average|avg)\b/i;
+const SHOW_VERB = /\b(show|open|switch|flip|go\s*to|pull\s*up|see|view|bring\s*up|display|take me to|jump to|what'?s?|whats)\b/i;
+
+const VIEWS = [
+  { id: "kalshi",
+    hard: /\b(positions?|holdings|orderbook|order\s*book|fills?)\b/i,
+    soft: /\b(markets?|trades?|depth|book)\b/i,
+    infer: /\b(positions?|holdings|orderbook|order\s*book|fills?)\b/i,
+    pick: (p) => /\b(positions?|holdings)\b/i.test(p) ? "positions"
+      : /\b(order\s*book|orderbook|depth|book)\b/i.test(p) ? "orderbook"
+      : /\b(fills?|trades?)\b/i.test(p) ? "fills" : "markets" },
+  { id: "agents",
+    hard: /\b(missions?|specialists?)\b/i, soft: /\b(roster|team|tasks?)\b/i,
+    infer: /\b(missions?|specialists?)\b/i,
+    pick: (p) => /\b(specialists?|roster|team)\b/i.test(p) ? "specialists" : "missions" },
+  { id: "connections",
+    hard: /\b(disconnected|offline)\b/i, soft: /\b(connected|online|healthy)\b/i,
+    infer: null,
+    pick: (p) => /\b(disconnected|offline)\b/i.test(p) ? "disconnected" : "connected" },
+];
+
+function detectWidgetView(text, ctx = {}) {
+  const p = String(text || "").trim();
+  if (!p || p.length > 90) return null;
+  if (VALUE_Q.test(p)) return null; // a data/number question — the brain answers that, not a view switch
+
+  const widgets = Array.isArray(ctx.widgets) ? ctx.widgets : [];
+  const named = widgets.find((w) => w.re && w.re.test(p)) || null;
+  const showVerb = SHOW_VERB.test(p);
+
+  let owner = null;
+  if (named) {
+    const o = VIEWS.find((v) => v.id === named.id);
+    if (o && (o.hard.test(p) || (o.soft && o.soft.test(p) && showVerb))) owner = o;
+  }
+  if (!owner && showVerb) owner = VIEWS.find((v) => v.infer && v.infer.test(p)) || null;
+  if (!owner) return null;
+
+  const view = owner.pick(p);
+  const label = (widgets.find((w) => w.id === owner.id) || {}).label || owner.id;
+  return { id: owner.id, view, label, say: `Showing ${view} in the ${label} widget, sir.`, uiAction: { type: "set-view", id: owner.id, view } };
+}
+
+module.exports = { detectWidgetControl, detectWidgetView };

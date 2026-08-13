@@ -42,7 +42,7 @@ const { clientIp: coopClientIp } = require("./server/coop-transport");
 const { createMissionEngine } = require("./server/mission-engine");
 const { createCodeKnowledge } = require("./server/code-knowledge");
 const { createToolGateway } = require("./server/tool-gateway");
-const { detectWidgetControl } = require("./server/widget-control");
+const { detectWidgetControl, detectWidgetView } = require("./server/widget-control");
 const { createAgentRuntime } = require("./server/agent-runtime");
 const { createReActExecutor } = require("./server/react-loop");
 const { createActivityGraph } = require("./server/pc-activity-graph");
@@ -11223,6 +11223,24 @@ ${entryText}`;
         sendEvent({ type: "event", event: { kind: "ui", status: "complete", label: "Widget control", detail: `${control.action} · ${control.label}` } });
         sendEvent({ type: "delta", text: control.say });
         sendEvent({ type: "done", result: { response: control.say, model: "hud", sources: [], uiActions: [control.uiAction] } });
+        res.end();
+        return;
+      }
+    }
+    // Deterministic widget VIEW switch — "my kalshi positions", "switch kalshi to fills",
+    // "show specialists". Opens the widget and switches its internal view directly, instead of the
+    // old broken path where the brain tried to fetch the data, failed, and only reported the failure.
+    // Value questions ("how many positions", "what's it worth") are guarded out to the brain.
+    if (!data.imageData) {
+      const view = detectWidgetView(prompt, {
+        focusedWidget: typeof data.focusedWidget === "string" ? data.focusedWidget : "",
+        openWidgets: Array.isArray(data.openWidgets) ? data.openWidgets : [],
+        widgets: HUD_WIDGETS,
+      });
+      if (view) {
+        sendEvent({ type: "event", event: { kind: "ui", status: "complete", label: "Widget view", detail: `${view.label} · ${view.view}` } });
+        sendEvent({ type: "delta", text: view.say });
+        sendEvent({ type: "done", result: { response: view.say, model: "hud", sources: [], uiActions: [view.uiAction] } });
         res.end();
         return;
       }
