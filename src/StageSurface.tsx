@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { JarvisMarkdown } from "./JarvisMarkdown";
+import { SurfaceRenderer, blocksToSurface } from "./StageRegistry";
 
 // ── The Stage ────────────────────────────────────────────────────────────────
 // Jarvis's own on-screen surface, styled as a JARVIS HUD panel: cyan glow border,
@@ -148,39 +149,9 @@ const IconEdit = () => (<svg viewBox="0 0 24 24" fill="none" stroke="currentColo
 const IconExpand = () => (<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M15 3h6v6" /><path d="M9 21H3v-6" /><path d="M21 3l-7 7" /><path d="M3 21l7-7" /></svg>);
 const IconPin = () => (<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 17v5" /><path d="M9 10.8V4h6v6.8l2 3.2H7Z" /></svg>);
 
-// W3 — render typed blocks. Consecutive 'stat' blocks are grouped into one row of cards.
-function StageBlocks({ blocks }: { blocks: Block[] }) {
-  const out: any[] = [];
-  let i = 0;
-  while (i < blocks.length) {
-    const b = blocks[i];
-    if (b.type === "stat") {
-      const group: Extract<Block, { type: "stat" }>[] = [];
-      while (i < blocks.length && blocks[i].type === "stat") { group.push(blocks[i] as Extract<Block, { type: "stat" }>); i++; }
-      out.push(
-        <div className="jr-blk-stats" key={`stat-${i}`}>
-          {group.map((s, k) => {
-            const dir = /^\s*\+/.test(s.delta || "") ? "up" : /^\s*[-−]/.test(s.delta || "") ? "down" : "flat";
-            return (
-              <div className="jr-blk-stat" key={k}>
-                <span className="jr-blk-stat-val">{s.value || "—"}</span>
-                {s.label ? <span className="jr-blk-stat-lbl">{s.label}</span> : null}
-                {s.delta ? <span className={`jr-blk-stat-delta ${dir}`}>{s.delta}</span> : null}
-              </div>
-            );
-          })}
-        </div>,
-      );
-      continue;
-    }
-    if (b.type === "heading") { out.push(<div className="jr-blk-heading" key={i}>{b.text}</div>); i++; continue; }
-    if (b.type === "list") { out.push(<ul className="jr-blk-list" key={i}>{b.items.map((it, k) => <li key={k}>{it}</li>)}</ul>); i++; continue; }
-    if (b.type === "divider") { out.push(<div className="jr-blk-div" key={i} />); i++; continue; }
-    // text blocks render markdown so prose (bold, links, sub-bullets) can sit alongside cards
-    out.push(<div className="jr-blk-text" key={i}><JarvisMarkdown text={b.text} /></div>); i++;
-  }
-  return <div className="jr-blocks">{out}</div>;
-}
+// W3a — typed blocks now render through the block registry (SurfaceRenderer + blocksToSurface in
+// ./StageRegistry). The old inline renderer was replaced so calendar/chart blocks can be added to
+// the catalog without touching StageSurface.
 
 export function StageSurface() {
   const [stage, setStage] = useState<StageState>(null);
@@ -319,7 +290,7 @@ export function StageSurface() {
         <div ref={contentRef}>
           {stage.loading
             ? <div className="jr-stage-loading"><span className="jr-stage-spin" aria-hidden /><span>{stage.loading}</span></div>
-            : stage.blocks ? <StageBlocks blocks={stage.blocks} /> : <JarvisMarkdown text={stage.content || ""} />}
+            : stage.blocks ? <SurfaceRenderer surface={blocksToSurface(stage.blocks)} /> : <JarvisMarkdown text={stage.content || ""} />}
         </div>
       </div>
 
