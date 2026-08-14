@@ -3320,6 +3320,11 @@ const HUD_WIDGETS = [
   { id: "devices", label: "Devices", re: /\bdevices?\b/i, kind: "widget" },
   { id: "receipts", label: "Receipts", re: /\breceipts?\b/i, kind: "widget" },
   { id: "graph", label: "Graph", re: /\b(?:knowledge\s+)?graph\b/i, kind: "widget" },
+  { id: "today", label: "Today", re: /\b(today|my day|my agenda)\b/i, kind: "widget" },
+  { id: "contacts", label: "Contacts", re: /\bcontacts?\b/i, kind: "widget" },
+  // "trust" is a common English word ("I trust you"); scope its match to trust-widget phrasings so a
+  // widget command never targets it by accident. The resolvers still need an action verb on top.
+  { id: "trust", label: "Trust", re: /\b(trust (?:center|widget|panel|dashboard)|principal & approvals|paired devices)\b/i, kind: "widget" },
   { id: "helix", label: "Helix", re: /\bhelix\b/i, kind: "room" },
 ];
 function detectWidgetOpen(text, focusedWidget = "") {
