@@ -43,6 +43,7 @@ const { createMissionEngine } = require("./server/mission-engine");
 const { createCodeKnowledge } = require("./server/code-knowledge");
 const { createToolGateway } = require("./server/tool-gateway");
 const { detectWidgetControl, detectWidgetView, detectWidgetMove, detectWidgetArrange } = require("./server/widget-control");
+const { detectPanelRequest } = require("./server/stage-pipeline");
 const { createAgentRuntime } = require("./server/agent-runtime");
 const { createReActExecutor } = require("./server/react-loop");
 const { createActivityGraph } = require("./server/pc-activity-graph");
@@ -908,6 +909,18 @@ function saveSettings(nextSettings) {
   const merged = { ...current, ...publicValues, updatedAt: new Date().toISOString() };
   writeJson(SETTINGS_PATH, merged);
   return loadSettings();
+}
+
+// The Stage pipeline — built lazily so it picks up the live Gemini key. IMPORTANT: it is invoked
+// ONLY from the explicit-panel-request path (detectPanelRequest), never on every turn. That is the
+// difference from the earlier wiring that ran the router on all traffic and broke normal chat.
+let _stagePipeline = null;
+function getStagePipeline() {
+  if (!_stagePipeline) {
+    const { createStagePipeline } = require("./server/stage-pipeline");
+    _stagePipeline = createStagePipeline({ getSettings: loadSettings });
+  }
+  return _stagePipeline;
 }
 
 function migratePlaintextSecrets() {
@@ -11279,6 +11292,25 @@ ${entryText}`;
         sendEvent({ type: "event", event: { kind: "ui", status: "complete", label: widgetAction.focus ? "Widget focused" : "Widget opened", detail: widgetAction.label } });
         sendEvent({ type: "delta", text: txt });
         sendEvent({ type: "done", result: { response: txt, model: "hud", sources: [], uiActions: [{ type: "open-widget", id: widgetAction.id, focus: widgetAction.focus }] } });
+        res.end();
+        return;
+      }
+    }
+    // Generative Stage — explicit "make/show a panel/dashboard of X". Runs the researched pipeline
+    // (route -> fetch real data for LIVE -> render blocks strictly from that data -> fabrication
+    // gate -> show) ONLY on an explicit panel request, off the hot path; every other prompt never
+    // reaches it. This is the SAFE version of the earlier every-turn wiring that broke chat. The
+    // pipeline emits a real stage-render action or honestly abstains — it never claims a fake render.
+    if (!data.imageData && detectPanelRequest(prompt)) {
+      let stage = null;
+      try { stage = await getStagePipeline().run(prompt, { history }); }
+      catch (err) { console.error("[stage-pipeline] error, falling through to brain:", err && err.message); stage = null; }
+      if (stage && stage.handled) {
+        const ui = (stage.uiActions && stage.uiActions[0]) || {};
+        const sources = (ui.data && ui.data.provenance && ui.data.provenance.sources) || [];
+        sendEvent({ type: "event", event: { kind: "ui", status: "complete", label: "Stage rendered", detail: (ui.data && ui.data.title) || ui.id || "" } });
+        sendEvent({ type: "delta", text: stage.text || "" });
+        sendEvent({ type: "done", result: { response: stage.text || "", model: "stage", sources, uiActions: stage.uiActions } });
         res.end();
         return;
       }
