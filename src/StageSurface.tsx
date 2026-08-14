@@ -14,6 +14,7 @@ type Block =
   | { type: "text"; text: string }
   | { type: "stat"; label?: string; value?: string; delta?: string }
   | { type: "list"; items: string[] }
+  | { type: "calendar"; events?: unknown[]; dateLabel?: string }
   | { type: "divider" };
 type StageState = { title: string; content?: string; blocks?: Block[]; loading?: string; key: number } | null;
 type Rect = { x: number; y: number; w: number; h: number };
@@ -24,14 +25,16 @@ const CHROME = 106;
 
 let stageSeq = 0;
 
-function defaultRect(): Rect {
+function defaultRect(wide = false): Rect {
   const vw = window.innerWidth, vh = window.innerHeight;
-  const w = Math.min(414, Math.max(300, Math.round(vw * 0.27)));
+  // Wide layouts (the calendar day-grid) need more room than a stat panel.
+  const w = wide ? Math.min(600, Math.max(440, Math.round(vw * 0.4))) : Math.min(414, Math.max(300, Math.round(vw * 0.27)));
   const h = Math.min(400, Math.max(230, Math.round(vh * 0.4)));
   const x = Math.max(20, vw - w - 32);
   const y = Math.max(20, Math.round(vh * 0.11));
   return { x, y, w, h };
 }
+const hasWideBlock = (blocks?: Block[]) => Array.isArray(blocks) && blocks.some((b) => b.type === "calendar");
 const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v));
 const two = (n: number) => String(n).padStart(2, "0");
 
@@ -139,16 +142,31 @@ const STYLE = `
 .jr-blk-stat-delta.down { color: #e88a8a; }
 .jr-blk-stat-delta.flat { color: #9fb4c8; }
 .jr-blk-div { height: 1px; background: linear-gradient(90deg, transparent, rgba(110,185,235,.16), transparent); margin: 3px 0; }
-/* calendar block (W3b) — the reusable agenda shell */
-.jr-cal { display: flex; flex-direction: column; gap: 8px; }
-.jr-cal-row { display: flex; align-items: flex-start; gap: 10px; }
-.jr-cal-time { flex: 0 0 96px; font-size: 11.5px; color: rgba(150,190,220,.85); font-variant-numeric: tabular-nums; padding-top: 2px; text-align: right; white-space: nowrap; }
-.jr-cal-bar { flex: none; width: 3px; align-self: stretch; min-height: 18px; border-radius: 2px;
-  background: linear-gradient(180deg, rgba(96,190,235,.85), rgba(80,150,210,.35)); box-shadow: 0 0 6px rgba(90,180,230,.4); }
-.jr-cal-body { display: flex; flex-direction: column; gap: 1px; padding: 1px 0 4px; }
-.jr-cal-title { font-size: 13px; color: #dbe8f6; font-weight: 550; line-height: 1.3; }
-.jr-cal-loc { font-size: 11px; color: rgba(150,175,200,.7); }
+/* calendar day view (W3b) — HUD time-grid: hour rail + events positioned by time + now-line */
 .jr-cal-empty { font-size: 13px; color: rgba(160,190,215,.72); padding: 6px 2px; }
+.jr-cal-day { display: flex; flex-direction: column; gap: 10px; }
+.jr-cal-day-head { font-size: 12.5px; letter-spacing: .14em; text-transform: uppercase; color: #cfe6f7; font-weight: 600; text-align: center; padding: 2px 0 2px; }
+.jr-cal-allday { display: flex; align-items: center; gap: 10px; }
+.jr-cal-allday-lbl { flex: none; font-size: 9px; letter-spacing: .18em; color: rgba(140,180,210,.7); }
+.jr-cal-allday-items { display: flex; flex-wrap: wrap; gap: 6px; }
+.jr-cal-allday-chip { font-size: 11.5px; color: #dbeafe; padding: 3px 10px; border-radius: 8px; border: 1px solid rgba(110,185,235,.28); background: rgba(60,110,170,.14); }
+.jr-cal-grid { position: relative; margin-top: 2px; }
+.jr-cal-hour { position: absolute; left: 0; right: 0; height: 0; }
+.jr-cal-hour-lbl { position: absolute; left: 0; top: -7px; width: 46px; text-align: right; font-size: 10.5px; color: rgba(140,175,205,.68); font-variant-numeric: tabular-nums; }
+.jr-cal-hour-line { position: absolute; left: 56px; right: 2px; top: 0; height: 1px; background: rgba(110,150,190,.12); }
+.jr-cal-now { position: absolute; left: 0; right: 0; height: 0; z-index: 3; }
+.jr-cal-now-lbl { position: absolute; left: 0; top: -8px; width: 46px; text-align: right; font-size: 10.5px; color: #57d6f0; font-weight: 600; }
+.jr-cal-now-dot { position: absolute; left: 53px; top: -3px; width: 6px; height: 6px; border-radius: 50%; background: #57d6f0; box-shadow: 0 0 8px rgba(87,214,240,.85); }
+.jr-cal-now-line { position: absolute; left: 59px; right: 2px; top: 0; height: 1px; background: rgba(87,214,240,.5); }
+.jr-cal-ev { position: absolute; left: 60px; right: 2px; display: flex; gap: 9px; overflow: hidden;
+  border: 1px solid rgba(110,185,235,.14); border-radius: 9px; padding: 4px 10px 4px 0;
+  background: linear-gradient(180deg, rgba(28,50,80,.42), rgba(16,28,46,.34)); box-shadow: inset 0 0 14px -10px rgba(0,0,0,.7); }
+.jr-cal-ev-rail { flex: 0 0 3px; align-self: stretch; border-radius: 3px; margin: 2px 0; }
+.jr-cal-ev-body { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; justify-content: center; }
+.jr-cal-ev-time { font-size: 10px; line-height: 1.25; color: rgba(150,190,220,.85); font-variant-numeric: tabular-nums; }
+.jr-cal-ev-title { font-size: 12.5px; line-height: 1.25; color: #e6f0fb; font-weight: 550; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.jr-cal-ev-loc { font-size: 10.5px; line-height: 1.2; color: rgba(150,175,200,.7); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.jr-cal-ev-icon { flex: none; align-self: center; opacity: .92; display: flex; }
 .jr-stage-loading { display: flex; align-items: center; gap: 10px; padding: 8px 2px; color: rgba(170,200,225,.85); font-size: 13px; }
 .jr-stage-spin { width: 14px; height: 14px; flex: none; border-radius: 50%; border: 2px solid rgba(120,190,235,.25);
   border-top-color: rgba(140,210,245,.95); animation: jr-stage-spin 0.7s linear infinite; }
@@ -209,7 +227,7 @@ export function StageSurface() {
           const key = prev && prev.loading ? prev.key : Date.now();
           return blocks.length ? { title, blocks, key } : { title, loading, key };
         });
-        setRect((prev) => prev ?? defaultRect());
+        setRect((prev) => prev ?? defaultRect(hasWideBlock(blocks)));
       }
     };
     const onClose = () => setStage(null);
