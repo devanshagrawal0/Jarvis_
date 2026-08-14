@@ -923,6 +923,41 @@ function getStagePipeline() {
   return _stagePipeline;
 }
 
+// W3b — the owner's REAL day (local + Google Calendar), for a generative calendar surface. The
+// events come straight from the calendar API — the model never generates them, so this surface
+// cannot fabricate. Same source as /api/atlas/today's timeline.
+async function getStageDayEvents() {
+  if (!atlasStore) return { events: [], dateLabel: "today" };
+  const loc = userContext ? userContext.resolveLocation() : { ianaTz: "America/New_York" };
+  const tz = (loc && loc.ianaTz) || "America/New_York";
+  const { startIso, endIso } = atlasLocalDayBounds(tz);
+  let events = atlasStore.eventsBetween(startIso, endIso) || [];
+  const gcal = getAtlasGoogleCalendar();
+  if (gcal) {
+    try { const g = await gcal.eventsBetween(startIso, endIso); if (g && g.length) events = [...events, ...g]; }
+    catch (e) { console.error("[stage-calendar] google fetch failed:", e && e.message); }
+  }
+  const clean = events
+    .sort((a, b) => String(a.startAt).localeCompare(String(b.startAt)))
+    .map((e) => ({ title: e.title || "(no title)", startAt: e.startAt || null, endAt: e.endAt || null, allDay: Boolean(e.allDay), location: e.location || "" }));
+  return { events: clean, dateLabel: "today", tz };
+}
+
+// Deterministic detector: does the owner want to SEE their day/calendar (a read), not change it?
+// FLAGGED regex trigger (rule 3) — W4's presentation router will replace this with the model's own
+// judgment. Guards out mutations ("add … to my calendar") so those still reach the write path.
+function detectCalendarStageRequest(prompt) {
+  const p = String(prompt || "").trim();
+  if (!p || p.length > 120) return null;
+  if (/\b(add|create|schedule a|schedule an|book|set up|put|move|reschedule|delete|cancel|remove|block off|clear)\b/i.test(p)) return null; // a write, not a view
+  const calNoun = /\b(calendar|schedule|agenda)\b/i.test(p);
+  const todayScope = /\b(today|this morning|this afternoon|this evening|tonight|rest of (?:my|the) day|my day)\b/i.test(p);
+  const asksView = /\bwhat(?:'s| is| do i have| have i got)\b/i.test(p) || /\b(show|see|pull up|bring up|open)\b/i.test(p) || /\bmy\b/i.test(p);
+  if (calNoun && asksView) return { scope: "today" };
+  if (todayScope && /\bwhat(?:'s| do i have| have i got| is)\b.*\b(on|going on|happening|scheduled|planned)\b/i.test(p)) return { scope: "today" };
+  return null;
+}
+
 function migratePlaintextSecrets() {
   const settings = readJson(SETTINGS_PATH, {});
   const { publicValues, secretValues } = secretStore.split(settings);
@@ -11295,6 +11330,24 @@ ${entryText}`;
         res.end();
         return;
       }
+    }
+    // Generative Stage — the Calendar surface (W3b). "what's on my calendar today" builds a real
+    // calendar block from the owner's actual events (Google Calendar + local), bound into the block
+    // catalog. Events come from the calendar API, never the model, so it cannot fabricate. Fast
+    // (~1 API call), so no skeleton needed.
+    if (!data.imageData && detectCalendarStageRequest(prompt)) {
+      try {
+        const { events, dateLabel } = await getStageDayEvents();
+        const txt = events.length
+          ? `Here's your day, sir — ${events.length} event${events.length === 1 ? "" : "s"}.`
+          : "Your calendar is clear today, sir.";
+        const uiAction = { type: "stage-render", data: { title: "Today", blocks: [{ type: "calendar", events, dateLabel }], provenance: { kind: "calendar" } } };
+        sendEvent({ type: "event", event: { kind: "ui", status: "complete", label: "Calendar", detail: `${events.length} events` } });
+        sendEvent({ type: "delta", text: txt });
+        sendEvent({ type: "done", result: { response: txt, model: "stage", sources: [], uiActions: [uiAction] } });
+        res.end();
+        return;
+      } catch (err) { console.error("[stage-calendar] error, falling through to brain:", err && err.message); }
     }
     // Generative Stage — explicit "make/show a panel/dashboard of X". Runs the researched pipeline
     // (route -> fetch real data for LIVE -> render blocks strictly from that data -> fabrication

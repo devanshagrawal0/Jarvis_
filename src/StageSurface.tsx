@@ -139,6 +139,16 @@ const STYLE = `
 .jr-blk-stat-delta.down { color: #e88a8a; }
 .jr-blk-stat-delta.flat { color: #9fb4c8; }
 .jr-blk-div { height: 1px; background: linear-gradient(90deg, transparent, rgba(110,185,235,.16), transparent); margin: 3px 0; }
+/* calendar block (W3b) — the reusable agenda shell */
+.jr-cal { display: flex; flex-direction: column; gap: 8px; }
+.jr-cal-row { display: flex; align-items: flex-start; gap: 10px; }
+.jr-cal-time { flex: 0 0 96px; font-size: 11.5px; color: rgba(150,190,220,.85); font-variant-numeric: tabular-nums; padding-top: 2px; text-align: right; white-space: nowrap; }
+.jr-cal-bar { flex: none; width: 3px; align-self: stretch; min-height: 18px; border-radius: 2px;
+  background: linear-gradient(180deg, rgba(96,190,235,.85), rgba(80,150,210,.35)); box-shadow: 0 0 6px rgba(90,180,230,.4); }
+.jr-cal-body { display: flex; flex-direction: column; gap: 1px; padding: 1px 0 4px; }
+.jr-cal-title { font-size: 13px; color: #dbe8f6; font-weight: 550; line-height: 1.3; }
+.jr-cal-loc { font-size: 11px; color: rgba(150,175,200,.7); }
+.jr-cal-empty { font-size: 13px; color: rgba(160,190,215,.72); padding: 6px 2px; }
 .jr-stage-loading { display: flex; align-items: center; gap: 10px; padding: 8px 2px; color: rgba(170,200,225,.85); font-size: 13px; }
 .jr-stage-spin { width: 14px; height: 14px; flex: none; border-radius: 50%; border: 2px solid rgba(120,190,235,.25);
   border-top-color: rgba(140,210,245,.95); animation: jr-stage-spin 0.7s linear infinite; }

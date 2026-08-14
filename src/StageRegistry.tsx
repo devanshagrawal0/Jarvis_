@@ -8,6 +8,8 @@ import { JarvisMarkdown } from "./JarvisMarkdown";
 // unknown block to a text block instead of crashing the whole surface. New block types (calendar,
 // chart, map…) are added by dropping one entry into REGISTRY — that's what makes them cheap.
 
+export type CalEvent = { title: string; startAt?: string; endAt?: string; allDay?: boolean; location?: string };
+
 export type RBlock =
   | { id: string; type: "stack"; children: string[] }
   | { id: string; type: "stat_row"; children: string[] }
@@ -15,9 +17,21 @@ export type RBlock =
   | { id: string; type: "text"; props: { md: string } }
   | { id: string; type: "stat"; props: { label?: string; value?: string; delta?: string } }
   | { id: string; type: "list"; props: { items: string[] } }
+  | { id: string; type: "calendar"; props: { events: CalEvent[]; dateLabel?: string } }
   | { id: string; type: "divider" };
 
 export type Surface = { root: string; blocks: Record<string, RBlock> };
+
+// Local time formatting for calendar rows (browser tz = the owner's tz).
+function fmtTime(e: CalEvent): string {
+  if (e.allDay) return "All day";
+  if (!e.startAt) return "";
+  try {
+    const t = (iso?: string) => iso ? new Date(iso).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }) : "";
+    const s = t(e.startAt), en = t(e.endAt);
+    return en && en !== s ? `${s} – ${en}` : s;
+  } catch { return ""; }
+}
 
 type Entry = { validate: (b: any) => boolean; render: (b: any, kids: ReactNode) => ReactNode };
 
@@ -42,6 +56,29 @@ export const REGISTRY: Record<string, Entry> = {
     },
   },
   list: { validate: (b) => Array.isArray(b?.props?.items) && b.props.items.length > 0, render: (b) => <ul className="jr-blk-list">{b.props.items.map((it: string, k: number) => <li key={k}>{it}</li>)}</ul> },
+  // The reusable Calendar shell — hand-built once, filled with REAL events each run (never generated
+  // by the model). Agenda view: a time column + a title per event. Empty day is a valid render.
+  calendar: {
+    validate: (b) => Array.isArray(b?.props?.events),
+    render: (b) => {
+      const events: CalEvent[] = b.props.events;
+      if (!events.length) return <div className="jr-cal-empty">Nothing scheduled{b.props.dateLabel ? ` ${b.props.dateLabel}` : ""}.</div>;
+      return (
+        <div className="jr-cal">
+          {events.map((e, k) => (
+            <div className="jr-cal-row" key={k}>
+              <span className="jr-cal-time">{fmtTime(e)}</span>
+              <span className="jr-cal-bar" />
+              <div className="jr-cal-body">
+                <span className="jr-cal-title">{e.title || "(no title)"}</span>
+                {e.location ? <span className="jr-cal-loc">{e.location}</span> : null}
+              </div>
+            </div>
+          ))}
+        </div>
+      );
+    },
+  },
   divider: { validate: () => true, render: () => <div className="jr-blk-div" /> },
 };
 
@@ -69,7 +106,7 @@ export function SurfaceRenderer({ surface }: { surface: Surface }) {
 // Adapter: the current flat Block[] the pipeline emits → a Surface. Consecutive stats group into a
 // stat_row (preserving the side-by-side card layout). Lets the whole existing pipeline render
 // through the registry with zero server change.
-type FlatBlock = { type: string; text?: string; label?: string; value?: string; delta?: string; items?: string[] };
+type FlatBlock = { type: string; text?: string; label?: string; value?: string; delta?: string; items?: string[]; events?: CalEvent[]; dateLabel?: string };
 export function blocksToSurface(blocks: FlatBlock[]): Surface {
   const bmap: Record<string, RBlock> = {};
   let n = 0;
@@ -90,6 +127,7 @@ export function blocksToSurface(blocks: FlatBlock[]): Surface {
     }
     if (b.type === "heading") rootChildren.push(add({ type: "heading", props: { text: b.text || "" } } as any));
     else if (b.type === "list") rootChildren.push(add({ type: "list", props: { items: Array.isArray(b.items) ? b.items : [] } } as any));
+    else if (b.type === "calendar") rootChildren.push(add({ type: "calendar", props: { events: Array.isArray(b.events) ? b.events : [], dateLabel: b.dateLabel } } as any));
     else if (b.type === "divider") rootChildren.push(add({ type: "divider" } as any));
     else rootChildren.push(add({ type: "text", props: { md: b.text || "" } } as any));
     i++;
