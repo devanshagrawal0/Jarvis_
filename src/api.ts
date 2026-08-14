@@ -52,7 +52,8 @@ export async function streamPost<T>(
   body: unknown,
   onDelta: (text: string) => void,
   onProgress?: (phase: string, message: string) => void,
-  onEvent?: (event: Record<string, unknown>, envelope: Record<string, unknown>) => void
+  onEvent?: (event: Record<string, unknown>, envelope: Record<string, unknown>) => void,
+  onUi?: (uiActions: unknown[]) => void
 ): Promise<T> {
   const response = await fetch(path, {
     method: "POST",
@@ -81,6 +82,7 @@ export async function streamPost<T>(
       if (event.type === "delta") onDelta(String(event.text || ""));
       if (event.type === "progress") onProgress?.(String(event.phase || ""), String(event.message || ""));
       if (event.type === "event" && event.event && typeof event.event === "object") onEvent?.(event.event, event);
+      if (event.type === "ui" && Array.isArray(event.uiActions)) onUi?.(event.uiActions);
       if (event.type === "done") result = event.result as T;
     }
     if (done) break;

@@ -11302,8 +11302,12 @@ ${entryText}`;
     // reaches it. This is the SAFE version of the earlier every-turn wiring that broke chat. The
     // pipeline emits a real stage-render action or honestly abstains — it never claims a fake render.
     if (!data.imageData && detectPanelRequest(prompt)) {
+      // Show the panel INSTANTLY as a loading skeleton, then stream phase updates, so a ~20s LIVE
+      // render never feels like a dead screen. `ui` events are dispatched by the client mid-stream.
+      const skeleton = (loading) => sendEvent({ type: "ui", uiActions: [{ type: "stage-render", data: { title: "Building your panel", blocks: [], loading } }] });
+      skeleton("Reading your request…");
       let stage = null;
-      try { stage = await getStagePipeline().run(prompt, { history }); }
+      try { stage = await getStagePipeline().run(prompt, { history, onPhase: skeleton }); }
       catch (err) { console.error("[stage-pipeline] error, falling through to brain:", err && err.message); stage = null; }
       if (stage && stage.handled) {
         const ui = (stage.uiActions && stage.uiActions[0]) || {};

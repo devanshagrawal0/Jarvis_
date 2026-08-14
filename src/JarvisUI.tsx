@@ -316,6 +316,18 @@ type PreparedAttachment = { dataUrl?: string; text?: string; name: string; mimeT
 //
 // One question, asked once. The answer is saved, and every later mention of that name goes straight
 // to the right conversation without a search.
+// Dispatch backend UI actions to the HUD. Shared by the final result AND mid-stream `ui` events
+// (the Stage skeleton streamed while a slow panel renders), so both take the exact same path.
+function dispatchUiActions(actions: unknown[]) {
+  for (const a of (actions as Array<{ type?: string; id?: string; focus?: boolean }>)) {
+    if (a?.type === "open-widget" && a.id) {
+      document.dispatchEvent(new CustomEvent("jarvis:open-widget", { detail: { id: a.id, focus: !!a.focus } }));
+    } else {
+      document.dispatchEvent(new CustomEvent("jarvis:ui", { detail: a as JarvisUiAction }));
+    }
+  }
+}
+
 function ContactChoiceCard({ card, onChoose }: { card: JarvisResponseCard; onChoose: (card: JarvisResponseCard, candidate: JarvisContactCandidate) => Promise<void> }) {
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState("");
@@ -654,7 +666,9 @@ export function JarvisUI() {
           label: String(event.label || "Activity"), detail: event.detail ? String(event.detail) : undefined,
           timestamp: envelope.timestamp ? String(envelope.timestamp) : undefined,
           sequence: Number(envelope.sequence || 0), tool: event.tool ? String(event.tool) : undefined,
-        }].slice(-18))
+        }].slice(-18)),
+        // Mid-stream UI actions (e.g. the Stage skeleton shown while a slow panel renders).
+        (uiActions) => dispatchUiActions(uiActions)
       );
       const r = result;
       // Cortex v4 — snap to the canonical final text (kills any streamed-delta doubling glitch).
@@ -672,15 +686,7 @@ export function JarvisUI() {
         }
       }
       // Cortex v4 P1.3 — HUD actions from the backend (open a widget, optionally in focus mode).
-      if (Array.isArray(r?.uiActions)) {
-        for (const a of r.uiActions) {
-          if (a?.type === "open-widget" && a.id) {
-            document.dispatchEvent(new CustomEvent("jarvis:open-widget", { detail: { id: a.id, focus: !!a.focus } }));
-          } else {
-            document.dispatchEvent(new CustomEvent("jarvis:ui", { detail: a as JarvisUiAction }));
-          }
-        }
-      }
+      if (Array.isArray(r?.uiActions)) dispatchUiActions(r.uiActions);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       if (msg !== "AbortError") {

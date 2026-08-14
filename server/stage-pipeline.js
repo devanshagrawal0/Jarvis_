@@ -150,6 +150,8 @@ function createStagePipeline({ getSettings }) {
   async function run(prompt, ctx = {}) {
     const settings = getSettings ? getSettings() : {};
     if (!settings.geminiKey || !String(prompt || "").trim()) return { handled: false };
+    // Optional progress callback so the caller can stream a skeleton panel while we work.
+    const phase = typeof ctx.onPhase === "function" ? ctx.onPhase : () => {};
 
     const decision = await router.route(prompt, ctx);
 
@@ -161,16 +163,19 @@ function createStagePipeline({ getSettings }) {
     const ai = new GoogleGenAI({ apiKey: settings.geminiKey });
 
     if (decision.lane === "FICTION") {
+      phase("Composing the surface…");
       const r = await genBlocks(ai, `Build a Stage surface (typed blocks) for this request. This is ILLUSTRATIVE / sample content — invent plausible example values. Request: "${prompt}"${LAYOUT_RULES}`);
       return r ? stageResult(r, decision, { kind: "illustrative" }) : { handled: false, decision };
     }
 
     if (decision.lane === "STABLE") {
+      phase("Composing the surface…");
       const r = await genBlocks(ai, `Build a Stage surface (typed blocks) for this request using ONLY durable facts you are confident are correct. If unsure of a figure, omit it — never guess. Request: "${prompt}"${LAYOUT_RULES}`);
       return r ? stageResult(r, decision, { kind: "model-knowledge" }) : { handled: false, decision };
     }
 
     // LIVE — fetch first, render only from what came back.
+    phase("Fetching live data…");
     const g = await ground(ai, prompt);
     if (!g || !g.text) {
       return {
@@ -179,6 +184,7 @@ function createStagePipeline({ getSettings }) {
         text: "I don't have live data for that right now, sir — I won't fabricate it.",
       };
     }
+    phase("Rendering from the data…");
     let r = await genBlocks(ai, `Render a Stage surface (typed blocks) STRICTLY from the DATA below. Do NOT add, round, extrapolate, or invent ANY number, name, or figure that is not present in DATA. If a value the layout wants isn't in DATA, omit it. Request: "${prompt}"${LAYOUT_RULES}`, g.text);
     if (!r) return { handled: false, decision };
 

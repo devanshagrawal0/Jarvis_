@@ -14,7 +14,7 @@ type Block =
   | { type: "stat"; label?: string; value?: string; delta?: string }
   | { type: "list"; items: string[] }
   | { type: "divider" };
-type StageState = { title: string; content?: string; blocks?: Block[]; key: number } | null;
+type StageState = { title: string; content?: string; blocks?: Block[]; loading?: string; key: number } | null;
 type Rect = { x: number; y: number; w: number; h: number };
 
 const MIN_W = 380, MIN_H = 240;
@@ -138,6 +138,10 @@ const STYLE = `
 .jr-blk-stat-delta.down { color: #e88a8a; }
 .jr-blk-stat-delta.flat { color: #9fb4c8; }
 .jr-blk-div { height: 1px; background: linear-gradient(90deg, transparent, rgba(110,185,235,.16), transparent); margin: 3px 0; }
+.jr-stage-loading { display: flex; align-items: center; gap: 10px; padding: 8px 2px; color: rgba(170,200,225,.85); font-size: 13px; }
+.jr-stage-spin { width: 14px; height: 14px; flex: none; border-radius: 50%; border: 2px solid rgba(120,190,235,.25);
+  border-top-color: rgba(140,210,245,.95); animation: jr-stage-spin 0.7s linear infinite; }
+@keyframes jr-stage-spin { to { transform: rotate(360deg); } }
 `;
 
 const IconEdit = () => (<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 20h9" /><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z" /></svg>);
@@ -193,7 +197,7 @@ export function StageSurface() {
       el.id = "jr-stage-style"; el.textContent = STYLE; document.head.appendChild(el);
     }
     const onUi = (e: Event) => {
-      const d = (e as CustomEvent).detail as { type?: string; data?: { title?: string; content?: string; blocks?: Block[] } } | undefined;
+      const d = (e as CustomEvent).detail as { type?: string; data?: { title?: string; content?: string; blocks?: Block[]; loading?: string } } | undefined;
       const stamp = (title: string) => {
         const now = new Date();
         stageSeq += 1;
@@ -211,11 +215,19 @@ export function StageSurface() {
         setStage({ title, content: d.data.content, key: Date.now() });
         setRect((prev) => prev ?? defaultRect());
       }
-      if (d?.type === "stage-render" && Array.isArray(d.data?.blocks) && d.data.blocks.length) {
+      if (d?.type === "stage-render") {
+        const blocks = Array.isArray(d.data?.blocks) ? d.data.blocks : [];
+        const loading = typeof d.data?.loading === "string" ? d.data.loading : "";
+        if (!blocks.length && !loading) return; // nothing to show
         userSized.current = false;
         const title = d.data.title || "Jarvis";
         stamp(title);
-        setStage({ title, blocks: d.data.blocks, key: Date.now() });
+        // Keep the SAME key from the loading skeleton through to the final blocks, so the panel
+        // morphs in place instead of remounting/flickering between phases.
+        setStage((prev) => {
+          const key = prev && prev.loading ? prev.key : Date.now();
+          return blocks.length ? { title, blocks, key } : { title, loading, key };
+        });
         setRect((prev) => prev ?? defaultRect());
       }
     };
@@ -305,7 +317,9 @@ export function StageSurface() {
 
       <div className="jr-stage-body">
         <div ref={contentRef}>
-          {stage.blocks ? <StageBlocks blocks={stage.blocks} /> : <JarvisMarkdown text={stage.content || ""} />}
+          {stage.loading
+            ? <div className="jr-stage-loading"><span className="jr-stage-spin" aria-hidden /><span>{stage.loading}</span></div>
+            : stage.blocks ? <StageBlocks blocks={stage.blocks} /> : <JarvisMarkdown text={stage.content || ""} />}
         </div>
       </div>
 
