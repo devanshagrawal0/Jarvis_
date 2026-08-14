@@ -14,7 +14,7 @@ type Block =
   | { type: "text"; text: string }
   | { type: "stat"; label?: string; value?: string; delta?: string }
   | { type: "list"; items: string[] }
-  | { type: "calendar"; events?: unknown[]; dateLabel?: string }
+  | { type: "calendar"; events?: unknown[]; upcoming?: unknown[]; dateLabel?: string }
   | { type: "divider" };
 type StageState = { title: string; content?: string; blocks?: Block[]; loading?: string; key: number } | null;
 type Rect = { x: number; y: number; w: number; h: number };
@@ -25,16 +25,23 @@ const CHROME = 106;
 
 let stageSeq = 0;
 
-function defaultRect(wide = false): Rect {
+function defaultRect(cal = false): Rect {
   const vw = window.innerWidth, vh = window.innerHeight;
-  // Wide layouts (the calendar day-grid) need more room than a stat panel.
-  const w = wide ? Math.min(600, Math.max(440, Math.round(vw * 0.4))) : Math.min(414, Math.max(300, Math.round(vw * 0.27)));
+  if (cal) {
+    // The calendar room is a large, centered surface (its own HUD frame, no panel chrome). It must
+    // sit ABOVE the command bar at the bottom, not behind it.
+    const w = Math.min(1260, Math.round(vw * 0.9));
+    const topY = Math.max(10, Math.round(vh * 0.02));
+    const h = Math.min(930, vh - topY - 178);
+    return { x: Math.round((vw - w) / 2), y: topY, w, h };
+  }
+  const w = Math.min(414, Math.max(300, Math.round(vw * 0.27)));
   const h = Math.min(400, Math.max(230, Math.round(vh * 0.4)));
   const x = Math.max(20, vw - w - 32);
   const y = Math.max(20, Math.round(vh * 0.11));
   return { x, y, w, h };
 }
-const hasWideBlock = (blocks?: Block[]) => Array.isArray(blocks) && blocks.some((b) => b.type === "calendar");
+const isCalendar = (blocks?: Block[]) => Array.isArray(blocks) && blocks.some((b) => b.type === "calendar");
 const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v));
 const two = (n: number) => String(n).padStart(2, "0");
 
@@ -124,6 +131,11 @@ const STYLE = `
 .jr-stage-grip { position: absolute; right: 4px; bottom: 4px; width: 14px; height: 14px; cursor: nwse-resize; z-index: 3; opacity: .8;
   background: linear-gradient(135deg, transparent 52%, rgba(120,200,255,.5) 52%, rgba(120,200,255,.5) 64%, transparent 64%, transparent 76%, rgba(120,200,255,.5) 76%);
   border-bottom-right-radius: 16px; }
+/* bare mode — the calendar room provides its own HUD frame, so strip the panel chrome */
+.jr-stage-bare { background: transparent; border: none; box-shadow: none; border-radius: 14px; overflow: hidden; }
+.jr-stage-body-bare { padding: 0 !important; overflow: hidden !important; box-shadow: none !important; height: 100%; }
+.jr-stage-drag { position: absolute; top: 0; left: 0; right: 54px; height: 30px; z-index: 10; cursor: move; }
+.jr-stage-x-float { position: absolute; top: 20px; right: 22px; z-index: 12; }
 /* W3 — generative blocks */
 .jr-blocks { display: flex; flex-direction: column; gap: 12px; }
 .jr-blk-heading { font-size: 14px; font-weight: 600; color: #dbe8f6; margin: 2px 0 -3px; }
@@ -227,7 +239,7 @@ export function StageSurface() {
           const key = prev && prev.loading ? prev.key : Date.now();
           return blocks.length ? { title, blocks, key } : { title, loading, key };
         });
-        setRect((prev) => prev ?? defaultRect(hasWideBlock(blocks)));
+        setRect((prev) => prev ?? defaultRect(isCalendar(blocks)));
       }
     };
     const onClose = () => setStage(null);
@@ -263,7 +275,7 @@ export function StageSurface() {
   // Fit height to content: short notes stay compact, long briefings grow up to ~92% of
   // the screen and scroll only past that. Owner's manual resize wins.
   useLayoutEffect(() => {
-    if (!stage || userSized.current) return;
+    if (!stage || userSized.current || isCalendar(stage.blocks)) return; // calendar fills its fixed rect
     const content = contentRef.current;
     if (!content) return;
     const vh = window.innerHeight;
@@ -300,6 +312,23 @@ export function StageSurface() {
   if (!stage || !rect) return null;
 
   const stop = (e: React.PointerEvent) => e.stopPropagation();
+
+  // The calendar renders bare — no panel chrome, since the room provides its own HUD frame + header.
+  if (isCalendar(stage.blocks)) {
+    return (
+      <div className="jr-stage deploy jr-stage-bare" key={stage.key} role="dialog" aria-label={stage.title}
+        style={{ left: rect.x, top: rect.y, width: rect.w, height: rect.h }}>
+        <div className="jr-stage-drag" onPointerDown={startDrag("move")} title="Drag" />
+        <button className="jr-stage-x jr-stage-x-float" onPointerDown={stop} onClick={() => setStage(null)} title="Close (Esc)">✕</button>
+        <div className="jr-stage-body jr-stage-body-bare">
+          <div ref={contentRef} style={{ height: "100%" }}>
+            <SurfaceRenderer surface={blocksToSurface(stage.blocks!)} />
+          </div>
+        </div>
+        <div className="jr-stage-grip" onPointerDown={startDrag("resize")} title="Resize" />
+      </div>
+    );
+  }
 
   return (
     <div className="jr-stage deploy" key={stage.key} role="dialog" aria-label={stage.title}

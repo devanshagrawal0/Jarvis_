@@ -927,20 +927,22 @@ function getStagePipeline() {
 // events come straight from the calendar API — the model never generates them, so this surface
 // cannot fabricate. Same source as /api/atlas/today's timeline.
 async function getStageDayEvents() {
-  if (!atlasStore) return { events: [], dateLabel: "today" };
+  if (!atlasStore) return { events: [], upcoming: [], dateLabel: "today" };
   const loc = userContext ? userContext.resolveLocation() : { ianaTz: "America/New_York" };
   const tz = (loc && loc.ianaTz) || "America/New_York";
   const { startIso, endIso } = atlasLocalDayBounds(tz);
-  let events = atlasStore.eventsBetween(startIso, endIso) || [];
   const gcal = getAtlasGoogleCalendar();
-  if (gcal) {
-    try { const g = await gcal.eventsBetween(startIso, endIso); if (g && g.length) events = [...events, ...g]; }
-    catch (e) { console.error("[stage-calendar] google fetch failed:", e && e.message); }
-  }
-  const clean = events
-    .sort((a, b) => String(a.startAt).localeCompare(String(b.startAt)))
-    .map((e) => ({ title: e.title || "(no title)", startAt: e.startAt || null, endAt: e.endAt || null, allDay: Boolean(e.allDay), location: e.location || "" }));
-  return { events: clean, dateLabel: "today", tz };
+  const gather = async (fromIso, toIso) => {
+    let evs = atlasStore.eventsBetween(fromIso, toIso) || [];
+    if (gcal) { try { const g = await gcal.eventsBetween(fromIso, toIso); if (g && g.length) evs = [...evs, ...g]; } catch (e) { console.error("[stage-calendar] google fetch failed:", e && e.message); } }
+    return evs
+      .sort((a, b) => String(a.startAt).localeCompare(String(b.startAt)))
+      .map((e) => ({ title: e.title || "(no title)", startAt: e.startAt || null, endAt: e.endAt || null, allDay: Boolean(e.allDay), location: e.location || "" }));
+  };
+  const events = await gather(startIso, endIso);
+  const upEnd = new Date(new Date(endIso).getTime() + 14 * 86400_000).toISOString();
+  const upcoming = (await gather(endIso, upEnd)).slice(0, 6);
+  return { events, upcoming, dateLabel: "today", tz };
 }
 
 // Deterministic detector: does the owner want to SEE their day/calendar (a read), not change it?
@@ -11337,11 +11339,11 @@ ${entryText}`;
     // (~1 API call), so no skeleton needed.
     if (!data.imageData && detectCalendarStageRequest(prompt)) {
       try {
-        const { events, dateLabel } = await getStageDayEvents();
+        const { events, upcoming, dateLabel } = await getStageDayEvents();
         const txt = events.length
           ? `Here's your day, sir — ${events.length} event${events.length === 1 ? "" : "s"}.`
           : "Your calendar is clear today, sir.";
-        const uiAction = { type: "stage-render", data: { title: "Today", blocks: [{ type: "calendar", events, dateLabel }], provenance: { kind: "calendar" } } };
+        const uiAction = { type: "stage-render", data: { title: "Today", blocks: [{ type: "calendar", events, upcoming, dateLabel }], provenance: { kind: "calendar" } } };
         sendEvent({ type: "event", event: { kind: "ui", status: "complete", label: "Calendar", detail: `${events.length} events` } });
         sendEvent({ type: "delta", text: txt });
         sendEvent({ type: "done", result: { response: txt, model: "stage", sources: [], uiActions: [uiAction] } });
