@@ -102,6 +102,14 @@ const VIEWS = [
     hard: /\b(disconnected|offline)\b/i, soft: /\b(connected|online|healthy)\b/i,
     infer: null,
     pick: (p) => /\b(disconnected|offline)\b/i.test(p) ? "disconnected" : "connected" },
+  // Memory: infer:null on purpose — its view words (history/search/system/graph) are too common to
+  // safely guess, and "graph" would collide with the separate Graph widget. Requires "memory" named.
+  { id: "memory",
+    hard: /\b(continuity|timeline|history|sessions?|architecture|structure|schema|explore|search|browse|memories|objects?)\b/i,
+    soft: null,
+    infer: null,
+    pick: (p) => /\b(continuity|timeline|history|sessions?)\b/i.test(p) ? "continuity"
+      : /\b(architecture|structure|schema)\b/i.test(p) ? "architecture" : "explore" },
 ];
 
 function detectWidgetView(text, ctx = {}) {
