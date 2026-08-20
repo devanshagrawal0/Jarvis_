@@ -52,6 +52,7 @@ export const WIDGETS: WidgetDef[] = [
   { id: "receipts",    label: "Receipts",    icon: "◻", group: "work",         blurb: "Signed record of what Jarvis did" },
 
   { id: "today",       label: "Today",       icon: "◔", group: "personal",     blurb: "Your day: now, next, tasks and what needs you" },
+  { id: "calendar",    label: "Calendar",    icon: "▦", group: "personal",     blurb: "Your day on a time grid — events, schedule, upcoming" },
   { id: "contacts",    label: "Contacts",    icon: "☏", group: "personal",     blurb: "People, their handles and conversations" },
   { id: "profile",     label: "Profile",     icon: "◐", group: "personal",     blurb: "Who Jarvis understands you to be" },
   { id: "weather",     label: "Weather",     icon: "☀", group: "personal",     blurb: "Conditions where you are" },

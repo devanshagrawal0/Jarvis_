@@ -493,6 +493,9 @@ export function JarvisUI() {
     return () => document.removeEventListener("jarvis:open-widget", handle);
   }, []);
 
+  // (Calendar opens as a real strip widget — see WidgetStrip's "calendar" case — so no separate
+  // Stage render here; that would double-open. The widget fetches /api/stage/calendar itself.)
+
   // Synapse — the board widget tile expands to the full-screen room via this event.
   useEffect(() => {
     function openSynapse() { setSynapseOpen(true); setLauncherOpen(false); }

@@ -26,6 +26,9 @@ type Props = {
   onClose: () => void;
   onRefresh: () => void;
   children: ReactNode;
+  // Widgets that draw their own complete surface (frame, header, controls) — the Calendar — render
+  // BARE: no window chrome at all, or the title/icon/border appear twice, one box inside another.
+  bare?: boolean;
 };
 
 function clamp(value: number, min: number, max: number) {
@@ -59,9 +62,47 @@ function bindPointer(
   window.addEventListener("pointerup", onUp, { once: true });
 }
 
-export function SpatialWidgetFrame({ state, icon, title, stat, status, fetchedAt, loading, onFocus, onUpdate, onClose, onRefresh, children }: Props) {
+export function SpatialWidgetFrame({ state, icon, title, stat, status, fetchedAt, loading, onFocus, onUpdate, onClose, onRefresh, children, bare }: Props) {
   const moveStart = { x: state.x, y: state.y };
   const sizeStart = { w: state.w, h: state.h };
+  const startMove = (event: ReactPointerEvent) => {
+    onFocus();
+    bindPointer(event, (dx, dy) => onUpdate({
+      x: clamp(moveStart.x + dx, 8, Math.max(8, window.innerWidth - 180)),
+      y: clamp(moveStart.y + dy, 6, Math.max(6, window.innerHeight - 120)),
+    }));
+  };
+
+  // Bare: the widget IS the surface. Only a drag strip, a close button and the resize grip ride on
+  // top of it — everything else (title, icon, border, status) is drawn by the widget itself.
+  if (bare) {
+    return (
+      <section
+        className={`spatial-widget spatial-widget--${state.mode} spatial-widget--bare`}
+        data-widget-id={state.id}
+        style={{ left: state.x, top: state.y, width: state.w, height: state.h, zIndex: state.z }}
+        aria-label={`${title} widget`}
+        onPointerDown={onFocus}
+      >
+        <div className="spatial-bare-drag" title="Drag" onPointerDown={startMove} />
+        <button
+          className="spatial-bare-x"
+          title="Close widget"
+          onPointerDown={(event) => event.stopPropagation()}
+          onClick={onClose}
+        >×</button>
+        <div className="spatial-widget-body">{children}</div>
+        <div
+          className="spatial-widget-resize"
+          title="Resize widget"
+          onPointerDown={(event) => bindPointer(event, (dx, dy) => onUpdate({
+            w: clamp(sizeStart.w + dx, 390, Math.max(390, window.innerWidth - state.x - 8)),
+            h: clamp(sizeStart.h + dy, 300, Math.max(300, window.innerHeight - state.y - 105)),
+          }))}
+        />
+      </section>
+    );
+  }
   const setMode = (mode: SpatialWidgetMode) => {
     if (mode === "expanded") {
       // Sit near the top and stop above the Jarvis command bar (~130px tall at the bottom) so the

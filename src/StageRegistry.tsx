@@ -1,6 +1,6 @@
 import { Fragment, type ReactNode } from "react";
 import { JarvisMarkdown } from "./JarvisMarkdown";
-import { CalendarRoom } from "./StageCalendar";
+import { CalendarWidget } from "./StageCalendar";
 
 // ── Stage block registry (W3a) ────────────────────────────────────────────────────────────────
 // The Stage's core bet (master plan §2.1): the model never emits UI code — it references blocks
@@ -48,11 +48,11 @@ export const REGISTRY: Record<string, Entry> = {
     },
   },
   list: { validate: (b) => Array.isArray(b?.props?.items) && b.props.items.length > 0, render: (b) => <ul className="jr-blk-list">{b.props.items.map((it: string, k: number) => <li key={k}>{it}</li>)}</ul> },
-  // The reusable Calendar room — hand-built once, filled with REAL events each run (never generated
+  // The reusable Calendar widget — hand-built once, filled with REAL events each run (never generated
   // by the model). Full HUD day view: header + tabs, time-grid, mini-month, today's schedule, upcoming.
   calendar: {
     validate: (b) => Array.isArray(b?.props?.events),
-    render: (b) => <CalendarRoom events={b.props.events} upcoming={b.props.upcoming} />,
+    render: (b) => <CalendarWidget events={b.props.events} upcoming={b.props.upcoming} />,
   },
   divider: { validate: () => true, render: () => <div className="jr-blk-div" /> },
 };

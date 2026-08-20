@@ -71,6 +71,26 @@
 }
 
 .spatial-widget:hover { border-color: rgba(var(--sw-cyan), .43); box-shadow: 0 24px 68px rgba(0,0,0,.64), 0 0 24px rgba(var(--sw-cyan), .07); }
+
+/* Bare widgets draw their own complete surface (frame, header, controls) — strip every piece of
+   window chrome so the widget's own frame is the ONLY frame, edge to edge, no duplicate header. */
+.spatial-widget--bare,
+.spatial-widget--bare:hover { border: none; background: none; box-shadow: none; border-radius: 0; }
+.spatial-widget--bare .spatial-widget-body { inset: 0; overflow: hidden; }
+.spatial-bare-drag { position: absolute; top: 0; left: 0; right: 66px; height: 46px; z-index: 10; cursor: move; }
+/* Close and resize stay INVISIBLE until the pointer is over the widget — at rest the calendar is the
+   only thing on screen, with no stray button sitting on top of its own header. */
+.spatial-bare-x {
+  position: absolute; top: 9px; right: 11px; z-index: 12;
+  width: 22px; height: 22px; padding: 0; font-size: 12px; line-height: 1; border-radius: 6px; cursor: pointer;
+  background: rgba(6, 22, 34, .72); border: 1px solid rgba(var(--sw-cyan), .3); color: rgba(200, 240, 255, .75);
+  opacity: 0; pointer-events: none; transition: opacity .14s ease;
+}
+.spatial-widget--bare:hover .spatial-bare-x { opacity: 1; pointer-events: auto; }
+.spatial-bare-x:hover { background: rgba(var(--sw-cyan), .14); color: #fff; }
+.spatial-widget--bare .spatial-widget-resize { opacity: 0; transition: opacity .14s ease; }
+.spatial-widget--bare:hover .spatial-widget-resize { opacity: .5; }
+
 .spatial-widget--expanded { border-color: rgba(var(--sw-cyan), .42); }
 .spatial-widget[data-status="warning"] { border-color: rgba(255, 182, 75, .34); }
 

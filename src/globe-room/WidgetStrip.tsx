@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "../api";
+import { CalendarWidget } from "../StageCalendar";
 import { KalshiChip, KalshiCard, KalshiExpanded } from "./KalshiWidget";
 import { TodayDashboard } from "./TodayDashboard";
 import { GoogleConnectChips } from "./GoogleConnectChips";
@@ -1396,6 +1397,7 @@ function getChipStat(id: string, data: any): string {
     case "runtime":     return `${(data.tasks ?? []).filter((task: any) => ["queued", "planning", "ready", "running", "waiting_approval", "waiting_owner", "paused", "recovering", "verified"].includes(task.state)).length} active`;
     case "contacts":    return `${data.contacts?.length ?? 0} known`;
     case "today":       return data.nowNext?.next ? new Date(data.nowNext.next.startAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }) : (data.counts?.openTasks ? `${data.counts.openTasks} tasks` : "clear");
+    case "calendar":    return `${data.events?.length ?? 0} today`;
     case "profile":     return data.identity?.preferred_name ?? "—";
     case "weather":     return data.current ? `${data.current.temp}°` : "—";
     case "vitals":      return data.memory ? `${data.memory.pct}%` : "—";
@@ -1495,6 +1497,8 @@ async function fetchWidgetData(id: string): Promise<any> {
       }));
     case "today":
       return widgetApi("/api/atlas/today", { available: false });
+    case "calendar":
+      return widgetApi("/api/stage/calendar", { events: [], upcoming: [] });
     case "profile":
       return widgetApi("/api/profile", { available: false });
     case "weather":
@@ -1699,6 +1703,7 @@ function LegacyWidgetStrip({ mode, showChips = true }: { mode: string; showChips
     const props = { data, loading, onClose: handleClose, onExpand: handleExpand };
     switch (id) {
       case "today":       return <TodayCard       {...props} key={id} />;
+      case "calendar":    return <div key={id} style={{ ...CARD_STYLE, width: 320, height: 440, padding: 0 }}><CalendarWidget events={data?.events ?? []} upcoming={data?.upcoming ?? []} /></div>;
       case "profile":     return <ProfileCard     {...props} key={id} />;
       case "weather":     return <WeatherCard     {...props} key={id} />;
       case "vitals":      return <VitalsCard      {...props} key={id} />;
@@ -1726,6 +1731,7 @@ function LegacyWidgetStrip({ mode, showChips = true }: { mode: string; showChips
     switch (id) {
       case "contacts":    return <ContactsCommandCenter data={data} loading={loading} onRefresh={() => void handleRefresh(id)} />;
       case "today":       return <TodayCommandCenter data={data} loading={loading} />;
+      case "calendar":    return <CalendarWidget events={data?.events ?? []} upcoming={data?.upcoming ?? []} />;
       case "profile":     return <ProfileCommandCenter data={data} loading={loading} />;
       case "weather":     return <WeatherCommandCenter data={data} loading={loading} />;
       case "vitals":      return <VitalsCommandCenter data={data} loading={loading} />;
@@ -1901,12 +1907,33 @@ const SPATIAL_STORAGE_KEY = "jarvis.spatial-widgets.v1";
 function loadSpatialWindows(): Record<string, SpatialWidgetState> {
   try {
     const parsed = JSON.parse(localStorage.getItem(SPATIAL_STORAGE_KEY) || "{}");
-    if (parsed && typeof parsed === "object") return parsed;
+    if (parsed && typeof parsed === "object") {
+      // A calendar rect saved before the aspect-correct sizing existed would letterbox the panel
+      // forever (the saved rect always wins over the default), so re-shape it to the canvas.
+      const cal = parsed.calendar;
+      if (cal && Math.abs(cal.w / Math.max(1, cal.h) - CAL_ASPECT) > 0.02) {
+        parsed.calendar = { ...cal, ...calendarWindow("calendar", 0), z: cal.z };
+      }
+      return parsed;
+    }
   } catch { /* start with a clean workspace */ }
   return {};
 }
 
+// The Calendar draws its own full surface on a fixed 1180×740 canvas. Opening it at any other
+// aspect letterboxes it (dead bands) and shrinks the type, so it gets a window of its own shape.
+const CAL_ASPECT = 1180 / 740;
+function calendarWindow(id: string, order: number): SpatialWidgetState {
+  const vw = window.innerWidth, vh = window.innerHeight;
+  let w = Math.min(1180, Math.round(vw * 0.74));
+  let h = Math.round(w / CAL_ASPECT);
+  const maxH = vh - 150;                       // clear the command bar
+  if (h > maxH) { h = Math.max(300, maxH); w = Math.round(h * CAL_ASPECT); }
+  return { id, mode: "normal", x: Math.max(12, Math.round((vw - w) / 2)), y: 16, w, h, z: 100 + order };
+}
+
 function defaultSpatialWindow(id: string, order: number, focus = false): SpatialWidgetState {
+  if (id === "calendar") return calendarWindow(id, order);
   const columns = Math.max(1, Math.floor((window.innerWidth - 80) / 560));
   const column = order % columns;
   const row = Math.floor(order / columns) % 2;
@@ -2208,6 +2235,7 @@ export function WidgetStrip({ mode }: { mode: string; showChips?: boolean }) {
       case "today":       return state.mode === "expanded"
                             ? <TodayDashboard data={data} loading={loading} onRefresh={() => void refresh(id)} onExpand={() => patchWindow(state.id, { mode: "expanded" })} /> // focused view: full reference dashboard
                             : <TodayCard {...props} embedded onRefresh={() => void refresh(id)} onExpand={() => patchWindow(state.id, { mode: "expanded" })} />;            // normal view: compact card
+      case "calendar":    return <CalendarWidget events={data?.events ?? []} upcoming={data?.upcoming ?? []} loading={loading || !data} />; // scales to fill the frame body (definite height), never scrolls
       case "profile":     return <ProfileCommandCenter data={data} loading={loading} />;
       case "weather":     return <WeatherCommandCenter data={data} loading={loading} />;
       case "vitals":      return <VitalsCommandCenter data={data} loading={loading} />;
@@ -2256,6 +2284,7 @@ export function WidgetStrip({ mode }: { mode: string; showChips?: boolean }) {
             onUpdate={(patch) => patchWindow(state.id, patch)}
             onClose={() => closeWindow(state.id)}
             onRefresh={() => void refresh(state.id)}
+            bare={state.id === "calendar"}
           >
             {renderSpatialContent(state.id, state)}
           </SpatialWidgetFrame>
