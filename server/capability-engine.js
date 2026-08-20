@@ -77,13 +77,10 @@ const WIDGET_CATALOG = [
   ["graph", "the knowledge / reality graph"],
   ["vision", "camera and vision feeds"],
   ["receipts", "receipts and the audit trail of what JARVIS has done"],
-  // Full-screen rooms. APEX is the markets room — live quotes, indices, tickers, charts, news — and
-  // it was missing from this list even though it is built and mounted. Without it the model had no
-  // markets surface to name, so a request to SEE market prices could only reach for `kalshi`
-  // (prediction markets, not equities) or answer in prose. The apex_* tools fetch the same data for
-  // a stage_render; this is for when the owner wants the room itself.
-  ["apex", "the APEX markets room — live equity/index prices, tickers, charts, market news, watchlists"],
-  ["arbiter", "the Arbiter room — Kalshi vs Polymarket divergence"],
+  // Full-screen rooms are NOT listed here on purpose. Opening one replaces the entire screen, so it
+  // happens only when the owner explicitly asks for it by name through the command bar — never
+  // inferred from a request like "I want to eyeball the market". Market data belongs on the Stage
+  // via stage_render and the apex_* tools, which is what panels are for.
   ["helix", "the HELIX research room"],
   ["synapse", "the Synapse co-op mesh room"],
 ];

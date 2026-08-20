@@ -18,7 +18,11 @@ const fs = require("node:fs");
 const path = require("node:path");
 
 const root = path.join(__dirname, "..", "..");
-const engineSource = fs.readFileSync(path.join(root, "server", "capability-engine.js"), "utf8");
+// Normalised to LF. The fragment markers below are written with "\n", so on a CRLF checkout —
+// which is what git hands you on Windows — `indexOf("\n}\n")` matches nothing and the whole file
+// fails to load with "could not find the end of function errorWithStatus". That is the test's own
+// line endings failing, not the guard it is meant to be checking.
+const engineSource = fs.readFileSync(path.join(root, "server", "capability-engine.js"), "utf8").replace(/\r\n/g, "\n");
 const { evaluateAutonomy } = require("../../server/autonomy-policy");
 
 // Lift the real guard out of the engine rather than reimplementing it, so the test tracks the

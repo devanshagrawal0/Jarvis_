@@ -331,10 +331,17 @@ function createAgentRuntime({ getSettings, toolGateway, codeKnowledge, memorySto
     const selectToolsFn = typeof toolGateway.selectToolsAsync === "function"
       ? toolGateway.selectToolsAsync
       : toolGateway.selectTools;
+    // Selection is ALWAYS consulted; the gateway decides whether the answer is "no tools".
+    //
+    // This used to be gated on the keyword classifier having set action/code/personal/fresh or a
+    // lane flag, which made a classification miss into a total capability blackout: selectTools was
+    // never called, the model was handed nothing, and it then refused or narrated an action it had
+    // no way to take. "I wanna eyeball the market, not read about it" lost its tools to the word
+    // "it"; "let me see" lost them for being short. The gateway already owns this decision — it has
+    // `isPureConversation`, which returns [] for a genuine conversation turn — so this was a second
+    // copy of the same judgement sitting in front of the first, and the cheaper copy always won.
     let selectedTools = forgeGenerative ? []
-      : (route.action || route.code || route.personal || route.fresh || browserTask || meshTask || forgeTask || continuationAction
-        ? await selectToolsFn.call(toolGateway, toolPrompt, { limit: toolLimit, intent: route.intent, route })
-        : []);
+      : await selectToolsFn.call(toolGateway, toolPrompt, { limit: toolLimit, intent: route.intent, route });
     const execution = forgeGenerative ? { lane: "none", tools: [] } : routeExecutionLane(prompt, settings);
     // TYPED INTENT BEATS THE BROWSER LANE. The execution-lane router over-fires on words that also
     // occur in ordinary assistant requests — "add a task to submit the form" (submit+form) and

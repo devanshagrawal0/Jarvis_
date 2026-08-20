@@ -114,9 +114,13 @@ function createToolGateway({ capabilityEngine, moduleRegistry, codeKnowledge, to
   // Semantic path. Returns an array of declarations, [] for a turn that genuinely needs no tool,
   // or null to mean "could not decide — use the legacy path".
   async function selectToolsSemantic(prompt, { limit, route, tokens }) {
-    const isPureConversation = (route.intent === "conversation" || route.intent === "conversation-follow-up")
-      && !route.action && !route.fresh && !route.personal && !route.code;
-    if (isPureConversation) return [];
+    // Only a plain "conversation" turn skips tools. `conversation-follow-up` used to skip too, and
+    // that label means the keyword classifier matched nothing AND the sentence carries a pronoun or
+    // is short — which is the case where it is LEAST able to know, not most: a pronoun refers to
+    // something the classifier cannot see. "I wanna eyeball the market not read about it" and "let
+    // me see" were both labelled follow-ups on the strength of one word, offered zero tools, and the
+    // brain then either refused or narrated an action it had no way to take.
+    if (route.intent === "conversation" && !route.action && !route.fresh && !route.personal && !route.code) return [];
 
     const lexRanked = capabilityEngine.definitions
       .map((definition) => ({ name: definition.name, score: scoreTool(definition, tokens) }))
@@ -433,8 +437,11 @@ function createToolGateway({ capabilityEngine, moduleRegistry, codeKnowledge, to
       : pureBrowserOperationPrompt
         ? selected.filter((name) => !["research_v2", "web_research", "web_research_deep", "url_read"].includes(name))
       : selected;
-    // T4c: skip tools entirely for pure conversation turns with no enrichment signals
-    const isPureConversation = (route.intent === "conversation" || route.intent === "conversation-follow-up")
+    // T4c: skip tools entirely for pure conversation turns with no enrichment signals.
+    // `conversation-follow-up` deliberately does NOT skip — see the note on the semantic path above.
+    // That label is "no keyword matched, and there is a pronoun", which is the classifier telling us
+    // it cannot see the referent, not that no tool is needed.
+    const isPureConversation = route.intent === "conversation"
       && !route.action && !route.fresh && !route.personal && !route.code
       && filteredAlwaysUseful.length === 0;
     if (isPureConversation) return [];
