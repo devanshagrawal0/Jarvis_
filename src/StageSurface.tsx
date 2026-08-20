@@ -15,6 +15,7 @@ type Block =
   | { type: "stat"; label?: string; value?: string; delta?: string }
   | { type: "list"; items: string[] }
   | { type: "calendar"; events?: unknown[]; upcoming?: unknown[]; dateLabel?: string }
+  | { type: "chart"; points?: { t: string; v: number }[]; kind?: string; label?: string }
   | { type: "divider" };
 type StageState = { title: string; content?: string; blocks?: Block[]; loading?: string; key: number } | null;
 type Rect = { x: number; y: number; w: number; h: number };
@@ -154,6 +155,11 @@ const STYLE = `
 .jr-blk-stat-delta.down { color: #e88a8a; }
 .jr-blk-stat-delta.flat { color: #9fb4c8; }
 .jr-blk-div { height: 1px; background: linear-gradient(90deg, transparent, rgba(110,185,235,.16), transparent); margin: 3px 0; }
+/* chart block (W3c) — the graph sits in a recessed well so it reads as instrumentation, not artwork */
+.jr-blk-chart { border: 1px solid rgba(110,185,235,.14); border-radius: 12px; padding: 9px 10px 6px;
+  background: linear-gradient(180deg, rgba(16,30,50,.5), rgba(8,15,26,.35)); box-shadow: inset 0 1px 0 rgba(150,205,240,.05); }
+.jr-blk-chart-label { font-size: 9.5px; letter-spacing: .16em; text-transform: uppercase; color: rgba(122,190,232,.78);
+  margin: 0 0 6px 2px; font-family: ui-monospace, "SF Mono", Consolas, monospace; }
 /* calendar day view (W3b) — HUD time-grid: hour rail + events positioned by time + now-line */
 .jr-cal-empty { font-size: 13px; color: rgba(160,190,215,.72); padding: 6px 2px; }
 .jr-cal-day { display: flex; flex-direction: column; gap: 10px; }

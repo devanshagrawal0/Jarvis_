@@ -33,6 +33,13 @@ function dataValues(blocks) {
       if (b.delta) vals.push({ where: `stat "${b.label || ""}" delta`, text: String(b.delta) });
     } else if (b.type === "list") {
       (Array.isArray(b.items) ? b.items : []).forEach((it, i) => vals.push({ where: `list item ${i + 1}`, text: String(it) }));
+    } else if (b.type === "chart") {
+      // A chart is the most persuasive way there is to state a number, so its series is audited
+      // exactly like a stat card. Without this, a fabricated price becomes invisible to the gate the
+      // moment it is drawn as a line instead of written as a figure.
+      (Array.isArray(b.points) ? b.points : []).forEach((p, i) => {
+        if (p && Number.isFinite(Number(p.v))) vals.push({ where: `chart "${b.label || ""}" point ${i + 1}`, text: String(p.v) });
+      });
     } else if (b.type === "text" || b.type === "heading") {
       if (b.text) vals.push({ where: b.type, text: String(b.text) });
     }

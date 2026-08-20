@@ -550,6 +550,9 @@ function createCapabilityEngine({
     ["apex_news", "Read APEX's ranked market-news feed produced by the news intelligence engine: top clustered + credibility-verified stories with their lane (macro/finance/commodities/crypto/geopolitics/weather), corroboration count, and mapped ticker/sector impact with direction. Pass a ticker to see only news-driven impact on that symbol. Use to answer what's moving markets or news on a specific stock.", "observe", false],
     ["apex_market_snapshot", "Get a full live APEX market snapshot in one call: regime (risk-on/off score + fear&greed), major indices, crypto global stats, top 3 stock + crypto gainers AND losers, macro series (Fed funds, 10Y, CPI, unemployment), and the top ranked news. Use this to brief the user on the market or answer 'what's happening today' with real live data.", "observe", false],
     ["apex_ticker_report", "Deep on-demand report for one ticker: latest quote, fundamentals (P/E, market cap, beta — equities), news-driven impact, and recent insider transactions. Use for 'tell me about NVDA' or 'deep dive TSLA'.", "observe", false],
+    // The only source of a real price SERIES. Without it the chart block had nothing to draw, and a
+    // "chart bitcoin over the last week" answered from the model's own memory with stale figures.
+    ["apex_price_history", "Real historical price series for a ticker — the actual stored OHLCV bars, oldest first. This is where a price CHART or any question about a move over time gets its numbers: 'chart nvidia over the last month', 'graph bitcoin this week', 'how has AAPL moved since June', 'plot the S&P'. Pass `ticker` and optionally `days` (default 30) and `timeframe` ('1d' daily, default; '1wk' weekly; '5m' intraday). Returns real recorded bars — never estimate a series yourself, call this and render what it returns.", "observe", false],
     ["apex_health_check", "Run the APEX Data Health Bot: audit every enabled data source (keyless + keyed) for reachability, return a per-source report, an analysis, and PROPOSED config fixes for any that are down. Read-only — proposes fixes but does not apply them. Follow with apex_health_apply once the user approves.", "observe", false],
     ["apex_health_apply", "Apply the data-source fixes proposed by the last apex_health_check (after the user approves), hot-reload the ingestion governor WITHOUT restarting the server, then re-verify and report the new health. Optionally pass specific source ids to apply only those.", "execute", false],
     ["apex_brief", "Get a data-grounded market brief assembled from live APEX data: a headline, a narrative paragraph, index session (yesterday close→today open→gap→range), top movers, sector leaders/laggards, macro, top news, and 'things to watch'. type can be now, morning, or eod. Use to brief the user on the market.", "observe", false],
@@ -573,7 +576,7 @@ function createCapabilityEngine({
     // could only ever come back as a prose note. Merged, there is no wrong choice left to make — a
     // plain note is simply a single 'text' block. `stage_show` still EXECUTES (see the handler) so
     // older callers keep working, but it is no longer declared, so the model never sees it.
-    ["stage_render", "Put something on Jarvis's STAGE — the owner's own on-screen panel — instead of answering in chat. Use this whenever the owner wants a thing SHOWN rather than told: 'put it on the panel', 'show me', 'pull that up', 'throw it on the big screen', 'draw it', 'lay it out', 'add X to the panel', 'open a surface with …', or any request naming a panel / stage / surface / display / screen. Also use it when the answer is genuinely better seen than read — several numbers to compare, a ranked or grouped list, a schedule, a multi-part breakdown. Pass `blocks`: an ordered array that MIXES prose and structure freely — 'heading', 'text' (markdown), 'stat' (label + value + optional delta like '+2.1%'), 'list' (items[]), 'divider'. Consecutive 'stat' blocks lay out side by side. For a plain note, pass a single 'text' block. It appears instantly on the owner's screen; nothing is saved. Do NOT use it for greetings, yes/no answers, a single fact, or anything one sentence answers well.", "observe", false],
+    ["stage_render", "Put something on Jarvis's STAGE — the owner's own on-screen panel — instead of answering in chat. Use this whenever the owner wants a thing SHOWN rather than told: 'put it on the panel', 'show me', 'pull that up', 'throw it on the big screen', 'draw it', 'lay it out', 'add X to the panel', 'open a surface with …', or any request naming a panel / stage / surface / display / screen. Also use it when the answer is genuinely better seen than read — several numbers to compare, a ranked or grouped list, a schedule, a multi-part breakdown. Pass `blocks`: an ordered array that MIXES prose and structure freely — 'heading', 'text' (markdown), 'stat' (label + value + optional delta like '+2.1%'), 'list' (items[]), 'chart' (a real line/area/bar graph — give it `points` oldest-first and a `label`; use it whenever the answer is a series over time, like a price history or a trend), 'divider'. Consecutive 'stat' blocks lay out side by side. For a plain note, pass a single 'text' block. It appears instantly on the owner's screen; nothing is saved. Do NOT use it for greetings, yes/no answers, a single fact, or anything one sentence answers well.", "observe", false],
     ["atlas_log_past", "Retroactively LOG something that already happened, for time-tracking — 'I had lunch with John at 1pm', 'log that I met the client at 11', 'I finished the report at 3pm', 'just wrapped a call with Sam'. Pass `title` (what happened) and the time is taken from the owner's words. It records a past event at that time TODAY (the tool pulls the clock time back so it lands in the past, not the future). Use ONLY for things the owner says already happened (past tense: had/met/finished/did/wrapped). Saves immediately, undoable.", "execute", false],
     ["calendar_list_events", "Read the owner's REAL Google Calendar over a time window. Call this whenever the owner asks what's on their (Google) calendar, whether something is on it, their meetings/events, or to confirm an event exists. timeMin/timeMax are ISO 8601 (default: now to +7 days). This is your ONLY way to see the real Google Calendar — never claim you can't check it.", "observe", false],
     ["calendar_create_event", "Create a real event on the owner's Google Calendar (the actual calendar, not the local Today list). Use when the owner says 'add to my calendar', 'put X on my calendar', 'schedule X', or 'add an event'. YOU extract title, and startAt as an ISO 8601 timestamp in the owner's local time WITH offset; optional endAt (default +1h) and location. This is a real external write — it is confirmed with the owner before it goes through, so do NOT say it's done until the confirmation completes.", "commit", true],
@@ -635,6 +638,11 @@ function createCapabilityEngine({
     { name: "apex_news", description: description("apex_news"), parameters: { type: "OBJECT", properties: { ticker: { type: "STRING", description: "Optional ticker to filter news impact, e.g. NVDA. Omit for the full ranked feed." }, limit: { type: "INTEGER", description: "Max stories/rows, 1 to 30." } } } },
     { name: "apex_market_snapshot", description: description("apex_market_snapshot"), parameters: { type: "OBJECT", properties: {} } },
     { name: "apex_ticker_report", description: description("apex_ticker_report"), parameters: { type: "OBJECT", properties: { ticker: { type: "STRING", description: "The ticker, e.g. NVDA, AAPL, BTC." } }, required: ["ticker"] } },
+    { name: "apex_price_history", description: description("apex_price_history"), parameters: { type: "OBJECT", properties: {
+      ticker: { type: "STRING", description: "The ticker, e.g. NVDA, AAPL, BTC-USD, ^GSPC." },
+      days: { type: "NUMBER", description: "How far back to go, in days. Default 30." },
+      timeframe: { type: "STRING", description: "'1d' daily (default), '1wk' weekly, or '5m' intraday." },
+    }, required: ["ticker"] } },
     { name: "apex_health_check", description: description("apex_health_check"), parameters: { type: "OBJECT", properties: {} } },
     { name: "apex_health_apply", description: description("apex_health_apply"), parameters: { type: "OBJECT", properties: { ids: { type: "ARRAY", items: { type: "STRING" }, description: "Optional source ids to apply (from the proposed fixes). Omit to apply all proposed fixes." } } } },
     { name: "apex_brief", description: description("apex_brief"), parameters: { type: "OBJECT", properties: { type: { type: "STRING", description: "now, morning, or eod." } } } },
@@ -762,12 +770,21 @@ function createCapabilityEngine({
     { name: "stage_render", description: description("stage_render"), parameters: { type: "OBJECT", properties: {
       title: { type: "STRING", description: "Short title for the Stage panel." },
       blocks: { type: "ARRAY", description: "Ordered blocks to render top-to-bottom.", items: { type: "OBJECT", properties: {
-        type: { type: "STRING", description: "One of: heading, text, stat, list, divider." },
+        type: { type: "STRING", description: "One of: heading, text, stat, list, chart, divider." },
         text: { type: "STRING", description: "For 'heading' or 'text' blocks." },
-        label: { type: "STRING", description: "For a 'stat' block: the metric name (e.g. 'Open tasks')." },
+        label: { type: "STRING", description: "For a 'stat' block: the metric name (e.g. 'Open tasks'). For a 'chart' block: what the series is (e.g. 'BTC/USD')." },
         value: { type: "STRING", description: "For a 'stat' block: the value (e.g. '12', '$4,320', '68%')." },
         delta: { type: "STRING", description: "For a 'stat' block: optional change, e.g. '+2.1%' or '-3'." },
         items: { type: "ARRAY", items: { type: "STRING" }, description: "For a 'list' block: the line items." },
+        kind: { type: "STRING", description: "For a 'chart' block: line (default), area, or bar." },
+        points: {
+          type: "ARRAY",
+          description: "For a 'chart' block: the series, oldest first, at least 2 points. Every value must come from data a tool returned this turn — a drawn line asserts measurement even harder than a number does, so never estimate or smooth one.",
+          items: { type: "OBJECT", properties: {
+            t: { type: "STRING", description: "Date or ISO timestamp for this point, e.g. '2026-08-14'." },
+            v: { type: "NUMBER", description: "The value at that time." },
+          }, required: ["t", "v"] },
+        },
       } } },
     }, required: ["blocks"] } },
     { name: "calendar_list_events", description: description("calendar_list_events"), parameters: { type: "OBJECT", properties: {
@@ -2595,8 +2612,18 @@ function createCapabilityEngine({
         if (type === "list") return { type: "list", items: Array.isArray(b.items) ? b.items.map((i) => cleanString(i, 400)).filter(Boolean).slice(0, 24) : [] };
         if (type === "heading") return { type: "heading", text: cleanString(b.text, 160) };
         if (type === "divider") return { type: "divider" };
+        // W3c — chart. Points are coerced here so a malformed series can never reach the renderer:
+        // t is a date/ISO string, v is a finite number, anything else is dropped.
+        if (type === "chart") {
+          const points = (Array.isArray(b.points) ? b.points : [])
+            .map((p) => ({ t: cleanString(p && p.t, 32), v: Number(p && p.v) }))
+            .filter((p) => p.t && Number.isFinite(p.v))
+            .slice(0, 400);
+          const kind = ["line", "area", "bar"].includes(cleanString(b.kind, 8).toLowerCase()) ? cleanString(b.kind, 8).toLowerCase() : "line";
+          return { type: "chart", kind, label: cleanString(b.label, 60), points };
+        }
         return { type: "text", text: cleanString(b.text, 4000) };
-      }).filter((b) => b.type === "divider" || b.text || b.value || b.label || (b.items && b.items.length));
+      }).filter((b) => b.type === "divider" || b.text || b.value || b.label || (b.items && b.items.length) || (b.points && b.points.length));
       if (!blocks.length) throw errorWithStatus("The Stage needs some blocks to render, sir.", 400);
       // Anti-fabrication. When this turn actually fetched something, every FIGURE drawn has to trace
       // back to it — a surface that shows "$219.88" for a price no tool ever returned is a lie with a
@@ -2616,7 +2643,7 @@ function createCapabilityEngine({
             422,
           );
         }
-      } else if (blocks.some((b) => b.type === "stat")) {
+      } else if (blocks.some((b) => b.type === "stat" || b.type === "chart")) {
         // Nothing was fetched, and the surface is presenting FIGURES. The audit above compares
         // rendered numbers against fetched data, so with no fetch there is nothing to compare and it
         // silently passes — which is how a panel headed "Nvidia (NVDA) Intelligence Update" showed
@@ -2625,7 +2652,7 @@ function createCapabilityEngine({
         // worse than the same guess written in a sentence, where it at least looks like prose.
         // Prose blocks are not gated — only stat cards, which are the ones that assert precision.
         throw errorWithStatus(
-          "You're rendering stat cards but no tool fetched any data this turn, so those figures would be invented. Call the tool that actually has the numbers first (web_research, apex_market_snapshot, apex_ticker_report, kalshi_*, atlas_today — whatever fits), then render from what it returns. If the point is not numeric, use text/list blocks instead.",
+          "You're rendering figures (stat cards or a chart) but no tool fetched any data this turn, so those numbers would be invented. Call the tool that actually has them first (web_research, apex_market_snapshot, apex_ticker_report, kalshi_*, atlas_today — whatever fits), then render from what it returns. If the point is not numeric, use text/list blocks instead.",
           422,
         );
       }
@@ -2806,6 +2833,34 @@ function createCapabilityEngine({
       const newsImpact = (apex.getNewsImpact(sym, 6) || []).map((i) => ({ title: i.title, dir: i.sentiment_dir > 0 ? "bullish" : "bearish", sector: i.sector }));
       const insider = (apex.getInsider(sym) || []).slice(0, 8).map((t) => ({ name: t.name, side: t.side, shares: t.change, price: t.price, date: t.date }));
       return { ticker: sym, isCrypto, quote, fundamentals, newsImpact, insider };
+    },
+    apex_price_history: async (args) => {
+      const apex = getApex();
+      if (!apex) throw errorWithStatus("APEX data engine is not available in this runtime.", 412);
+      const sym = cleanString(args.ticker, 12).toUpperCase();
+      if (!sym) throw errorWithStatus("apex_price_history needs a ticker.", 400);
+      const tf = ["1d", "1wk", "5m"].includes(cleanString(args.timeframe, 4)) ? cleanString(args.timeframe, 4) : "1d";
+      const days = asNumber(args.days, 30, 1, 3650);
+      // Ask for a generous window then trim by date — bar spacing varies (weekends, holidays,
+      // intraday gaps), so counting rows would silently return the wrong period.
+      const perDay = tf === "5m" ? 78 : tf === "1wk" ? 0.2 : 1;
+      const bars = apex.getBars(sym, tf, Math.min(2000, Math.ceil(days * perDay) + 20)) || [];
+      const cutoff = Date.now() - days * 86400_000;
+      const series = bars
+        .filter((b) => b && b.t && new Date(b.t).getTime() >= cutoff && Number.isFinite(Number(b.c)))
+        .map((b) => ({ t: b.t, o: b.o, h: b.h, l: b.l, c: b.c, v: b.v }));
+      if (!series.length) {
+        // Say what IS held rather than a bare miss, so the model can offer a window that exists
+        // instead of guessing a series to fill the gap.
+        const any = apex.getBars(sym, tf, 1) || [];
+        throw errorWithStatus(
+          any.length
+            ? `No ${tf} bars for ${sym} inside the last ${days} days (most recent held: ${any[0].t}). Try a longer window.`
+            : `No stored ${tf} price history for ${sym}.`,
+          404,
+        );
+      }
+      return { ticker: sym, timeframe: tf, days, count: series.length, from: series[0].t, to: series[series.length - 1].t, bars: series };
     },
     apex_brief: async (args) => {
       const apex = getApex();

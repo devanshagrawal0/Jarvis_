@@ -1,6 +1,7 @@
 import { Fragment, type ReactNode } from "react";
 import { JarvisMarkdown } from "./JarvisMarkdown";
 import { CalendarWidget } from "./StageCalendar";
+import { StageChart, type ChartPoint, type ChartKind } from "./StageChart";
 
 // ── Stage block registry (W3a) ────────────────────────────────────────────────────────────────
 // The Stage's core bet (master plan §2.1): the model never emits UI code — it references blocks
@@ -19,6 +20,7 @@ export type RBlock =
   | { id: string; type: "stat"; props: { label?: string; value?: string; delta?: string } }
   | { id: string; type: "list"; props: { items: string[] } }
   | { id: string; type: "calendar"; props: { events: CalEvent[]; upcoming?: CalEvent[]; dateLabel?: string } }
+  | { id: string; type: "chart"; props: { points: ChartPoint[]; kind?: ChartKind; label?: string } }
   | { id: string; type: "divider" };
 
 export type Surface = { root: string; blocks: Record<string, RBlock> };
@@ -54,6 +56,14 @@ export const REGISTRY: Record<string, Entry> = {
     validate: (b) => Array.isArray(b?.props?.events),
     render: (b) => <CalendarWidget events={b.props.events} upcoming={b.props.upcoming} />,
   },
+  // W3c — the chart block. Hand-built once (lightweight-charts), fed a plain series the server has
+  // already checked against real fetched data. `validate` demands at least two finite points: a
+  // one-point "chart" is a number wearing a graph's clothes, and it degrades to text instead.
+  chart: {
+    validate: (b) => Array.isArray(b?.props?.points)
+      && b.props.points.filter((p: any) => p && typeof p.t === "string" && Number.isFinite(p.v)).length >= 2,
+    render: (b) => <StageChart points={b.props.points} kind={b.props.kind} label={b.props.label} />,
+  },
   divider: { validate: () => true, render: () => <div className="jr-blk-div" /> },
 };
 
@@ -81,7 +91,7 @@ export function SurfaceRenderer({ surface }: { surface: Surface }) {
 // Adapter: the current flat Block[] the pipeline emits → a Surface. Consecutive stats group into a
 // stat_row (preserving the side-by-side card layout). Lets the whole existing pipeline render
 // through the registry with zero server change.
-type FlatBlock = { type: string; text?: string; label?: string; value?: string; delta?: string; items?: string[]; events?: CalEvent[]; upcoming?: CalEvent[]; dateLabel?: string };
+type FlatBlock = { type: string; text?: string; label?: string; value?: string; delta?: string; items?: string[]; events?: CalEvent[]; upcoming?: CalEvent[]; dateLabel?: string; points?: ChartPoint[]; kind?: ChartKind };
 export function blocksToSurface(blocks: FlatBlock[]): Surface {
   const bmap: Record<string, RBlock> = {};
   let n = 0;
@@ -103,6 +113,7 @@ export function blocksToSurface(blocks: FlatBlock[]): Surface {
     if (b.type === "heading") rootChildren.push(add({ type: "heading", props: { text: b.text || "" } } as any));
     else if (b.type === "list") rootChildren.push(add({ type: "list", props: { items: Array.isArray(b.items) ? b.items : [] } } as any));
     else if (b.type === "calendar") rootChildren.push(add({ type: "calendar", props: { events: Array.isArray(b.events) ? b.events : [], upcoming: Array.isArray(b.upcoming) ? b.upcoming : [], dateLabel: b.dateLabel } } as any));
+    else if (b.type === "chart") rootChildren.push(add({ type: "chart", props: { points: Array.isArray(b.points) ? b.points : [], kind: b.kind, label: b.label } } as any));
     else if (b.type === "divider") rootChildren.push(add({ type: "divider" } as any));
     else rootChildren.push(add({ type: "text", props: { md: b.text || "" } } as any));
     i++;

@@ -370,6 +370,10 @@ function createApexIngest({ apexDb, WebSocketImpl }) {
     getAttention: () => hot.attention,
     getForm4: () => hot.form4,
     getBtcNet: () => hot.btcNet,
+    // Stored OHLCV bars, oldest first. Proxied here beside the other db reads because the capability
+    // engine is handed the ingest service and never the db itself, so a price SERIES had no route
+    // out — which left the Stage's chart block with nothing real to draw.
+    getBars: (ticker, tf, limit) => { try { return apexDb.getBars(ticker, tf, limit); } catch { return []; } },
     listStrategies: () => { try { return apexDb.listStrategies(); } catch { return []; } },
     getStrategyById: (id) => { try { return apexDb.getStrategy(id); } catch { return null; } },
     listFolders: () => { try { return apexDb.listFolders(); } catch { return []; } },
