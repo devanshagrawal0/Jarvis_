@@ -3782,10 +3782,23 @@ function createCapabilityEngine({
       "desktop_control",
       "computer_use",
     ]);
-    const indirectBlocked = context.indirect && !safeBrowserContinuation.has(tool) && (
-      definition.risk !== "observe"
-      || ["list_processes", "network_inventory", "search_files", "memory_search"].includes(tool)
-    );
+    // Prompt-injection guard, scoped to the leg that actually matters.
+    //
+    // The trifecta is: untrusted content + private data + an EXFILTRATION vector. Blocking any
+    // non-"observe" capability after untrusted content removes the exfiltration leg, which is what
+    // makes an injected instruction harmless — it can read, but it cannot send, write or act.
+    //
+    // This used to ALSO block four read-only observe tools (list_processes, network_inventory,
+    // search_files, memory_search). That cut a leg the current threat model does not require
+    // cutting: with no exfiltration vector the agent is at two of three, which Meta's "Agents Rule
+    // of Two" treats as acceptable without a human gate. The cost was severe and user-visible —
+    // one exploratory screen_inspect flagged the turn, and every later local lookup was denied, so
+    // "what processes are running right now" answered "blocked due to an authorization constraint
+    // on indirect tool outputs" while list_processes sat there exposed and unused.
+    //
+    // Anything that can act or leave the machine stays blocked exactly as before.
+    const indirectBlocked = context.indirect && !safeBrowserContinuation.has(tool)
+      && definition.risk !== "observe";
     if (indirectBlocked) {
       return { ok: false, status: "denied", capability: definition, error: "Indirect tool output cannot authorize this capability." };
     }

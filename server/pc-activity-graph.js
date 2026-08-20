@@ -4,13 +4,30 @@
 // No screenshots, no ambient recording. ~1MB/day at typical usage.
 
 const crypto = require("crypto");
-const { execSync } = require("child_process");
+const { execFile } = require("child_process");
 const fs = require("fs");
 const path = require("path");
 const Database = require("better-sqlite3");
 
-const PROCESS_POLL_MS = 30_000;
-const CLIPBOARD_POLL_MS = 5_000;
+// These pollers shell out to PowerShell, which costs ~100-300ms of CPU per launch just to start
+// the interpreter. They used to run through execSync, which BLOCKS the Node event loop — so the
+// whole server stalled for the length of every poll, on a 5s cycle. Measured symptom: a visible
+// typing/UI lag, plus API requests queueing behind the stall. Now async, and far less frequent.
+const PROCESS_POLL_MS = 120_000;          // was 30_000
+const CLIPBOARD_POLL_MS = 60_000;         // was 5_000 — 720 PowerShell launches an hour
+// The clipboard watcher records only that the clipboard CHANGED plus a length hash — it stores no
+// content. That is a very small amount of signal for a recurring process launch, so it is off by
+// default and can be re-enabled per-instance if it ever earns its keep.
+const ENABLE_CLIPBOARD_WATCHER = false;
+
+// Promise wrapper so a slow PowerShell launch never blocks the event loop.
+function psJson(command, timeout) {
+  return new Promise((resolve) => {
+    execFile("powershell", ["-NonInteractive", "-NoProfile", "-Command", command],
+      { timeout, windowsHide: true, maxBuffer: 1024 * 1024 },
+      (error, stdout) => resolve(error ? "" : String(stdout || "").trim()));
+  });
+}
 const SCHEMA = `
   CREATE TABLE IF NOT EXISTS activity_events (
     id TEXT PRIMARY KEY,
@@ -102,12 +119,12 @@ function createActivityGraph({ runtimeDir, watchDirs = [], enableProcessMonitor 
   // Process monitor
   let processTimer = null;
   let lastFocusedApp = null;
-  function pollProcesses() {
+  async function pollProcesses() {
     try {
-      const ps = execSync(
-        "powershell -NonInteractive -Command \"Get-Process | Where-Object {$_.MainWindowTitle -ne ''} | Sort-Object CPU -Descending | Select-Object -First 5 -ExpandProperty Name | ConvertTo-Json\"",
-        { timeout: 5000, stdio: ["pipe", "pipe", "ignore"] },
-      ).toString().trim();
+      const ps = await psJson(
+        "Get-Process | Where-Object {$_.MainWindowTitle -ne ''} | Sort-Object CPU -Descending | Select-Object -First 5 -ExpandProperty Name | ConvertTo-Json",
+        5000,
+      );
       const names = JSON.parse(ps || "[]");
       const top = Array.isArray(names) ? names[0] : names;
       if (top && top !== lastFocusedApp) {
@@ -120,12 +137,9 @@ function createActivityGraph({ runtimeDir, watchDirs = [], enableProcessMonitor 
   // Clipboard watcher
   let clipboardTimer = null;
   let lastClipboard = "";
-  function pollClipboard() {
+  async function pollClipboard() {
     try {
-      const clip = execSync(
-        "powershell -NonInteractive -Command \"Get-Clipboard\"",
-        { timeout: 3000, stdio: ["pipe", "pipe", "ignore"] },
-      ).toString().trim();
+      const clip = await psJson("Get-Clipboard", 3000);
       if (clip && clip !== lastClipboard && clip.length <= 5000 && clip.length > 5) {
         // Don't store clipboard content — only record that it changed and its length
         record("clipboard_change", `clipboard:${clip.length}chars`, {
@@ -144,11 +158,13 @@ function createActivityGraph({ runtimeDir, watchDirs = [], enableProcessMonitor 
     running = true;
     startFileWatcher();
     if (enableProcessMonitor) {
-      pollProcesses();
-      processTimer = setInterval(pollProcesses, PROCESS_POLL_MS);
+      void pollProcesses();
+      processTimer = setInterval(() => void pollProcesses(), PROCESS_POLL_MS);
     }
-    clipboardTimer = setInterval(pollClipboard, CLIPBOARD_POLL_MS);
-    console.log("[activity-graph] Started — watching files, processes, clipboard");
+    if (ENABLE_CLIPBOARD_WATCHER) {
+      clipboardTimer = setInterval(() => void pollClipboard(), CLIPBOARD_POLL_MS);
+    }
+    console.log(`[activity-graph] Started — watching files${enableProcessMonitor ? ", processes" : ""}${ENABLE_CLIPBOARD_WATCHER ? ", clipboard" : " (clipboard watcher off)"}`);
   }
 
   function stop() {

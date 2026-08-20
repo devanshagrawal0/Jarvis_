@@ -10,7 +10,11 @@
 // ─────────────────────────────────────────────────────────────────────────
 const MODELS = {
   router: "gemini-3.1-flash-lite",        // routing, classify, extract, background, triage
-  main: "gemini-3.6-flash",               // main brain: chat, tools, vision, grounding
+  // 2026-08-15: gemini-3.6-flash went unstable on Google's side. Measured on the owner's key,
+  // same trivial prompt, 4 calls: 2483/4608/2199/12080ms (31498ms in an earlier sample) — which
+  // blows the 22s turn budget on roughly half of all turns, so Jarvis "stopped answering".
+  // gemini-3.5-flash measured 1226/1371/1383/1733ms, zero failures. Main brain moves there.
+  main: "gemini-3.5-flash",               // main brain: chat, tools, vision, grounding
   reasoning: "gemini-3.1-pro-preview",    // hard-reasoning escalation only
   live: "gemini-3.1-flash-live-preview",  // realtime voice
   embedding: "gemini-embedding-2",        // multimodal memory vectors
@@ -32,9 +36,16 @@ const MODELS = {
 //  pointed at a live model — they survive future model retirements with no code change.
 //  ORDER MATTERS: grounding-capable models first; flash-lite is a last resort ONLY
 //  (it does NOT return groundingMetadata, so a fresh-info turn on it would hallucinate).
+//  2026-08-15 re-measure (owner's key, 4 calls each, same prompt):
+//    gemini-2.5-flash       948ms avg / 1039ms worst / 0 failures  → promoted to rung 1
+//    gemini-3-flash-preview 2200ms avg / 5220ms worst / 0 failures → rung 2
+//    gemini-3.1-flash-lite   809ms avg / 0 failures                → last resort (no grounding)
+//    gemini-flash-latest    4917ms avg / 10887ms worst / 1x 503    → REMOVED from rung 1; the
+//      `-latest` aliases currently resolve to the unstable new models, so they are the opposite
+//      of self-healing during a launch-capacity crunch.
 const FALLBACKS = {
-  main:      ["gemini-flash-latest", "gemini-2.5-flash", "gemini-3.1-flash-lite"],
-  reasoning: ["gemini-pro-latest", "gemini-3.6-flash", "gemini-flash-latest"],
+  main:      ["gemini-2.5-flash", "gemini-3-flash-preview", "gemini-3.1-flash-lite"],
+  reasoning: ["gemini-2.5-pro", "gemini-2.5-flash", "gemini-3-flash-preview"],
   router:    ["gemini-3.5-flash-lite", "gemini-flash-lite-latest"],
 };
 
