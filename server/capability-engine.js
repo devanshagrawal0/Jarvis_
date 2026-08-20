@@ -2856,11 +2856,17 @@ function createCapabilityEngine({
       if (!series.length) {
         // Say what IS held rather than a bare miss, so the model can offer a window that exists
         // instead of guessing a series to fill the gap.
+        // The message is written AT the model, because the failure mode here is not the miss — it is
+        // what the model does with the miss. Asked "whats bitcoin doing" with no BTC bars stored, it
+        // read a bare "no stored price history", fell back to its own memory and told the owner
+        // bitcoin was "$72,263, up 10.3%". No tool produced that; it was a year-stale recollection
+        // presented as a quote. A tool that cannot answer has to say so in terms that leave no room
+        // for filling the gap from memory.
         const any = apex.getBars(sym, tf, 1) || [];
         throw errorWithStatus(
           any.length
-            ? `No ${tf} bars for ${sym} inside the last ${days} days (most recent held: ${any[0].t}). Try a longer window.`
-            : `No stored ${tf} price history for ${sym}.`,
+            ? `No ${tf} bars for ${sym} inside the last ${days} days (most recent held: ${any[0].t}). Try a longer window. Do NOT state a price from memory — if you cannot fetch it, tell the owner you don't have it.`
+            : `No stored ${tf} price history for ${sym}, and there is no other source for it here. Tell the owner plainly that you do not have price data for ${sym} — do NOT answer from memory or estimate. Any figure you recall is stale and would be presented to him as a live quote.`,
           404,
         );
       }
