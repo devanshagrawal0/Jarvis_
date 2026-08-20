@@ -8,8 +8,52 @@ function tokenize(value) {
   return [...new Set((separated.toLowerCase().match(/[a-z0-9][a-z0-9_-]{1,}/g) || []).filter((token) => !STOP_WORDS.has(token)))];
 }
 
-function createToolGateway({ capabilityEngine, moduleRegistry, codeKnowledge }) {
+// ─── Semantic tool selection (JARVIS_SEMANTIC_TOOLS=1) ────────────────────────────────────────
+// Depth of each candidate list before fusion. Wider than `limit` so RRF has something to rank.
+const CANDIDATE_DEPTH = 25;
+// Reciprocal Rank Fusion constant. Rank-based, so the lexical score (0..N, unbounded) and the
+// cosine score (0.48..0.69, compressed) never have to be normalised against each other.
+const RRF_K = 60;
+// Cosine scores across 158 tools sit in a narrow 0.48-0.69 band, so an absolute floor cannot
+// separate "needs a tool" from "just chatting" — measured: "why do cats knead blankets" scored
+// 0.48-0.49 against five tools. A margin below the BEST hit for this prompt discriminates far
+// better than any fixed threshold.
+const DENSE_FLOOR = 0.3;
+const DENSE_MARGIN = 0.06;
+// TRIED AND REJECTED: gating the embedding call on "lexical looks confident" to save the ~500ms.
+// It does not work, because scoreTool's magnitude carries no information about whether lexical is
+// RIGHT. Measured top scores over the eval prompts:
+//     lexical correct : 8, 8, 8, 12, 12, 16, 20, 20
+//     lexical wrong   : 8, 8, 8,  8, 12, 12, 12, 20
+// The distributions are indistinguishable — "how much am I up or down on my prediction wagers"
+// scores 20 with a completely wrong answer, "whats the weather today" scores 8 with a right one.
+// A threshold of 16 cost SET B 85% -> 75% for an unpredictable latency saving. Any real fix for
+// the 500ms has to come from OVERLAPPING the embed with the ~1.2s of prep work that already runs
+// before the model call, not from skipping it.
+// Structural companions: tools the model must have TOGETHER to finish a job. Cosine reliably
+// retrieves one half of a pair and not the other (prepare-an-email without send-it). This is a
+// dependency map between tools, not keyword matching on the prompt — it never looks at what the
+// owner typed.
+const TOOL_COMPANIONS = {
+  gmail_prepare_email: ["gmail_send_prepared"],
+  gmail_send_prepared: ["gmail_prepare_email"],
+  draft_email: ["email_smart", "resolve_contact"],
+  email_smart: ["resolve_contact"],
+  stage_render: ["stage_show"],
+  stage_show: ["stage_render"],
+  atlas_complete_task: ["atlas_today"],
+  atlas_reschedule_event: ["atlas_today"],
+  atlas_cancel_item: ["atlas_today"],
+  calendar_create_event: ["calendar_list_events"],
+};
+
+function createToolGateway({ capabilityEngine, moduleRegistry, codeKnowledge, toolRetrieval = null }) {
   const mcp = new McpServer({ name: "jarvis-local-tools", version: "1.0.0" });
+  // Off unless explicitly switched on, and only once the index is actually warm — a cold start
+  // must degrade to the legacy path rather than silently ship an empty tool list.
+  const semanticOn = () => Boolean(toolRetrieval)
+    && process.env.JARVIS_SEMANTIC_TOOLS === "1"
+    && (() => { try { return toolRetrieval.ready(); } catch { return false; } })();
 
   for (const definition of capabilityEngine.definitions) {
     mcp.registerTool(
@@ -69,6 +113,57 @@ function createToolGateway({ capabilityEngine, moduleRegistry, codeKnowledge }) 
     return score;
   }
 
+  // Semantic path. Returns an array of declarations, [] for a turn that genuinely needs no tool,
+  // or null to mean "could not decide — use the legacy path".
+  async function selectToolsSemantic(prompt, { limit, route, tokens }) {
+    const isPureConversation = (route.intent === "conversation" || route.intent === "conversation-follow-up")
+      && !route.action && !route.fresh && !route.personal && !route.code;
+    if (isPureConversation) return [];
+
+    const lexRanked = capabilityEngine.definitions
+      .map((definition) => ({ name: definition.name, score: scoreTool(definition, tokens) }))
+      .filter((item) => item.score > 0)
+      .sort((a, b) => b.score - a.score)
+      .slice(0, CANDIDATE_DEPTH);
+
+    let denseRanked = [];
+    try {
+      denseRanked = await toolRetrieval.retrieve(prompt, { limit: CANDIDATE_DEPTH, minScore: DENSE_FLOOR });
+    } catch { denseRanked = []; }
+    if (denseRanked.length) {
+      const best = denseRanked[0].score;
+      denseRanked = denseRanked.filter((hit) => hit.score >= best - DENSE_MARGIN);
+    }
+    // Embedding unavailable AND nothing lexical to fall back on — hand the turn to the legacy path
+    // rather than answer with no tools at all.
+    if (!denseRanked.length && !lexRanked.length) return null;
+
+    const fused = new Map();
+    const contribute = (name, rank) => fused.set(name, (fused.get(name) || 0) + 1 / (RRF_K + rank));
+    denseRanked.forEach((hit, index) => contribute(hit.name, index + 1));
+    lexRanked.forEach((hit, index) => contribute(hit.name, index + 1));
+
+    let ordered = [...fused.entries()].sort((a, b) => b[1] - a[1]).map(([name]) => name);
+    // Pull in structural companions for whatever survived, just below their partner.
+    const withCompanions = [];
+    for (const name of ordered) {
+      withCompanions.push(name);
+      for (const mate of TOOL_COMPANIONS[name] || []) {
+        if (!withCompanions.includes(mate) && !ordered.includes(mate)) withCompanions.push(mate);
+      }
+    }
+    ordered = withCompanions;
+
+    const declarationFor = (name) => capabilityEngine.declarations.find((item) => item.name === name);
+    // The cap is applied ONCE, at the end, and nothing bypasses it — unlike the legacy path, where
+    // 57 regex rules append after truncation and turn a limit of 8 into 20.
+    return ordered.map(declarationFor).filter(Boolean).slice(0, limit);
+  }
+
+  // Kept SYNCHRONOUS on purpose. Twenty-odd existing assertions across three test files call this
+  // and immediately .map() the result; making it async would turn every one of them into a pending
+  // promise. Production goes through selectToolsAsync below, so the legacy path stays provably
+  // identical — the same function the tests already cover.
   function selectTools(prompt, options = {}) {
     const limit = Math.max(1, Math.min(12, Number(options.limit || 5)));
     const route = options.route || {};
@@ -153,7 +248,6 @@ function createToolGateway({ capabilityEngine, moduleRegistry, codeKnowledge }) 
     // breakdown surface is wanted, so the BRAIN (not a keyword) decides whether to write prose,
     // render typed blocks, or MIX both in one surface. Keeping them symmetric avoids the trap of
     // having text available but not blocks (or vice-versa) purely because of phrasing.
-    // (W4's presentation router will remove the keyword gate entirely.)
     if (/\b(panel|stage|surface|window|card|dashboard|breakdown|rundown|scorecard|at a glance)\b/i.test(prompt)
       && /\b(open|show|write|put|display|make|bring up|pop up|create|render|give|build|generate)\b/i.test(prompt)) {
       alwaysUseful.push("stage_render", "stage_show");
@@ -365,6 +459,18 @@ function createToolGateway({ capabilityEngine, moduleRegistry, codeKnowledge }) 
     return [...required, ...suggested.slice(0, Math.max(0, limit - required.length))];
   }
 
+  // Production entry point. Tries the semantic path when the flag is on and the index is warm,
+  // and otherwise returns exactly what the synchronous legacy selectTools would have returned.
+  async function selectToolsAsync(prompt, options = {}) {
+    if (semanticOn()) {
+      const limit = Math.max(1, Math.min(12, Number(options.limit || 5)));
+      const route = options.route || {};
+      const picked = await selectToolsSemantic(prompt, { limit, route, tokens: tokenize(prompt) });
+      if (picked) return picked; // [] is a real answer (no tool needed); null means "use legacy"
+    }
+    return selectTools(prompt, options);
+  }
+
   function catalog() {
     return {
       protocol: "MCP",
@@ -383,7 +489,7 @@ function createToolGateway({ capabilityEngine, moduleRegistry, codeKnowledge }) 
     return capabilityEngine.declarations.filter((item) => allowed.has(item.name));
   }
 
-  return { mcp, selectTools, declarationsFor, catalog };
+  return { mcp, selectTools, selectToolsAsync, declarationsFor, catalog };
 }
 
 module.exports = { createToolGateway };

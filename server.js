@@ -42,6 +42,7 @@ const { clientIp: coopClientIp } = require("./server/coop-transport");
 const { createMissionEngine } = require("./server/mission-engine");
 const { createCodeKnowledge } = require("./server/code-knowledge");
 const { createToolGateway } = require("./server/tool-gateway");
+const { createToolRetrieval } = require("./server/tool-retrieval");
 const { detectWidgetControl, detectWidgetView, detectWidgetMove, detectWidgetArrange } = require("./server/widget-control");
 const { detectPanelRequest } = require("./server/stage-pipeline");
 const { createAgentRuntime } = require("./server/agent-runtime");
@@ -289,6 +290,7 @@ let coopSymbioteMesh;
 let missionEngine;
 let codeKnowledge;
 let toolGateway;
+let toolRetrieval; // semantic tool index — see server/tool-retrieval.js
 let agentRuntime;
 let userContext;
 let costMeter;
@@ -926,7 +928,16 @@ function getStagePipeline() {
 // W3b — the owner's REAL day (local + Google Calendar), for a generative calendar surface. The
 // events come straight from the calendar API — the model never generates them, so this surface
 // cannot fabricate. Same source as /api/atlas/today's timeline.
+// The day payload costs ~2s (Google round-trips), and the Calendar widget re-polls every 30s while
+// it is open — so the answer is cached briefly and warmed at startup. Without this the widget shows
+// an empty calendar for seconds after opening, which reads as "you have nothing on" when it means
+// "not loaded yet". Writes invalidate it (see invalidateStageDayCache).
+let stageDayCache = null; // { at, value }
+const STAGE_DAY_TTL_MS = 45_000;
+function invalidateStageDayCache() { stageDayCache = null; }
+
 async function getStageDayEvents() {
+  if (stageDayCache && Date.now() - stageDayCache.at < STAGE_DAY_TTL_MS) return stageDayCache.value;
   if (!atlasStore) return { events: [], upcoming: [], dateLabel: "today" };
   const loc = userContext ? userContext.resolveLocation() : { ianaTz: "America/New_York" };
   const tz = (loc && loc.ianaTz) || "America/New_York";
@@ -942,7 +953,9 @@ async function getStageDayEvents() {
   const events = await gather(startIso, endIso);
   const upEnd = new Date(new Date(endIso).getTime() + 14 * 86400_000).toISOString();
   const upcoming = (await gather(endIso, upEnd)).slice(0, 6);
-  return { events, upcoming, dateLabel: "today", tz };
+  const value = { events, upcoming, dateLabel: "today", tz };
+  stageDayCache = { at: Date.now(), value };
+  return value;
 }
 
 // Deterministic detector: does the owner want to SEE their day/calendar (a read), not change it?
@@ -954,7 +967,7 @@ function detectCalendarStageRequest(prompt) {
   if (/\b(add|create|schedule a|schedule an|book|set up|put|move|reschedule|delete|cancel|remove|block off|clear)\b/i.test(p)) return null; // a write, not a view
   const calNoun = /\b(calendar|schedule|agenda)\b/i.test(p);
   const todayScope = /\b(today|this morning|this afternoon|this evening|tonight|rest of (?:my|the) day|my day)\b/i.test(p);
-  const asksView = /\bwhat(?:'s| is| do i have| have i got)\b/i.test(p) || /\b(show|see|pull up|bring up|open)\b/i.test(p) || /\bmy\b/i.test(p);
+  const asksView = /\bwhat(?:'s| is| do i have| have i got)\b/i.test(p) || /\b(show|see|pull up|bring up|open|view|display|check)\b/i.test(p) || /\b(my|the)\b/i.test(p) || /\b(widget|panel)\b/i.test(p);
   if (calNoun && asksView) return { scope: "today" };
   if (todayScope && /\bwhat(?:'s| do i have| have i got| is)\b.*\b(on|going on|happening|scheduled|planned)\b/i.test(p)) return { scope: "today" };
   return null;
@@ -2355,7 +2368,7 @@ function brainSystemInstruction(mode, recalledMemories = [], runtimeContext = ""
     "Talk like a real, sharp person who knows him, not an AI and not a textbook. Use contractions (you're, it's, don't, I'd, that's). Vary your sentence length so it reads with natural rhythm. Answer him directly and conversationally, never in an encyclopedic 'X is a state in which...' register. Warm but not gushy; have a point of view. Not a command router, not a butler reciting lines.",
     // Cortex v4 — keep JARVIS honestly aware of its own current abilities so it never
     // undersells itself when asked "what can you do". Describe in plain language.
-    "Your real capabilities this build: (1) answer live/current questions with web-search grounding — news, prices, weather, sports; (2) directions, drive times, traffic, and nearby places; (3) a Deep Research mode (multi-source, cited) the owner enables with the Research toggle; (4) exact math, statistics, and data work via a code sandbox; (5) read attached images AND PDF/text documents, and describe screen captures; (6) generate images on request as downloadable artifacts; (7) open on-screen widgets — including in focus mode, e.g. 'open the Kalshi widget in focus mode' — across Profile, Kalshi, Modules, Projects, Agents, Connections, Vision, Memory, Devices, Receipts, Graph, and the Helix room; (8) remember the owner's profile, preferences, and past conversations; (9) show API usage and cost in the Profile widget. When asked what you can do, summarize these honestly; do not claim abilities you lack (e.g. executing live trades or reading private accounts without the owner opening the relevant widget). IMPORTANT: capabilities 1-7 above are always-available BUILT-IN lanes, not entries in the 'Tools exposed for this turn' list — so include them when describing what you can do even though they are not listed as tools, and never limit your self-description to only the exposed tool names.",
+    "Your real capabilities this build: (1) answer live/current questions with web-search grounding — news, prices, weather, sports; (2) directions, drive times, traffic, and nearby places; (3) a Deep Research mode (multi-source, cited) the owner enables with the Research toggle; (4) exact math, statistics, and data work via a code sandbox; (5) read attached images AND PDF/text documents, and describe screen captures; (6) generate images on request as downloadable artifacts; (7) open on-screen widgets — including in focus mode, e.g. 'open the Kalshi widget in focus mode' — across Profile, Kalshi, Modules, Projects, Agents, Connections, Vision, Memory, Devices, Receipts, Graph, and the Helix room; (8) remember the owner's profile, preferences, and past conversations; (9) show API usage and cost in the Profile widget; (10) work with THIS machine — find and open local files and folders (search_files, open_project), open apps and URLs (open_app, open_url), inspect what is on screen (screen_inspect), list running processes and system status (list_processes, system_status), and drive the desktop when asked (desktop_control). Capability 10 is REAL: when the owner asks you to find a file, look in a folder, or open something on this computer, CALL the matching tool. Never answer \"I do not have direct access\" to a local-machine request while those tools are exposed — that is a false refusal, and it is the single most common way this build fails the owner. When asked what you can do, summarize these honestly; do not claim abilities you lack (e.g. executing live trades or reading private accounts without the owner opening the relevant widget). IMPORTANT: capabilities 1-7 above are always-available BUILT-IN lanes, not entries in the 'Tools exposed for this turn' list — so include them when describing what you can do even though they are not listed as tools, and never limit your self-description to only the exposed tool names.",
     "Treat the conversation as continuous. Resolve pronouns, short follow-ups, corrections, misspellings, and phrases like 'I meant...' from recent turns before deciding what the user wants.",
     "Do not turn ordinary conversation into a tool call. Use tools only when a real action, local inspection, private data, or fresh external information is required.",
     "The owner's own live state — his tasks, to-dos, reminders, calendar/schedule/agenda, inbox/email, and contacts — lives ONLY behind tools (atlas_today for tasks/reminders/events, the calendar tools, the email/inbox tools, the contact tools). You have NO reliable memory of their current values; anything you 'remember' about a specific task, event, or unread email is stale and must not be trusted. Whenever he asks what's on his plate, his schedule, his tasks or reminders, what he's forgetting, what needs a reply, who he last emailed, or to plan/organize his day, you MUST call the relevant tool FIRST and answer strictly from its output — never from memory, and never invent, guess, or carry over items from earlier in the conversation.",
@@ -3273,14 +3286,43 @@ function instantConversationResponse(prompt) {
   return "";
 }
 
+// Cap a single tool result before it is fed back to the model. Keeps the decision-carrying envelope
+// (ok / status / error / capability) intact and truncates only the bulky payload, with an explicit
+// marker so the model knows output was cut rather than silently seeing a partial list.
+const MODEL_TOOL_RESULT_CAP = 8_000;
+function capToolResultForModel(execution) {
+  try {
+    const whole = JSON.stringify(execution);
+    if (!whole || whole.length <= MODEL_TOOL_RESULT_CAP) return execution;
+    const envelope = {
+      ok: execution.ok,
+      status: execution.status,
+      error: execution.error,
+      capability: execution.capability?.name || execution.capability,
+    };
+    let payload = typeof execution.result === "string" ? execution.result : JSON.stringify(execution.result ?? null);
+    payload = payload || "";
+    if (payload.length > MODEL_TOOL_RESULT_CAP) {
+      payload = `${payload.slice(0, MODEL_TOOL_RESULT_CAP)}\n…[truncated ${payload.length - MODEL_TOOL_RESULT_CAP} more characters of tool output — ask for a narrower query if you need the rest]`;
+    }
+    return { ...envelope, result: payload, truncatedForModel: true };
+  } catch {
+    return execution;
+  }
+}
+
 function thinkingConfigFor(model, route) {
   if (/^gemini-3/.test(model)) {
-    // The Pro reasoning model rejects thinkingLevel "minimal" (400) — its floor is "low".
-    const isPro = /pro/.test(model);
+    // Not every gemini-3 model accepts the same floor. Per the thinking docs (checked 2026-08-15):
+    //   gemini-3.5-flash / 3.5-flash-lite / 3.6-flash -> minimal, low, medium, high
+    //   gemini-3.7-flash / 3.1-pro-preview            -> low, medium, high   (NO "minimal")
+    // Sending "minimal" to a model whose floor is "low" is a 400 on every turn, so the floor is
+    // per-model rather than pro-vs-not.
+    const noMinimal = /pro|^gemini-3\.7/.test(model);
     return {
       thinkingLevel: route.complexity === "deep"
-        ? (isPro ? "high" : "medium")
-        : (isPro ? "low" : "minimal"),
+        ? (/pro/.test(model) ? "high" : "medium")
+        : (noMinimal ? "low" : "minimal"),
     };
   }
   if (/^gemini-2\.5/.test(model)) {
@@ -3371,6 +3413,7 @@ const HUD_WIDGETS = [
   { id: "receipts", label: "Receipts", re: /\breceipts?\b/i, kind: "widget" },
   { id: "graph", label: "Graph", re: /\b(?:knowledge\s+)?graph\b/i, kind: "widget" },
   { id: "today", label: "Today", re: /\b(today|my day|my agenda)\b/i, kind: "widget" },
+  { id: "calendar", label: "Calendar", re: /\b(calendar|my schedule)\b/i, kind: "widget" },
   { id: "contacts", label: "Contacts", re: /\bcontacts?\b/i, kind: "widget" },
   // "trust" is a common English word ("I trust you"); scope its match to trust-widget phrasings so a
   // widget command never targets it by accident. The resolvers still need an action verb on top.
@@ -3868,13 +3911,29 @@ async function callGemini({ prompt, imageData, attachments = [], mode, sessionId
   // Point the repair controller's "trusted local time" at the owner's REAL resolved zone before it
   // builds the turn — otherwise it injects a hardcoded US-Eastern clock that overrides everything.
   try { if (typeof setRepairTimezone === "function" && userContext) setRepairTimezone(userContext.resolveLocation().ianaTz); } catch {}
+  // Turn preparation used to run strictly in series — measured at repairTurn 205ms + vnextCanary
+  // 380ms + contextPack 490ms, so ~1.1s before the model was even called. The canary is the only
+  // ASYNC piece and it depends on nothing the other two produce (it keys off shadowTurnId, not
+  // repairTurn), so it is started FIRST and awaited last. Its ~380ms now overlaps the ~700ms of
+  // synchronous work instead of being added to it.
+  const canaryPromise = memoryVNextShadow?.prepareCanaryContext?.({
+    prompt: rawUserMessage(prompt),
+    source: source || mode || "chat",
+    sessionId: sessionId || deviceId || "jarvis-owner",
+    turnId: shadowTurnId,
+    effort: strength === "full" ? "full" : strength === "cost-guarded" ? "cost-guarded" : "balanced",
+  }) || null;
+  // A rejection here must not take down the turn — the canary is supplementary context, and
+  // legacy retrieval stays authoritative.
+  if (canaryPromise && typeof canaryPromise.catch === "function") canaryPromise.catch(() => {});
+
   const repairTurn = agentRepair
     ? agentRepair.prepareTurn({ prompt, capabilityEngine, providerStatus: providerStatus(settings) })
     : null;
-  vnextCanary = await memoryVNextShadow?.prepareCanaryContext?.({ prompt: rawUserMessage(prompt), source: source || mode || "chat", sessionId: sessionId || deviceId || "jarvis-owner", turnId: shadowTurnId, effort: strength === "full" ? "full" : strength === "cost-guarded" ? "cost-guarded" : "balanced" }) || null;
   neuralContextPack = neuralVault
     ? neuralVault.getContextPack(prompt, { turnId: repairTurn?.turnId || "", limit: 8 })
     : null;
+  vnextCanary = (canaryPromise ? await canaryPromise.catch(() => null) : null) || null;
   const modelPrompt = neuralContextPack?.resolution?.resolvedMessage || prompt;
   if (repairTurn?.behaviorUpdate) {
     const response = repairTurn.behaviorUpdate.response;
@@ -4651,11 +4710,7 @@ async function callGemini({ prompt, imageData, attachments = [], mode, sessionId
           if (geminiCache && settings.contextCacheEnabled && !tools.length && !sendFns) {
             try { cacheName = await geminiCache.getOrCreate({ model, systemText }); } catch { cacheName = null; }
           }
-          response = await fetch(`${GEMINI_API_BASE_URL}/v1beta/models/${encodeURIComponent(model)}:${endpoint}?${query}`, {
-            method: "POST",
-            headers: { "content-type": "application/json" },
-            signal: controller.signal,
-            body: JSON.stringify({
+          const __reqBody = {
               ...(cacheName ? { cachedContent: cacheName } : { systemInstruction: { parts: [{ text: systemText }] } }),
               contents,
               ...(tools.length ? { tools } : {}),
@@ -4688,12 +4743,36 @@ async function callGemini({ prompt, imageData, attachments = [], mode, sessionId
                     ? { thinkingConfig: thinkingConfigFor(model, prepared.route) }
                     : {}),
               },
-            }),
+          };
+          // TEMPORARY DIAGNOSTIC (2026-08-15): the same model answers a bare prompt in ~1.4s but
+          // 10-22s through Jarvis. This prints exactly what we send, so the cause is measured
+          // instead of guessed. Remove once the gap is explained.
+          const __json = JSON.stringify(__reqBody);
+          const __fnDecls = (tools || []).reduce((n, t) => n + ((t.functionDeclarations || []).length), 0);
+          const __toolKinds = (tools || []).map((t) => Object.keys(t).join("+")).join(",");
+          const __fnNames = (tools || []).flatMap((t) => (t.functionDeclarations || []).map((d) => d.name)).join(",");
+          console.log(`[req] model=${model} turn=${turn} bytes=${__json.length} systemChars=${(systemText || "").length} contentsChars=${JSON.stringify(contents).length} historyMsgs=${contents.length} fnDecls=${__fnDecls} toolKinds=${__toolKinds || "none"} fnNames=[${__fnNames}] thinking=${JSON.stringify(__reqBody.generationConfig.thinkingConfig || null)} maxOut=${__reqBody.generationConfig.maxOutputTokens} stream=${useStreaming} endpoint=${endpoint} cached=${Boolean(cacheName)}`);
+          const __fetchStart = Date.now();
+          response = await fetch(`${GEMINI_API_BASE_URL}/v1beta/models/${encodeURIComponent(model)}:${endpoint}?${query}`, {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            signal: controller.signal,
+            body: __json,
           });
+          console.log(`[req] model=${model} turn=${turn} httpStatus=${response.status} fetchMs=${Date.now() - __fetchStart}`);
           response.jarvisStreaming = useStreaming;
+          const __readStart = Date.now();
           data = response.jarvisStreaming
             ? await readGeminiStream(response, onTextDelta)
             : await response.json().catch(() => ({}));
+          {
+            const __c = data?.candidates?.[0];
+            const __parts = __c?.content?.parts || [];
+            const __text = __parts.map((x) => x?.text || "").join("");
+            const __calls = __parts.filter((x) => x?.functionCall).map((x) => x.functionCall.name);
+            const __u = data?.usageMetadata || {};
+            console.log(`[req] model=${model} turn=${turn} readMs=${Date.now() - __readStart} finish=${__c?.finishReason || "?"} textChars=${__text.length} fnCalls=${__calls.join(",") || "none"} promptTok=${__u.promptTokenCount ?? "?"} outTok=${__u.candidatesTokenCount ?? "?"} thoughtTok=${__u.thoughtsTokenCount ?? "?"}`);
+          }
         } catch (error) {
           lastModelError = error.name === "AbortError"
             ? `Gemini exceeded the ${responseBudgetMs}ms response budget`
@@ -4789,9 +4868,20 @@ async function callGemini({ prompt, imageData, attachments = [], mode, sessionId
           detail: execution.ok ? "Verified result received" : execution.status === "confirmation_required" ? "Owner approval required" : execution.error || "Tool failed",
           tool: functionCall.name,
         });
-        const modelExecution = execution.confirmation
+        const rawModelExecution = execution.confirmation
           ? { ...execution, confirmation: { ...execution.confirmation, token: undefined } }
           : execution;
+        // Compress the MODEL-FACING copy of a tool result before it joins `contents`.
+        //
+        // Every tool result is appended and then re-sent on each loop turn, so a few chatty tools
+        // compound: one measured turn walked 11,967 -> 20,102 -> 29,910 -> 72,991 prompt tokens and
+        // took 25s, almost all of it re-uploading earlier results. Compressing the output before it
+        // enters the conversation is the first layer of the standard cascade (compress -> window ->
+        // summarize) and the one that preserves the agent's reasoning.
+        //
+        // `toolResults` keeps the FULL object — receipts, provenance, artifacts and the UI are
+        // unaffected. Only what the model re-reads each turn is bounded.
+        const modelExecution = capToolResultForModel(rawModelExecution);
         responseParts.push({
           functionResponse: {
             ...(functionCall.id ? { id: functionCall.id } : {}),
@@ -4859,7 +4949,12 @@ async function callGemini({ prompt, imageData, attachments = [], mode, sessionId
               // never the old fake "staged in the operations queue" dead-end.
               : prepared.route.fresh
                 ? "I looked for a live source on that but didn't get a usable result just now, so I won't guess. Try rephrasing it, or turn on Research mode and I'll dig deeper."
-                : command.response
+                // The model answered with NO text and no tool ran. The old fallback here was
+                // `command.response`, a loose keyword match against the module registry — which is
+                // how "what is 17 TIMEs 23" came back as "the Calendar widget has the live view for
+                // that". That is a fabricated redirect standing in for a failure, so it degrades
+                // honestly instead. A genuine local command still answers earlier in the chain.
+                : `The model returned an empty answer on ${model} just now (nothing to show). Ask again and I'll retry.`
       ),
       source: "gemini",
       model,
@@ -5180,7 +5275,10 @@ function openProjectFolder(targetPath) {
   const root = fs.realpathSync.native(WORKSPACE_ROOT);
   const relative = path.relative(root, resolved);
   if (relative.startsWith("..") || path.isAbsolute(relative)) throw new Error("Project path is outside the workspace");
-  spawn("explorer.exe", [resolved], { detached: true, stdio: "ignore" }).unref();
+  // windowsHide suppresses the console Windows would otherwise allocate for the detached child.
+  // Explorer's own window still opens — that is the point of this call; only the stray black
+  // console box is suppressed.
+  spawn("explorer.exe", [resolved], { detached: true, stdio: "ignore", windowsHide: true }).unref();
   return { opened: true, path: resolved };
 }
 
@@ -8133,6 +8231,20 @@ async function handleApi(req, res, pathname, url) {
 
   if (req.method === "GET" && pathname === "/api/status") {
     sendJson(res, 200, statusPayload());
+    return;
+  }
+
+  // The Calendar widget's data source. Opening the Calendar (launcher tile or "open the calendar
+  // widget") fetches the owner's REAL day/upcoming events here and renders them via the same
+  // stage-render path the chat calendar uses — never model-generated.
+  if (req.method === "GET" && pathname === "/api/stage/calendar") {
+    try {
+      const day = await getStageDayEvents();
+      sendJson(res, 200, day);
+    } catch (err) {
+      console.error("[api/stage/calendar] error:", err && err.message);
+      sendJson(res, 200, { events: [], upcoming: [], dateLabel: "today" });
+    }
     return;
   }
 
@@ -12537,7 +12649,9 @@ ${entryText}`;
     // Open a new browser window as the ghost context
     let windowOpened = false;
     try {
-      spawn("cmd", ["/c", "start", "", sandboxUrl], { detached: true, shell: false, stdio: "ignore" });
+      // `cmd /c start` always allocates a console unless windowsHide is set; the browser window it
+      // launches is unaffected, only the flash of a black cmd box is suppressed.
+      spawn("cmd", ["/c", "start", "", sandboxUrl], { detached: true, shell: false, stdio: "ignore", windowsHide: true });
       windowOpened = true;
     } catch {}
 
@@ -13416,7 +13530,18 @@ ${entryText}`;
     // Wave 4 — progressive scopes: ?bundles=gmail_send,calendar_read grants only those (identity is
     // always included; prior grants are preserved). No param keeps the legacy Gmail-only behaviour.
     const bundles = (url.searchParams.get("bundles") || "").split(",").map((s) => s.trim()).filter(Boolean);
-    sendJson(res, 200, providers.google.start({ sessionId: req.jarvisSession.id, bundles }));
+    const started = providers.google.start({ sessionId: req.jarvisSession.id, bundles });
+    // Returning JSON means the caller has to read `authorizationUrl` and navigate itself — fine for
+    // the panel's fetch, useless for a human who just wants to reconnect. The state token is bound
+    // to the REQUESTING session, so it only works in the browser that asked for it: pasting a URL
+    // minted elsewhere fails with "belongs to another browser session". `?redirect=1` makes this
+    // route a normal redirect, so opening it in the browser completes the whole flow in one hop.
+    if (url.searchParams.get("redirect") === "1") {
+      res.writeHead(302, { Location: started.authorizationUrl });
+      res.end();
+      return;
+    }
+    sendJson(res, 200, started);
     return;
   }
 
@@ -13908,10 +14033,24 @@ capabilityEngine = createCapabilityEngine({
   getOwnerTz: () => { try { return userContext ? userContext.resolveLocation().ianaTz : null; } catch { return null; } },
   desktopTakeover,
 });
+// Semantic tool retrieval. Constructed always (so its index can warm and be inspected), but
+// selectTools only consults it when JARVIS_SEMANTIC_TOOLS=1 — otherwise the legacy lexical+regex
+// path runs byte-for-byte as before.
+try {
+  toolRetrieval = createToolRetrieval({
+    runtimeDir: RUNTIME_DIR,
+    getSettings: loadSettings,
+    definitions: capabilityEngine.definitions,
+  });
+} catch (error) {
+  toolRetrieval = null;
+  console.warn(`[tool-retrieval] unavailable: ${error.message}`);
+}
 toolGateway = createToolGateway({
   capabilityEngine,
   moduleRegistry: loadModuleRegistry,
   codeKnowledge,
+  toolRetrieval,
 });
 agentRepair = createAgentRepair({
   runtimeDir: RUNTIME_DIR,
@@ -13940,6 +14079,15 @@ try {
 void codeKnowledge.rebuild().catch((error) => {
   updateProviderHealth("gemini", { lastError: `Code knowledge indexing failed: ${error.message}` });
 });
+// Warm the tool index off the critical path. Only tools whose description changed are re-embedded
+// (content-hashed), so this is ~8 batched calls on a cold start and zero on every start after.
+if (toolRetrieval) {
+  setTimeout(() => {
+    toolRetrieval.warm()
+      .then((written) => { if (written) console.log(`[tool-retrieval] embedded ${written} tool descriptions`); })
+      .catch((error) => console.warn(`[tool-retrieval] warm failed: ${error.message}`));
+  }, 6000);
+}
 missionEngine.setExecutor(async (mission) => {
   // Use ReAct loop for complex missions; fall back to single-shot callGemini for fast missions
   const isComplex = mission.complexity === "deep"
@@ -14091,6 +14239,8 @@ const server = http.createServer(async (req, res) => {
 server.listen(PORT, HOST, () => {
   startupCheckpoint("http listen");
   console.log(`JARVIS UI online at http://${HOST}:${PORT}`);
+  // Warm the day payload so the first Calendar open paints real events instead of an empty grid.
+  setTimeout(() => { getStageDayEvents().catch(() => {}); }, 1500);
 
   // Observers do not participate in serving the first page or first command.
   // Let the desktop UI finish loading before chokidar and PowerShell cold-start.

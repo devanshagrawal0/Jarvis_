@@ -297,23 +297,37 @@ function createAgentRuntime({ getSettings, toolGateway, codeKnowledge, memorySto
       ? history.slice(-4).map((h) => String((h && (h.text || h.content)) || "")).filter(Boolean).join("\n")
       : "";
     const continuationAction = isContinuation && historyTail.trim().length > 0;
-    const toolPrompt = screenTask
-      ? `${prompt}\ncurrent laptop screen screen_capture screen_inspect screen_act desktop_control`
-      : meshTask
-        ? `${prompt}\ndevice mesh mesh_status mesh_objects mesh_send_command device_files device_latest_image`
-        : forgeTask
-          ? `${prompt}\napex_strategies strategies bots forge portfolio backtest`
-          : continuationAction
-            ? `${historyTail}\n${prompt}`
-            : prompt;
+    // The keyword bait below exists to game the LEXICAL scorer: appending literal tool names makes
+    // scoreTool match them. Feeding that to an embedding model is actively harmful — it would
+    // retrieve against "screen_capture screen_inspect screen_act desktop_control" instead of
+    // against what the owner actually asked for. So the semantic path gets the real prompt, with
+    // only the genuine conversational context (historyTail) folded in.
+    const semanticSelection = process.env.JARVIS_SEMANTIC_TOOLS === "1";
+    const toolPrompt = semanticSelection
+      ? (continuationAction ? `${historyTail}\n${prompt}` : prompt)
+      : screenTask
+        ? `${prompt}\ncurrent laptop screen screen_capture screen_inspect screen_act desktop_control`
+        : meshTask
+          ? `${prompt}\ndevice mesh mesh_status mesh_objects mesh_send_command device_files device_latest_image`
+          : forgeTask
+            ? `${prompt}\napex_strategies strategies bots forge portfolio backtest`
+            : continuationAction
+              ? `${historyTail}\n${prompt}`
+              : prompt;
     // T4c: intent-aware tool limit — deep/complex gets 12, browser/screen/mesh gets 10, action 8, else 5
     const toolLimit = route.complexity === "deep" ? 12
       : (browserTask || screenTask || meshTask) ? 10
         : (route.action || route.agentSwarm || continuationAction) ? 8
           : 5;
+    // Prefer the async entry point (it can consult the semantic index); fall back to the
+    // synchronous one for any gateway/stub that predates it. `await` on a plain array is a no-op,
+    // so existing test stubs returning arrays keep working untouched.
+    const selectToolsFn = typeof toolGateway.selectToolsAsync === "function"
+      ? toolGateway.selectToolsAsync
+      : toolGateway.selectTools;
     let selectedTools = forgeGenerative ? []
       : (route.action || route.code || route.personal || route.fresh || browserTask || meshTask || forgeTask || continuationAction
-        ? toolGateway.selectTools(toolPrompt, { limit: toolLimit, intent: route.intent, route })
+        ? await selectToolsFn.call(toolGateway, toolPrompt, { limit: toolLimit, intent: route.intent, route })
         : []);
     const execution = forgeGenerative ? { lane: "none", tools: [] } : routeExecutionLane(prompt, settings);
     // TYPED INTENT BEATS THE BROWSER LANE. The execution-lane router over-fires on words that also
