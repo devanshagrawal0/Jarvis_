@@ -158,7 +158,13 @@ function createAgentRuntime({ getSettings, toolGateway, codeKnowledge, memorySto
     if (baseline.code || baseline.fresh || baseline.personal) return false;
     if (baseline.action && /^(please\s+)?(open|close|launch|send|draft|click|type|focus|search|check|remember|save|run)\b/i.test(text)) return false;
     if (!baseline.action && !baseline.followUp && text.split(/\s+/).length <= 18) return false;
-    if (baseline.followUp && history.length && /\b(that|it|them|those|earlier|previous|i meant|actually)\b/.test(lower)) return false;
+    // A pronoun used to send the turn straight to the keyword baseline, on the theory that a
+    // sentence containing "it/them/that" is a conversational follow-up the cheap classifier already
+    // understands. It is the opposite: a pronoun is precisely what the cheap classifier CANNOT
+    // resolve, so this skipped the model exactly when the model was needed. "stick apple and nvidia
+    // side by side where i can see them" was labelled conversation-follow-up on the strength of the
+    // word "them", which zeroes the tool list — the brain was handed no capabilities at all and
+    // correctly reported it could not do it.
     return true;
   }
 

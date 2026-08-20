@@ -39,8 +39,6 @@ const TOOL_COMPANIONS = {
   gmail_send_prepared: ["gmail_prepare_email"],
   draft_email: ["email_smart", "resolve_contact"],
   email_smart: ["resolve_contact"],
-  stage_render: ["stage_show"],
-  stage_show: ["stage_render"],
   atlas_complete_task: ["atlas_today"],
   atlas_reschedule_event: ["atlas_today"],
   atlas_cancel_item: ["atlas_today"],
@@ -244,14 +242,12 @@ function createToolGateway({ capabilityEngine, moduleRegistry, codeKnowledge, to
     if (/\bi (?:had|met|did|finished|wrapped|attended|went to|got|took|spoke|talked|called)\b/i.test(prompt) || /\blog (?:that|it|this)\b/i.test(prompt) || /\bjust (?:had|finished|wrapped|got out of|met)\b/i.test(prompt)) {
       alwaysUseful.push("atlas_log_past", "atlas_add_event");
     }
-    // W0/W3 — the Stage. Expose BOTH stage tools together whenever a stage/panel/dashboard/
-    // breakdown surface is wanted, so the BRAIN (not a keyword) decides whether to write prose,
-    // render typed blocks, or MIX both in one surface. Keeping them symmetric avoids the trap of
-    // having text available but not blocks (or vice-versa) purely because of phrasing.
-    if (/\b(panel|stage|surface|window|card|dashboard|breakdown|rundown|scorecard|at a glance)\b/i.test(prompt)
-      && /\b(open|show|write|put|display|make|bring up|pop up|create|render|give|build|generate)\b/i.test(prompt)) {
-      alwaysUseful.push("stage_render", "stage_show");
-    }
+    // The Stage has NO keyword gate. There was one here — a panel-noun AND panel-verb pair — and it
+    // is the reason a whole session of panel requests never reached the Stage: its verb list held
+    // "bring up" and "pop up" but not "pull up", and not "add", so "in this panel add the latest
+    // stock prices for me" scored zero. Extending the list would fix those four sentences and fail
+    // the next four. `stage_render` is now found the same way every other tool is — by what it says
+    // it does — and its description carries the owner's own vocabulary rather than block jargon.
     // Undo — reverse the last Today/calendar change. Exposed on undo/revert/nevermind so a bare "undo
     // that" reliably reaches the tool (it carries no other noun).
     if (/\b(undo|revert|nevermind|never mind|take that back|take it back|oops|scratch that|reverse that|undo that)\b/i.test(prompt)) alwaysUseful.push("atlas_undo", "atlas_today");

@@ -5,6 +5,7 @@ const path = require("path");
 const { execFile, spawn } = require("child_process");
 const { promisify } = require("util");
 const { evaluateAutonomy, requiredAutonomyLevel } = require("./autonomy-policy");
+const { auditFaithfulness } = require("./stage-faithfulness");
 const { createBrowserAutomationService } = require("./browser-service");
 const { createResearchOrchestrator } = require("./cortex/research-orchestrator");
 const { createResearchV2 } = require("./research-v2");
@@ -47,33 +48,59 @@ function cleanString(value, max = 500) {
   return String(value || "").trim().slice(0, max);
 }
 
-// Widget name/alias -> canonical id, for grounding "it/this/that" in what the owner actually named.
-const WIDGET_ALIASES = {
-  kalshi: "kalshi", weather: "weather", vitals: "vitals", system: "vitals", cpu: "vitals",
-  today: "today", calendar: "today", agenda: "today", schedule: "today",
-  memory: "memory", agents: "agents", agent: "agents", connections: "connections", connection: "connections",
-  projects: "projects", project: "projects", modules: "modules", module: "modules",
-  vision: "vision", receipts: "receipts", receipt: "receipts", graph: "graph", contacts: "contacts", contact: "contacts",
-  profile: "profile", trust: "trust", devices: "devices", device: "devices", runtime: "runtime",
-  helix: "helix", synapse: "synapse",
-};
-function widgetNamedInText(text) {
-  const t = String(text || "").toLowerCase();
-  for (const alias of Object.keys(WIDGET_ALIASES)) {
-    if (new RegExp(`\\b${alias}s?\\b`).test(t)) return WIDGET_ALIASES[alias];
-  }
-  return null;
+// The widgets that actually exist on screen, mirroring src/globe-room/widget-registry.ts. This is
+// what the model is TOLD, and what its `id` argument is constrained to — see the ui_* declarations.
+//
+// It replaces an alias map that was never shown to the model at all. `ui_open_widget` declared its
+// id as a bare STRING with no list, so the model had to guess an id from nothing; asked to show
+// stock prices it guessed "kalshi", because that was the only market-shaped name it had ever seen.
+// It had no way to know there was no markets widget, and no way to know `calendar` existed — the
+// alias map answered the word "calendar" with the `today` widget, leaving the real Calendar widget
+// unreachable by name. Both are failures of information, not of judgment, so the fix is to hand
+// over the information rather than to guess on the model's behalf.
+const WIDGET_CATALOG = [
+  ["today", "the owner's schedule, tasks, reminders and agenda for today"],
+  ["calendar", "the full day-view calendar grid with events laid out by hour"],
+  ["kalshi", "the owner's Kalshi prediction markets — positions, portfolio, orders, fills"],
+  ["weather", "current weather and forecast for the owner's location"],
+  ["vitals", "this machine's CPU, memory, uptime and system health"],
+  ["runtime", "the JARVIS runtime itself — processes, lanes, live internals"],
+  ["connections", "provider and integration health: what is connected, what needs re-auth"],
+  ["agents", "running agent missions and specialists"],
+  ["memory", "the owner's stored memories / neural vault"],
+  ["projects", "the owner's projects and their health"],
+  ["contacts", "the owner's contacts"],
+  ["profile", "the owner's profile, usage and API spend"],
+  ["modules", "installed JARVIS modules"],
+  ["devices", "paired phones, tablets and the device mesh"],
+  ["trust", "trust, autonomy level and permissions"],
+  ["graph", "the knowledge / reality graph"],
+  ["vision", "camera and vision feeds"],
+  ["receipts", "receipts and the audit trail of what JARVIS has done"],
+  ["helix", "the HELIX research room"],
+  ["synapse", "the Synapse co-op mesh room"],
+];
+const WIDGET_IDS = WIDGET_CATALOG.map(([id]) => id);
+const WIDGET_LIST_TEXT = WIDGET_CATALOG.map(([id, what]) => `${id} — ${what}`).join("; ");
+
+// The `id` parameter every widget tool shares: constrained to widgets that exist, and carrying what
+// each one actually shows, so the model can tell whether the thing being asked for exists at all.
+function widgetIdParam() {
+  return {
+    type: "STRING",
+    enum: [...WIDGET_IDS],
+    description: `Which on-screen widget. Must be one of: ${WIDGET_LIST_TEXT}. If none of these covers what the owner asked for, do NOT substitute the nearest one — say it isn't available, or render the answer on the Stage with stage_render instead.`,
+  };
 }
-// Resolve which widget a UI command targets. If the OWNER's own words name a widget, trust that.
-// Otherwise the command used "it/this/that" (or nothing) -> target the widget actually focused on
-// screen. Only fall back to the model's guessed id when neither signal exists. This is why "move it"
-// no longer grabs a stale widget from chat history: coreference is grounded in the live screen.
+
+// Which widget a UI command targets. The model picks it — it has the owner's words, the catalog
+// above, and the schema only lets it name a real widget. A bare "move it" / "close this" carries no
+// id, and that is the one case worth resolving in code: fall through to whatever is actually focused
+// on screen, so coreference is grounded in the live screen rather than a stale mention in chat.
 function resolveWidgetTarget(argId, context) {
-  const named = widgetNamedInText(context && context.userPrompt);
-  if (named) return named;
-  const focused = cleanString(context && context.focusedWidget, 60);
-  if (focused) return focused;
-  return cleanString(argId, 60);
+  const arg = cleanString(argId, 60);
+  if (arg) return arg;
+  return cleanString(context && context.focusedWidget, 60);
 }
 
 function parsePowerShellJson(output, label = "PowerShell") {
@@ -506,8 +533,16 @@ function createCapabilityEngine({
     ["atlas_undo", "Undo the owner's most recent Today/calendar change — reverse the last add/complete/move (add→delete, complete→reopen, move→move back). Use the moment the owner says 'undo', 'undo that', 'nevermind', 'take that back', 'revert that', 'oops undo'. Runs immediately. Returns what was undone, or says there's nothing to undo.", "execute", false],
     ["atlas_clear_window", "Bulk-clear the owner's LOCAL events across a whole time window in one shot — 'clear my afternoon', 'cancel everything tomorrow morning', 'wipe my evening', 'clear the rest of today', 'cancel my friday'. Pass `window` = the owner's window phrase exactly as they said it (e.g. 'this afternoon', 'tomorrow morning', 'after 3pm today', 'friday evening'). It finds every local event in that window and cancels them together. This deletes multiple items, so it is confirmed with the owner first (the preview shows how many and which). Undoable afterwards. Returns the count and titles.", "commit", true],
     ["atlas_move_window", "Bulk-MOVE every LOCAL event in a time window to another day in one shot — 'push my afternoon to tomorrow', 'move everything after 3pm to friday', 'shift my morning to monday', 'bump today's meetings to next week'. Pass `window` (the source window phrase, e.g. 'this afternoon', 'after 3pm today') and `target` (the destination day phrase, e.g. 'tomorrow', 'friday', 'next monday'). Each event keeps its time-of-day and duration, only the date shifts. Confirmed first with a preview; undoable. Returns count and titles.", "commit", true],
-    ["stage_show", "Open Jarvis's own on-screen STAGE panel and display text/markdown in it. Use whenever the owner asks to open a panel / surface / stage and show, write, or put something on it — e.g. 'open a panel and write hello', 'show me a note that says X', 'put X on the stage', 'open a surface with …'. YOU pass the exact content (markdown allowed). It appears instantly on the owner's screen; nothing is saved. This is Jarvis's own generative surface — the beginning of the Stage.", "observe", false],
-    ["stage_render", "Render a STRUCTURED surface on Jarvis's Stage from typed blocks. This is the primary Stage tool: it can MIX prose AND structured elements in ONE surface — do NOT choose between text and blocks, combine them (e.g. an intro 'text' block, then a row of 'stat' cards, then a 'list', then a closing 'text' block). Pass `blocks`: an ordered array; each block has a `type` of 'heading', 'text' (supports markdown — bold, links, sub-bullets), 'stat' (label + value + optional delta like '+2.1%'), 'list' (items[]), or 'divider'. Consecutive 'stat' blocks lay out side by side as a row. Prefer this whenever the answer has any structure or numbers worth showing; use stage_show only for a plain note. Blocks render top-to-bottom; nothing is saved.", "observe", false],
+    // ONE Stage tool. There were two — `stage_show` (prose only) and `stage_render` (typed blocks) —
+    // and the split WAS the bug. `stage_show`'s description carried every word the owner actually
+    // says ("open a panel", "put X on the stage", "show me"), while `stage_render`'s was written in
+    // implementation vocabulary ("typed blocks", "delta", "consecutive stat blocks"). Retrieval
+    // matched on that text and did exactly what it was told: `stage_show` won every panel request
+    // and the real renderer was never offered once, so "in this panel add the latest stock prices"
+    // could only ever come back as a prose note. Merged, there is no wrong choice left to make — a
+    // plain note is simply a single 'text' block. `stage_show` still EXECUTES (see the handler) so
+    // older callers keep working, but it is no longer declared, so the model never sees it.
+    ["stage_render", "Put something on Jarvis's STAGE — the owner's own on-screen panel — instead of answering in chat. Use this whenever the owner wants a thing SHOWN rather than told: 'put it on the panel', 'show me', 'pull that up', 'throw it on the big screen', 'draw it', 'lay it out', 'add X to the panel', 'open a surface with …', or any request naming a panel / stage / surface / display / screen. Also use it when the answer is genuinely better seen than read — several numbers to compare, a ranked or grouped list, a schedule, a multi-part breakdown. Pass `blocks`: an ordered array that MIXES prose and structure freely — 'heading', 'text' (markdown), 'stat' (label + value + optional delta like '+2.1%'), 'list' (items[]), 'divider'. Consecutive 'stat' blocks lay out side by side. For a plain note, pass a single 'text' block. It appears instantly on the owner's screen; nothing is saved. Do NOT use it for greetings, yes/no answers, a single fact, or anything one sentence answers well.", "observe", false],
     ["atlas_log_past", "Retroactively LOG something that already happened, for time-tracking — 'I had lunch with John at 1pm', 'log that I met the client at 11', 'I finished the report at 3pm', 'just wrapped a call with Sam'. Pass `title` (what happened) and the time is taken from the owner's words. It records a past event at that time TODAY (the tool pulls the clock time back so it lands in the past, not the future). Use ONLY for things the owner says already happened (past tense: had/met/finished/did/wrapped). Saves immediately, undoable.", "execute", false],
     ["calendar_list_events", "Read the owner's REAL Google Calendar over a time window. Call this whenever the owner asks what's on their (Google) calendar, whether something is on it, their meetings/events, or to confirm an event exists. timeMin/timeMax are ISO 8601 (default: now to +7 days). This is your ONLY way to see the real Google Calendar — never claim you can't check it.", "observe", false],
     ["calendar_create_event", "Create a real event on the owner's Google Calendar (the actual calendar, not the local Today list). Use when the owner says 'add to my calendar', 'put X on my calendar', 'schedule X', or 'add an event'. YOU extract title, and startAt as an ISO 8601 timestamp in the owner's local time WITH offset; optional endAt (default +1h) and location. This is a real external write — it is confirmed with the owner before it goes through, so do NOT say it's done until the confirmation completes.", "commit", true],
@@ -605,23 +640,23 @@ function createCapabilityEngine({
       url: { type: "STRING", description: "Public HTTP/HTTPS URL to read." },
       maxChars: { type: "INTEGER", description: "Maximum extracted characters to return." },
     }, required: ["url"] } },
-    { name: "ui_open_widget", description: description("ui_open_widget"), parameters: { type: "OBJECT", properties: { id: { type: "STRING" } }, required: ["id"] } },
-    { name: "ui_focus_widget", description: description("ui_focus_widget"), parameters: { type: "OBJECT", properties: { id: { type: "STRING" } }, required: ["id"] } },
-    { name: "ui_close_widget", description: description("ui_close_widget"), parameters: { type: "OBJECT", properties: { id: { type: "STRING" } } } },
+    { name: "ui_open_widget", description: description("ui_open_widget"), parameters: { type: "OBJECT", properties: { id: widgetIdParam() }, required: ["id"] } },
+    { name: "ui_focus_widget", description: description("ui_focus_widget"), parameters: { type: "OBJECT", properties: { id: widgetIdParam() }, required: ["id"] } },
+    { name: "ui_close_widget", description: description("ui_close_widget"), parameters: { type: "OBJECT", properties: { id: widgetIdParam() } } },
     { name: "ui_populate", description: description("ui_populate"), parameters: { type: "OBJECT", properties: {
-      id: { type: "STRING" }, state: { type: "STRING" }, data: { type: "OBJECT" },
+      id: widgetIdParam(), state: { type: "STRING" }, data: { type: "OBJECT" },
     }, required: ["id", "data"] } },
     { name: "ui_move_widget", description: description("ui_move_widget"), parameters: { type: "OBJECT", properties: {
-      id: { type: "STRING", description: "Widget id ONLY if the owner named one. Omit for 'it'/'this'/'move to the corner' — the focused widget is used." }, position: { type: "STRING", description: "top-left, top-right, bottom-left, bottom-right, center, left, right, top, or bottom." },
+      id: { ...widgetIdParam(), description: "Widget id ONLY if the owner named one. Omit for'it'/'this'/'move to the corner' — the focused widget is used." }, position: { type: "STRING", description: "top-left, top-right, bottom-left, bottom-right, center, left, right, top, or bottom." },
     }, required: ["position"] } },
     { name: "ui_resize_widget", description: description("ui_resize_widget"), parameters: { type: "OBJECT", properties: {
-      id: { type: "STRING", description: "Widget id ONLY if the owner named one. Omit for 'it'/'this' — the focused widget is used." }, size: { type: "STRING", description: "small, medium, large, expand, maximize, or minimize." },
+      id: { ...widgetIdParam(), description: "Widget id ONLY if the owner named one. Omit for'it'/'this' — the focused widget is used." }, size: { type: "STRING", description: "small, medium, large, expand, maximize, or minimize." },
     }, required: ["size"] } },
     { name: "ui_arrange_widgets", description: description("ui_arrange_widgets"), parameters: { type: "OBJECT", properties: {
       layout: { type: "STRING", description: "tile (grid, default) or cascade." },
     } } },
     { name: "ui_set_widget_view", description: description("ui_set_widget_view"), parameters: { type: "OBJECT", properties: {
-      id: { type: "STRING", description: "Widget id ONLY if the owner named one. Omit for 'switch to markets'/'show positions' — the focused widget is used." },
+      id: { ...widgetIdParam(), description: "Widget id ONLY if the owner named one. Omit for'switch to markets'/'show positions' — the focused widget is used." },
       view: { type: "STRING", description: "The tab/segment to show, e.g. positions, markets, orderbook, portfolio, missions, specialists, explore, connected, action." },
       filter: { type: "STRING", description: "Optional secondary filter, e.g. a status (running, failed) for agents." },
       select: { type: "STRING", description: "Optional item to select, e.g. a Kalshi market ticker." },
@@ -687,10 +722,9 @@ function createCapabilityEngine({
       title: { type: "STRING", description: "What happened, e.g. 'Lunch with John', 'Client call'." },
       at: { type: "STRING", description: "Optional ISO 8601 time it happened; usually left blank — the time is resolved from the owner's words." },
     }, required: ["title"] } },
-    { name: "stage_show", description: description("stage_show"), parameters: { type: "OBJECT", properties: {
-      title: { type: "STRING", description: "Optional short title for the Stage panel; defaults to 'Jarvis'." },
-      content: { type: "STRING", description: "The text/markdown to display on the Stage. This is what the owner will see." },
-    }, required: ["content"] } },
+    // `stage_show` is deliberately NOT declared — see the merge note beside the definitions. It has
+    // one job (a prose note) that `stage_render` covers with a single 'text' block, and while both
+    // were on the menu it won every panel request on description wording alone.
     { name: "stage_render", description: description("stage_render"), parameters: { type: "OBJECT", properties: {
       title: { type: "STRING", description: "Short title for the Stage panel." },
       blocks: { type: "ARRAY", description: "Ordered blocks to render top-to-bottom.", items: { type: "OBJECT", properties: {
@@ -2518,7 +2552,7 @@ function createCapabilityEngine({
       return { ok: true, shown: true, uiAction: { type: "stage-show", data: { title, content } }, message: "On your screen, sir." };
     },
     // W3 — the generative Stage. Render typed blocks (heading/text/stat/list/divider) instead of prose.
-    stage_render: async (args) => {
+    stage_render: async (args, context) => {
       const title = cleanString(args.title, 120) || "Jarvis";
       const raw = Array.isArray(args.blocks) ? args.blocks : [];
       const blocks = raw.map((b) => {
@@ -2530,6 +2564,25 @@ function createCapabilityEngine({
         return { type: "text", text: cleanString(b.text, 4000) };
       }).filter((b) => b.type === "divider" || b.text || b.value || b.label || (b.items && b.items.length));
       if (!blocks.length) throw errorWithStatus("The Stage needs some blocks to render, sir.", 400);
+      // Anti-fabrication. When this turn actually fetched something, every FIGURE drawn has to trace
+      // back to it — a surface that shows "$219.88" for a price no tool ever returned is a lie with a
+      // chart around it, and it is worse than prose because it looks measured. Rejecting sends the
+      // violating numbers back to the model, which re-renders from the real payload on the next turn.
+      // No audit when nothing was fetched: the model is then answering from its own knowledge, and
+      // gating that would block every legitimate non-numeric surface.
+      const fetched = Array.isArray(context && context.priorToolResults)
+        ? context.priorToolResults.filter((item) => item && item.ok && item.tool !== "stage_render")
+        : [];
+      if (fetched.length) {
+        const audit = auditFaithfulness(blocks, JSON.stringify(fetched.map((item) => item.result)));
+        if (!audit.ok) {
+          const bad = audit.violations.slice(0, 6).map((v) => `${v.value} (${v.where})`).join(", ");
+          throw errorWithStatus(
+            `Those figures aren't in anything you fetched this turn: ${bad}. Render again using only values that appear in the tool results, or drop them.`,
+            422,
+          );
+        }
+      }
       return { ok: true, shown: true, uiAction: { type: "stage-render", data: { title, blocks } }, message: `Rendered a ${blocks.length}-block surface on your screen, sir.` };
     },
     calendar_list_events: async (args) => {

@@ -1464,6 +1464,18 @@ async function widgetApi(path: string, empty: Record<string, unknown>): Promise<
   }
 }
 
+// Is this poll's payload the same as what is already on screen? Compared with `__fetchedAt` removed,
+// because that field changes on every single fetch by definition — leaving it in would mean the
+// comparison could never once return true, which is the same as not comparing at all.
+function sameWidgetPayload(a: any, b: any): boolean {
+  const strip = (v: any) => {
+    if (!v || typeof v !== "object") return v;
+    const { __fetchedAt, ...rest } = v;
+    return rest;
+  };
+  try { return JSON.stringify(strip(a)) === JSON.stringify(strip(b)); } catch { return false; }
+}
+
 async function fetchWidgetData(id: string): Promise<any> {
   switch (id) {
     case "runtime":
@@ -2052,10 +2064,26 @@ export function WidgetStrip({ mode }: { mode: string; showChips?: boolean }) {
     return () => document.removeEventListener("jarvis:widgets-query", announce);
   }, [openKey]);
 
+  // A refresh must be INVISIBLE when it has nothing new to say.
+  //
+  // The 30s poll below re-fetches every open widget. This function used to raise `loading` on every
+  // one of those fetches and then hand back a freshly-allocated data object regardless of whether
+  // anything had changed. Both are re-renders the owner can see: the widget drops to its skeleton
+  // and flashes back, twice a minute, forever. That is the "the panel auto-reloads on its own,
+  // showing whatever it wants" — it was never reloading anything, it was redrawing identical data.
+  //
+  // So: `loading` is for a widget with nothing on screen yet, and identical bytes are a no-op.
   const refresh = useCallback(async (id: string) => {
     if (inFlightRef.current.has(id)) return;
     inFlightRef.current.add(id);
-    setLoadingIds((current) => new Set(current).add(id));
+    let announced = false;
+    setWidgetData((current) => {
+      if (current[id] === undefined) {                 // nothing on screen — a spinner is honest here
+        announced = true;
+        setLoadingIds((ids) => new Set(ids).add(id));
+      }
+      return current;
+    });
     try {
       const next = await fetchWidgetData(id);
       setWidgetData((current) => {
@@ -2063,11 +2091,14 @@ export function WidgetStrip({ mode }: { mode: string; showChips?: boolean }) {
         if (next?.__state === "disconnected" && prior && prior.__state !== "disconnected") {
           return { ...current, [id]: { ...prior, __state: "stale", __error: next.__error, __fetchedAt: new Date().toISOString() } };
         }
+        // `__fetchedAt` changes on every poll by definition, so compare everything else — otherwise
+        // the timestamp alone guarantees a re-render and the comparison can never succeed.
+        if (prior && sameWidgetPayload(prior, next)) return current;
         return { ...current, [id]: next };
       });
     } finally {
       inFlightRef.current.delete(id);
-      setLoadingIds((current) => { const next = new Set(current); next.delete(id); return next; });
+      if (announced) setLoadingIds((current) => { const next = new Set(current); next.delete(id); return next; });
     }
   }, []);
 

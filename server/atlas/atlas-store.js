@@ -164,6 +164,15 @@ function createAtlasStore({ runtimeDir, file } = {}) {
   function createReminder(input = {}) {
     const row = { id: input.id || uid("rem"), title: String(input.title || "Reminder").trim(), fire_at: input.fireAt, tz: input.tz || "America/New_York", task_id: input.taskId || null, recurrence: input.recurrence ? JSON.stringify(input.recurrence) : null, source_kind: input.source?.kind || "owner", source_ref: input.source?.ref || null, created_at: nowIso() };
     if (!row.fire_at) throw new Error("Reminder needs fireAt (ISO)");
+    // An occurrence is identified by what it is and when it fires, so arming the same one twice is
+    // a no-op rather than a second row. Two separate code paths were once both re-arming every
+    // recurring reminder after it fired; each fire produced two next occurrences, and a single
+    // "every 2 hours" reminder doubled its way to 524,288 pending rows. The duplicate caller is
+    // gone, but the invariant is enforced here so a future third caller cannot repeat it silently.
+    const twin = db.prepare(
+      "SELECT * FROM atlas_reminders WHERE title=? AND fire_at=? AND fired_at IS NULL AND cancelled_at IS NULL LIMIT 1",
+    ).get(row.title, row.fire_at);
+    if (twin) return remRow(twin);
     db.prepare(`INSERT INTO atlas_reminders(id,title,fire_at,tz,task_id,recurrence,source_kind,source_ref,created_at)
       VALUES(@id,@title,@fire_at,@tz,@task_id,@recurrence,@source_kind,@source_ref,@created_at)`).run(row);
     return remRow(db.prepare("SELECT * FROM atlas_reminders WHERE id=?").get(row.id));

@@ -28,20 +28,18 @@ function createAtlasScheduler({ store, deliver, intervalMs = 20_000, logger = co
       // notifications, which is the worse failure for a personal assistant. Surface it instead.
       logger?.warn?.(`[atlas] reminder ${reminder.id} claimed but delivery failed: ${e?.message || e}`);
     }
-    // RE-ARM recurring reminders. Recurrence was stored but nothing ever created the NEXT occurrence,
-    // so "remind me every weekday at 9" fired exactly once and then never again. After a recurring
-    // reminder fires, schedule its next instance at the same local clock time.
-    try {
-      const rec = reminder.recurrence;
-      if (rec && store && typeof store.createReminder === "function" && typeof nextOccurrence === "function") {
-        const tz = reminder.tz || DEFAULT_TZ;
-        const p = new Intl.DateTimeFormat("en-US", { timeZone: tz, hour: "2-digit", minute: "2-digit", hour12: false })
-          .formatToParts(new Date(reminder.fireAt)).reduce((a, x) => (a[x.type] = x.value, a), {});
-        const hh = Number(p.hour === "24" ? 0 : p.hour), mm = Number(p.minute);
-        const nextIso = nextOccurrence(rec, Date.now(), tz, hh, mm);
-        if (nextIso) store.createReminder({ title: reminder.title, fireAt: nextIso, tz, recurrence: rec, source: { kind: "recurrence" } });
-      }
-    } catch (e) { logger?.warn?.(`[atlas] recurring re-arm failed for ${reminder.id}: ${e?.message || e}`); }
+    // Re-arming a recurring reminder is the DELIVERY callback's job, and only its job — see the
+    // `deliver` handler in server.js, which schedules the next occurrence from max(scheduled, now).
+    //
+    // A second re-arm used to live here, running immediately after that one, so every fire of a
+    // repeating reminder created TWO next occurrences instead of one. That is a doubling, and it
+    // compounds: a single "Stretch, every 2 hours" grew to 524,288 pending rows — 2^19, one
+    // doubling per fire — and 1,048,633 rows in the table. Every read of the day-model then pulled
+    // half a million rows, and each generation was queued to fire, notify and re-arm together.
+    //
+    // It is left out rather than deduplicated because this module's contract (see the header) is
+    // claim-and-fire-exactly-once; expanding recurrence here contradicts it and is what allowed two
+    // owners of the same job to exist without either knowing about the other.
   }
 
   async function tick(asOfIso) {

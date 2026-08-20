@@ -44,7 +44,6 @@ const { createCodeKnowledge } = require("./server/code-knowledge");
 const { createToolGateway } = require("./server/tool-gateway");
 const { createToolRetrieval } = require("./server/tool-retrieval");
 const { detectWidgetControl, detectWidgetView, detectWidgetMove, detectWidgetArrange } = require("./server/widget-control");
-const { detectPanelRequest } = require("./server/stage-pipeline");
 const { createAgentRuntime } = require("./server/agent-runtime");
 const { createReActExecutor } = require("./server/react-loop");
 const { createActivityGraph } = require("./server/pc-activity-graph");
@@ -913,17 +912,6 @@ function saveSettings(nextSettings) {
   return loadSettings();
 }
 
-// The Stage pipeline — built lazily so it picks up the live Gemini key. IMPORTANT: it is invoked
-// ONLY from the explicit-panel-request path (detectPanelRequest), never on every turn. That is the
-// difference from the earlier wiring that ran the router on all traffic and broke normal chat.
-let _stagePipeline = null;
-function getStagePipeline() {
-  if (!_stagePipeline) {
-    const { createStagePipeline } = require("./server/stage-pipeline");
-    _stagePipeline = createStagePipeline({ getSettings: loadSettings });
-  }
-  return _stagePipeline;
-}
 
 // W3b — the owner's REAL day (local + Google Calendar), for a generative calendar surface. The
 // events come straight from the calendar API — the model never generates them, so this surface
@@ -4208,7 +4196,20 @@ async function callGemini({ prompt, imageData, attachments = [], mode, sessionId
   // generous headroom so it NEVER aborts with a "restriction"/budget error mid-answer.
   // It streams tokens, so the user sees progress the whole time.
   const responseBudgetMs = browserWorkflow || screenWorkflow || screenPrompt ? 60_000 : forceModel === GEMINI_MODELS.reasoning ? 120_000 : GEMINI_TOTAL_BUDGET_MS;
-  const modelDeadline = started + responseBudgetMs;
+  // The budget measures the MODEL, so time spent waiting on a tool is credited back to it.
+  //
+  // It used to be a fixed wall-clock deadline set once at turn start, which meant every second a
+  // tool spent working was a second the model no longer had to think. One tool made that fatal:
+  // `web_research` is a Gemini grounded-search call that reliably takes ~24s, against a 22s budget.
+  // Any request needing live data therefore blew the budget BEFORE the model got a turn to use what
+  // came back — the turn aborted, and the recovery path printed the raw tool trace as the reply
+  // ("- web research: query: …, sources: details available"). The panel never rendered because the
+  // model never got the turn in which it would have called stage_render.
+  //
+  // Crediting tool time back does not make a turn unbounded: each model call still has its own
+  // per-call abort, and the tool adapters have their own timeouts.
+  let toolWaitMs = 0;
+  const modelDeadlineNow = () => started + responseBudgetMs + toolWaitMs;
   // Cortex v4 · 2.1 — bounded universal loop. Normal chat now gets up to 6 rounds so
   // the model can call tools AND synthesize a natural answer from their results
   // (Plan→Act→Observe→Reflect), instead of stopping after one round with an envelope.
@@ -4655,7 +4656,7 @@ async function callGemini({ prompt, imageData, attachments = [], mode, sessionId
       const candidates = turn === 0 ? modelCandidates.slice(0, 4) : [model];
       for (let candidateIndex = 0; candidateIndex < candidates.length; candidateIndex += 1) {
         const candidateModel = candidates[candidateIndex];
-        const remainingMs = modelDeadline - Date.now();
+        const remainingMs = modelDeadlineNow() - Date.now();
         if (remainingMs <= 0) throw new Error(`Gemini exceeded the ${responseBudgetMs}ms response budget`);
         model = candidateModel;
         answerModelCalls += 1;
@@ -4827,6 +4828,7 @@ async function callGemini({ prompt, imageData, attachments = [], mode, sessionId
         const priorResult = seenToolCalls.has(dedupeKey)
           ? toolResults.find((item) => `${item.tool}:${JSON.stringify(item.args || {})}` === dedupeKey)
           : null;
+        const toolStartedAt = Date.now();
         const execution = priorResult
           ? { ...priorResult, deduped: true }
           : await executeCapability(functionCall.name, functionCall.args || {}, {
@@ -4841,6 +4843,11 @@ async function callGemini({ prompt, imageData, attachments = [], mode, sessionId
               // ground "move it"/"expand this" in what the owner is looking at, not a stale chat mention.
               focusedWidget: focusedWidget || "",
               openWidgets: Array.isArray(openWidgets) ? openWidgets : [],
+              // Everything this turn has actually fetched so far. `stage_render` audits the figures it
+              // is about to draw against this, so a surface cannot show a number no tool returned. The
+              // Stage pipeline used to own that guard, which meant it only protected one route into
+              // the renderer; the guard belongs to the renderer itself.
+              priorToolResults: toolResults,
               ...((functionCall.name === "computer_use" || functionCall.name.startsWith("browser_"))
                 ? (prepared.route?.executionLane?.lane && prepared.route.executionLane.lane !== "none"
                     ? {
@@ -4855,6 +4862,9 @@ async function callGemini({ prompt, imageData, attachments = [], mode, sessionId
                   ? { placement: "visible", surface: "daily-browser" }
                   : {}),
             });
+        // Credit the wait back to the model's budget (see modelDeadlineNow). A deduped hit costs
+        // nothing, so it adds nothing.
+        if (!priorResult) toolWaitMs += Date.now() - toolStartedAt;
         seenToolCalls.add(dedupeKey);
         // Once external content has entered this turn, every later call is treated as
         // possibly-influenced by it. Raised on the call, not on its success — a partially
@@ -7122,6 +7132,8 @@ async function handleApi(req, res, pathname, url) {
       const nextEvent = events.find((e) => e.startAt > nowIso) || null;
       const nowEvent = events.find((e) => e.startAt <= nowIso && (!e.endAt || e.endAt > nowIso)) || null;
       const openTasks = atlasStore.listTasks({ status: "open" });
+      const waitingOn = atlasStore.waitingOnThem();
+      const pendingRems = atlasStore.pendingReminders();
       // "Top of mind": due today or overdue or high priority, capped.
       const topOfMind = openTasks
         .filter((t) => (t.dueAt && t.dueAt <= endIso) || t.priority >= 2)
@@ -7133,9 +7145,13 @@ async function handleApi(req, res, pathname, url) {
         nowNext: { now: nowEvent, next: nextEvent },
         timeline: events,
         topOfMind,
-        counts: { openTasks: openTasks.length, waitingOnThem: atlasStore.waitingOnThem().length, pendingReminders: atlasStore.pendingReminders().length },
-        waitingOnThem: atlasStore.waitingOnThem(10),
-        reminders: atlasStore.pendingReminders().slice(0, 10),   // Wave 3 — so the board can list + cancel them
+        // Read each list ONCE. Both of these were being called twice per request — once for the
+        // count and again for the rows — which is two full table reads for one answer. That was
+        // invisible while the tables were small and cost about eight seconds a request once the
+        // reminder table wasn't.
+        counts: { openTasks: openTasks.length, waitingOnThem: waitingOn.length, pendingReminders: pendingRems.length },
+        waitingOnThem: waitingOn.slice(0, 10),
+        reminders: pendingRems.slice(0, 10),   // Wave 3 — so the board can list + cancel them
       });
     } catch (e) { sendJson(res, 500, { available: false, error: String(e && e.message || e) }); }
     return;
@@ -11463,29 +11479,22 @@ ${entryText}`;
         return;
       } catch (err) { console.error("[stage-calendar] error, falling through to brain:", err && err.message); }
     }
-    // Generative Stage — explicit "make/show a panel/dashboard of X". Runs the researched pipeline
-    // (route -> fetch real data for LIVE -> render blocks strictly from that data -> fabrication
-    // gate -> show) ONLY on an explicit panel request, off the hot path; every other prompt never
-    // reaches it. This is the SAFE version of the earlier every-turn wiring that broke chat. The
-    // pipeline emits a real stage-render action or honestly abstains — it never claims a fake render.
-    if (!data.imageData && detectPanelRequest(prompt)) {
-      // Show the panel INSTANTLY as a loading skeleton, then stream phase updates, so a ~20s LIVE
-      // render never feels like a dead screen. `ui` events are dispatched by the client mid-stream.
-      const skeleton = (loading) => sendEvent({ type: "ui", uiActions: [{ type: "stage-render", data: { title: "Building your panel", blocks: [], loading } }] });
-      skeleton("Reading your request…");
-      let stage = null;
-      try { stage = await getStagePipeline().run(prompt, { history, onPhase: skeleton }); }
-      catch (err) { console.error("[stage-pipeline] error, falling through to brain:", err && err.message); stage = null; }
-      if (stage && stage.handled) {
-        const ui = (stage.uiActions && stage.uiActions[0]) || {};
-        const sources = (ui.data && ui.data.provenance && ui.data.provenance.sources) || [];
-        sendEvent({ type: "event", event: { kind: "ui", status: "complete", label: "Stage rendered", detail: (ui.data && ui.data.title) || ui.id || "" } });
-        sendEvent({ type: "delta", text: stage.text || "" });
-        sendEvent({ type: "done", result: { response: stage.text || "", model: "stage", sources, uiActions: stage.uiActions } });
-        res.end();
-        return;
-      }
-    }
+    // The Stage has NO pre-route. There was one here — a keyword gate in front of a second router,
+    // a second grounding call and a second renderer, all duplicating what the brain already does —
+    // and it caused three separate failures at once:
+    //
+    //   * its `detectPanelRequest` gate missed the owner's real phrasing ("pull up", "add"), so a
+    //     whole session of panel requests never reached it and got prose instead;
+    //   * when it DID fire and then abstained or threw, it fell through to the brain having already
+    //     painted an empty "Building your panel" skeleton, and nothing ever took that skeleton down,
+    //     so the panel hung on screen indefinitely;
+    //   * it re-sent that same empty skeleton on every phase callback, which is the panel visibly
+    //     re-painting itself mid-request, and its four SERIAL Gemini calls (route, ground, render,
+    //     repair) with no timeout are why "it took forever".
+    //
+    // The brain reaches the Stage the same way it reaches every other capability: by calling
+    // `stage_render`, which now carries the owner's own vocabulary in its description and enforces
+    // the anti-fabrication audit itself, so the guarantee survives the route's removal.
     // Cortex v4 · P3 — image-generation lane. Explicit "draw/generate an image of…"
     // requests produce a downloadable image artifact instead of a text answer.
     if (!data.imageData && /\b(generate|create|make|draw|design|render|paint)\b[^.?!]{0,24}\b(image|picture|photo|logo|icon|illustration|drawing|artwork|wallpaper|poster|avatar)\b/i.test(prompt)) {

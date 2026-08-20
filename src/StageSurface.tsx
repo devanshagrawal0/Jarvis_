@@ -200,6 +200,7 @@ export function StageSurface() {
   const drag = useRef<{ mode: "move" | "resize"; sx: number; sy: number; r: Rect } | null>(null);
   const contentRef = useRef<HTMLDivElement>(null);
   const userSized = useRef(false);
+  const rectKind = useRef<boolean | null>(null);   // which kind of surface the current rect was sized for
   const [meta, setMeta] = useState<{ id: string; date: string; time: string }>({ id: "STAGE.0001", date: "", time: "" });
 
   useEffect(() => {
@@ -224,7 +225,8 @@ export function StageSurface() {
         const title = d.data.title || "Jarvis";
         stamp(title);
         setStage({ title, content: d.data.content, key: Date.now() });
-        setRect((prev) => prev ?? defaultRect());
+        setRect((prev) => (prev && rectKind.current === false ? prev : defaultRect()));
+        rectKind.current = false;
       }
       if (d?.type === "stage-render") {
         const blocks = Array.isArray(d.data?.blocks) ? d.data.blocks : [];
@@ -239,7 +241,13 @@ export function StageSurface() {
           const key = prev && prev.loading ? prev.key : Date.now();
           return blocks.length ? { title, blocks, key } : { title, loading, key };
         });
-        setRect((prev) => prev ?? defaultRect(isCalendar(blocks)));
+        // A calendar surface and a stat surface want completely different boxes. `prev ?? …` kept
+        // whichever box the FIRST surface of the session happened to need and handed it to every
+        // surface after it, so a calendar could land in a note-sized panel and never fit. Keep the
+        // box only while the kind of surface is unchanged; when it changes, take the right default.
+        const cal = isCalendar(blocks);
+        setRect((prev) => (prev && rectKind.current === cal ? prev : defaultRect(cal)));
+        rectKind.current = cal;
       }
     };
     const onClose = () => setStage(null);
@@ -272,27 +280,41 @@ export function StageSurface() {
     return () => { window.removeEventListener("pointermove", onMove); window.removeEventListener("pointerup", onUp); };
   }, []);
 
-  // Fit height to content: short notes stay compact, long briefings grow up to ~92% of
-  // the screen and scroll only past that. Owner's manual resize wins.
+  // Fit height to content: short notes stay compact, long briefings grow up to the command bar and
+  // scroll only past that. Owner's manual resize wins.
+  //
+  // This used to fire on `[stage.key]` alone, which made it miss the case that mattered most. A
+  // surface that morphs in place — the loading skeleton becoming real blocks — deliberately KEEPS
+  // its key so the panel doesn't flicker, so the height was measured once against an empty skeleton
+  // and never again. The panel then sat at the wrong size no matter what was put in it, which is
+  // exactly "the length doesn't adjust to the content". Measuring the content element directly means
+  // the fit is driven by the thing it is fitting to, and it cannot be out of step with it.
   useLayoutEffect(() => {
-    if (!stage || userSized.current || isCalendar(stage.blocks)) return; // calendar fills its fixed rect
+    if (!stage || isCalendar(stage.blocks)) return; // calendar fills its fixed rect
     const content = contentRef.current;
     if (!content) return;
-    const vh = window.innerHeight;
-    // Never grow past the command bar at the bottom — cap the panel's bottom just above it.
-    const cb = document.querySelector(".jcb-root");
-    const cbTop = cb ? cb.getBoundingClientRect().top : Math.round(vh * 0.86);
-    const maxBottom = Math.max(220, cbTop - 14);
-    setRect((r) => {
-      const base = r ?? defaultRect();
-      const wanted = content.offsetHeight + CHROME;
-      const maxH = maxBottom - base.y;               // room from the panel's top down to the bar
-      const h = clamp(wanted, MIN_H, Math.max(MIN_H, maxH));
-      let y = base.y;
-      if (y + h > maxBottom) y = Math.max(12, maxBottom - h); // pull up if it would clip the bar
-      if (Math.abs(base.h - h) < 2 && base.y === y) return r;
-      return { ...base, h, y };
-    });
+    const fit = () => {
+      if (userSized.current) return;
+      // Never grow past the command bar at the bottom — cap the panel's bottom just above it.
+      const cb = document.querySelector(".jcb-root");
+      const cbTop = cb ? cb.getBoundingClientRect().top : Math.round(window.innerHeight * 0.86);
+      const maxBottom = Math.max(220, cbTop - 14);
+      setRect((r) => {
+        const base = r ?? defaultRect();
+        const wanted = content.offsetHeight + CHROME;
+        const maxH = maxBottom - base.y;               // room from the panel's top down to the bar
+        const h = clamp(wanted, MIN_H, Math.max(MIN_H, maxH));
+        let y = base.y;
+        if (y + h > maxBottom) y = Math.max(12, maxBottom - h); // pull up if it would clip the bar
+        if (Math.abs(base.h - h) < 2 && base.y === y) return r;
+        return { ...base, h, y };
+      });
+    };
+    fit();
+    const ro = new ResizeObserver(fit);
+    ro.observe(content);
+    window.addEventListener("resize", fit);
+    return () => { ro.disconnect(); window.removeEventListener("resize", fit); };
   }, [stage?.key]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const startDrag = useCallback((mode: "move" | "resize") => (e: React.PointerEvent) => {
