@@ -172,11 +172,28 @@ const STYLE = `
 .jr-blk-stat-delta.down { color: #e88a8a; }
 .jr-blk-stat-delta.flat { color: #9fb4c8; }
 .jr-blk-div { height: 1px; background: linear-gradient(90deg, transparent, rgba(110,185,235,.16), transparent); margin: 3px 0; }
-/* chart block (W3c) — the graph sits in a recessed well so it reads as instrumentation, not artwork */
-.jr-blk-chart { border: 1px solid rgba(110,185,235,.14); border-radius: 12px; padding: 9px 10px 6px;
-  background: linear-gradient(180deg, rgba(16,30,50,.5), rgba(8,15,26,.35)); box-shadow: inset 0 1px 0 rgba(150,205,240,.05); }
-.jr-blk-chart-label { font-size: 9.5px; letter-spacing: .16em; text-transform: uppercase; color: rgba(122,190,232,.78);
-  margin: 0 0 6px 2px; font-family: ui-monospace, "SF Mono", Consolas, monospace; }
+/* chart block (W3c) — a near-black instrument in a lit cyan bezel, per the owner's reference.
+   The bezel is two rings: a hairline edge plus an outer bloom, with a brighter highlight bled in
+   from top and bottom centre so the frame reads as lit glass rather than a drawn rectangle. */
+.jr-blk-chart { position: relative; border-radius: 20px; padding: 16px 18px 10px;
+  border: 1.5px solid rgba(126,214,246,.42);
+  background:
+    radial-gradient(120% 60% at 50% -14%, rgba(64,150,200,.12), transparent 60%),
+    linear-gradient(180deg, #050b10, #03080c);
+  box-shadow:
+    0 0 0 1px rgba(126,214,246,.08),
+    0 0 26px rgba(70,180,240,.16),
+    inset 0 1px 0 rgba(170,225,250,.14),
+    inset 0 0 40px rgba(20,70,110,.14);
+}
+/* the lit top and bottom edges */
+.jr-blk-chart::before, .jr-blk-chart::after { content: ""; position: absolute; left: 26%; right: 26%; height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(168,236,255,.7), transparent);
+  box-shadow: 0 0 6px rgba(120,220,255,.45); pointer-events: none; }
+.jr-blk-chart::before { top: 0; }
+.jr-blk-chart::after { bottom: 0; }
+.jr-blk-chart-label { font-size: 17px; font-weight: 700; letter-spacing: .01em; color: #3FE8A8;
+  margin: 0 0 10px 2px; text-shadow: 0 0 14px rgba(63,232,168,.45); }
 /* calendar day view (W3b) — HUD time-grid: hour rail + events positioned by time + now-line */
 .jr-cal-empty { font-size: 13px; color: rgba(160,190,215,.72); padding: 6px 2px; }
 .jr-cal-day { display: flex; flex-direction: column; gap: 10px; }
