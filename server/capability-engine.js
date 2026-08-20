@@ -552,7 +552,11 @@ function createCapabilityEngine({
     ["apex_ticker_report", "Deep on-demand report for one ticker: latest quote, fundamentals (P/E, market cap, beta — equities), news-driven impact, and recent insider transactions. Use for 'tell me about NVDA' or 'deep dive TSLA'.", "observe", false],
     // The only source of a real price SERIES. Without it the chart block had nothing to draw, and a
     // "chart bitcoin over the last week" answered from the model's own memory with stale figures.
-    ["apex_price_history", "Real historical price series for a ticker — the actual stored OHLCV bars, oldest first. This is where a price CHART or any question about a move over time gets its numbers: 'chart nvidia over the last month', 'graph bitcoin this week', 'how has AAPL moved since June', 'plot the S&P'. Pass `ticker` and optionally `days` (default 30) and `timeframe` ('1d' daily, default; '1wk' weekly; '5m' intraday). Returns real recorded bars — never estimate a series yourself, call this and render what it returns.", "observe", false],
+    // Described by what the owner ASKS for, not by what it returns. The first version said chart,
+    // graph and plot; "nvda 30 day trend in panel" retrieved nothing, so the model had no series,
+    // rendered an apology, and still reported having drawn the trend. Every ordinary way of asking
+    // how something moved over time has to reach this tool or it may as well not exist.
+    ["apex_price_history", "Real historical price series for a ticker — the actual stored OHLCV bars, oldest first. Every question about how something has MOVED OVER TIME comes here for its numbers: a trend, a chart, a graph, a plot, a price history, performance over a period, 'how has AAPL done since June', 'nvda 30 day trend', 'bitcoin this week', 'the S&P over the year', 'is TSLA up or down this month'. Pass `ticker` and optionally `days` (default 30) and `timeframe` ('1d' daily, default; '1wk' weekly; '5m' intraday). Returns real recorded bars. Never estimate, smooth or recall a series from memory — call this and use exactly what comes back, and if it has no data for the window say so rather than filling the gap.", "observe", false],
     ["apex_health_check", "Run the APEX Data Health Bot: audit every enabled data source (keyless + keyed) for reachability, return a per-source report, an analysis, and PROPOSED config fixes for any that are down. Read-only — proposes fixes but does not apply them. Follow with apex_health_apply once the user approves.", "observe", false],
     ["apex_health_apply", "Apply the data-source fixes proposed by the last apex_health_check (after the user approves), hot-reload the ingestion governor WITHOUT restarting the server, then re-verify and report the new health. Optionally pass specific source ids to apply only those.", "execute", false],
     ["apex_brief", "Get a data-grounded market brief assembled from live APEX data: a headline, a narrative paragraph, index session (yesterday close→today open→gap→range), top movers, sector leaders/laggards, macro, top news, and 'things to watch'. type can be now, morning, or eod. Use to brief the user on the market.", "observe", false],
@@ -2947,13 +2951,13 @@ function createCapabilityEngine({
       if (ROOM_IDS.includes(id)) {
         throw errorWithStatus(`"${id}" is a full-screen room, not a widget. If the owner asked to be taken there, call ui_open_room; if they were only asking about the subject, answer them instead.`, 400);
       }
-      return { uiAction: { type: "open-widget", id, focus: false } };
+      return { uiAction: { type: "open-widget", id, focus: false }, message: `opened the ${id} widget` };
     },
     ui_open_room: async (args) => {
       const id = cleanString(args.id, 40).toLowerCase();
       if (!ROOM_IDS.includes(id)) throw errorWithStatus(`There is no "${id}" room. Rooms: ${ROOM_IDS.join(", ")}.`, 400);
       // The HUD listens for the same event; the room ids are wired in JarvisUI's ROOMS map.
-      return { uiAction: { type: "open-widget", id, focus: false }, message: `Opened the ${id} room.` };
+      return { uiAction: { type: "open-widget", id, focus: false }, message: `opened the ${id} room full screen` };
     },
     ui_focus_widget: async (args, context) => ({ uiAction: { type: "open-widget", id: resolveWidgetTarget(args.id, context), focus: true } }),
     ui_close_widget: async (args) => ({ uiAction: { type: "close-widget", id: cleanString(args.id, 60) } }),

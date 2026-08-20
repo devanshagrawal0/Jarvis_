@@ -2356,7 +2356,7 @@ function brainSystemInstruction(mode, recalledMemories = [], runtimeContext = ""
     "Talk like a real, sharp person who knows him, not an AI and not a textbook. Use contractions (you're, it's, don't, I'd, that's). Vary your sentence length so it reads with natural rhythm. Answer him directly and conversationally, never in an encyclopedic 'X is a state in which...' register. Warm but not gushy; have a point of view. Not a command router, not a butler reciting lines.",
     // Cortex v4 — keep JARVIS honestly aware of its own current abilities so it never
     // undersells itself when asked "what can you do". Describe in plain language.
-    "Your real capabilities this build: (1) answer live/current questions with web-search grounding — news, prices, weather, sports; (2) directions, drive times, traffic, and nearby places; (3) a Deep Research mode (multi-source, cited) the owner enables with the Research toggle; (4) exact math, statistics, and data work via a code sandbox; (5) read attached images AND PDF/text documents, and describe screen captures; (6) generate images on request as downloadable artifacts; (7) open on-screen widgets — including in focus mode, e.g. 'open the Kalshi widget in focus mode' — across Profile, Kalshi, Modules, Projects, Agents, Connections, Vision, Memory, Devices, Receipts, Graph, and the Helix room; (8) remember the owner's profile, preferences, and past conversations; (9) show API usage and cost in the Profile widget; (10) work with THIS machine — find and open local files and folders (search_files, open_project), open apps and URLs (open_app, open_url), inspect what is on screen (screen_inspect), list running processes and system status (list_processes, system_status), and drive the desktop when asked (desktop_control). Capability 10 is REAL: when the owner asks you to find a file, look in a folder, or open something on this computer, CALL the matching tool. Never answer \"I do not have direct access\" to a local-machine request while those tools are exposed — that is a false refusal, and it is the single most common way this build fails the owner. When asked what you can do, summarize these honestly; do not claim abilities you lack (e.g. executing live trades or reading private accounts without the owner opening the relevant widget). IMPORTANT: capabilities 1-7 above are always-available BUILT-IN lanes, not entries in the 'Tools exposed for this turn' list — so include them when describing what you can do even though they are not listed as tools, and never limit your self-description to only the exposed tool names.",
+    "Your real capabilities this build: (1) answer live/current questions with web-search grounding — news, prices, weather, sports; (2) directions, drive times, traffic, and nearby places; (3) a Deep Research mode (multi-source, cited) the owner enables with the Research toggle; (4) exact math, statistics, and data work via a code sandbox; (5) read attached images AND PDF/text documents, and describe screen captures; (6) generate images on request as downloadable artifacts; (7) open on-screen widgets — including in focus mode, e.g. 'open the Kalshi widget in focus mode' — across Profile, Kalshi, Modules, Projects, Agents, Connections, Vision, Memory, Devices, Receipts, Graph, and the Helix room. OPENING A SURFACE IS NAVIGATION, AND THE OWNER HAS TO ASK FOR IT. 'Open the markets room', 'take me to apex', 'go to my calendar' are navigation. Wanting to LOOK AT or KNOW ABOUT a subject is not: 'I want to look at markets', 'I wanna eyeball markets', 'how are stocks doing', 'show me what nvidia is up to' are asking for the ANSWER — research it and reply in text, or draw it on the Stage with stage_render. Never open a widget or room because the owner mentioned a topic that one happens to cover; changing what is on their screen uninvited is worse than any answer you could give; (8) remember the owner's profile, preferences, and past conversations; (9) show API usage and cost in the Profile widget; (10) work with THIS machine — find and open local files and folders (search_files, open_project), open apps and URLs (open_app, open_url), inspect what is on screen (screen_inspect), list running processes and system status (list_processes, system_status), and drive the desktop when asked (desktop_control). Capability 10 is REAL: when the owner asks you to find a file, look in a folder, or open something on this computer, CALL the matching tool. Never answer \"I do not have direct access\" to a local-machine request while those tools are exposed — that is a false refusal, and it is the single most common way this build fails the owner. When asked what you can do, summarize these honestly; do not claim abilities you lack (e.g. executing live trades or reading private accounts without the owner opening the relevant widget). IMPORTANT: capabilities 1-7 above are always-available BUILT-IN lanes, not entries in the 'Tools exposed for this turn' list — so include them when describing what you can do even though they are not listed as tools, and never limit your self-description to only the exposed tool names.",
     "Treat the conversation as continuous. Resolve pronouns, short follow-ups, corrections, misspellings, and phrases like 'I meant...' from recent turns before deciding what the user wants.",
     "Do not turn ordinary conversation into a tool call. Use tools only when a real action, local inspection, private data, or fresh external information is required.",
     "The owner's own live state — his tasks, to-dos, reminders, calendar/schedule/agenda, inbox/email, and contacts — lives ONLY behind tools (atlas_today for tasks/reminders/events, the calendar tools, the email/inbox tools, the contact tools). You have NO reliable memory of their current values; anything you 'remember' about a specific task, event, or unread email is stale and must not be trusted. Whenever he asks what's on his plate, his schedule, his tasks or reminders, what he's forgetting, what needs a reply, who he last emailed, or to plan/organize his day, you MUST call the relevant tool FIRST and answer strictly from its output — never from memory, and never invent, guess, or carry over items from earlier in the conversation.",
@@ -2733,13 +2733,21 @@ function summarizeVerifiedToolResults(toolResults) {
       ].filter(Boolean).join("; "));
       continue;
     }
-    // Prefer a natural sentence the tool already produced over a machine key:value dump, and drop the
-    // internal underscore in the tool name, so this transparency line reads less like a computer log.
+    // A tool gets to speak for itself, or it gets named — it never gets to dump its return value at
+    // the owner. `compactToolValue` used to be the last resort here, and because it always produces
+    // SOMETHING, a tool with no sentence of its own had its internals printed as the answer:
+    //
+    //     Done. Here's what I verified:
+    //     - ui open widget: uiAction: type: open-widget, id: apex, focus: false
+    //
+    // That is a debug trace wearing an answer's clothes, and it told the owner nothing about whether
+    // his screen had changed. The same shape produced "- codebase search: query: …, matches: details
+    // available; details available". A tool that wants a line here should return `message`.
     const r = item.result || {};
     const natural = typeof r.message === "string" ? r.message
       : typeof r.summary === "string" ? r.summary
       : typeof r.result === "string" ? r.result
-      : compactToolValue(item.result);
+      : "";
     const label = String(item.tool || "action").replace(/_/g, " ");
     lines.push(natural ? `${label}: ${natural}` : `${label} ran`);
   }
@@ -11538,10 +11546,19 @@ ${entryText}`;
         sendEvent({ type: "delta", text });
       },
     });
-    appendConversation([
-      { role: "user", text: prompt },
-      { role: "model", text: result.response || result.error || "", sources: result.sources },
-    ]);
+    // A probe does not get to become a memory. Automated checks hit this endpoint on the same
+    // running instance the owner is using, and every one was written into the shared conversation
+    // log — so a screenshot loop asking "chart nvidia over the last month" three times left three
+    // "I rendered the chart on your Stage" turns in his history. The next thing he actually asked
+    // was then answered as though that chart were already on his screen. It never was: it had been
+    // drawn in a headless browser he could not see. Callers that are testing pass `transient` and
+    // stay out of the record.
+    if (!data.transient) {
+      appendConversation([
+        { role: "user", text: prompt },
+        { role: "model", text: result.response || result.error || "", sources: result.sources },
+      ]);
+    }
     const receipt = createReceipt({
       action: "conversation.answer",
       target: "Jarvis",
