@@ -42,4 +42,15 @@ async function fetchText(url, opts = {}) {
   } finally { clearTimeout(timer); }
 }
 
-module.exports = { fetchJson, fetchText, DEFAULT_UA };
+async function fetchBuffer(url, opts = {}) {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), opts.timeoutMs || 20000);
+  try {
+    const res = await fetch(url, { headers: { "user-agent": DEFAULT_UA, ...(opts.headers || {}) }, signal: ctrl.signal, redirect: "follow" });
+    const buf = Buffer.from(await res.arrayBuffer());
+    if (!res.ok) { const e = new Error(`HTTP ${res.status} for ${url.slice(0, 120)}`); e.status = res.status; throw e; }
+    return buf;
+  } finally { clearTimeout(timer); }
+}
+
+module.exports = { fetchJson, fetchText, fetchBuffer, DEFAULT_UA };

@@ -22,6 +22,9 @@ const { yahooQuotes } = require("../providers/apex/adapters");
 const START_CASH = 100000;   // $100k virtual account
 const SLIP_BPS = 3;          // 0.03% slippage on market/marketable fills
 const COMM_BPS = 1;          // 0.01% commission per fill (a few $/trade)
+const DEFAULT_PORTFOLIO_ID = "paper-default";
+const DEFAULT_ACCOUNT_ID = "paper-account";
+const SHORT_INITIAL_MARGIN = 1.5;
 const EPS = 1e-6;
 const id = () => crypto.randomBytes(9).toString("hex");
 const now = () => new Date().toISOString();
@@ -49,26 +52,71 @@ function createApexPaper(runtimeDir) {
     CREATE TABLE IF NOT EXISTS apex_paper_closes (
       id TEXT PRIMARY KEY, ticker TEXT, qty REAL, pnl REAL, ts TEXT NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS apex_portfolios (
+      id TEXT PRIMARY KEY, name TEXT NOT NULL, description TEXT DEFAULT '', kind TEXT NOT NULL DEFAULT 'paper',
+      base_currency TEXT NOT NULL DEFAULT 'USD', mandate TEXT DEFAULT '', risk_profile TEXT DEFAULT 'balanced',
+      status TEXT NOT NULL DEFAULT 'active', demo INTEGER NOT NULL DEFAULT 1, meta_json TEXT DEFAULT '{}',
+      created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS apex_accounts (
+      id TEXT PRIMARY KEY, portfolio_id TEXT NOT NULL, name TEXT NOT NULL, account_type TEXT NOT NULL DEFAULT 'paper',
+      base_currency TEXT NOT NULL DEFAULT 'USD', start_cash REAL NOT NULL DEFAULT 100000, margin_policy_json TEXT DEFAULT '{}',
+      status TEXT NOT NULL DEFAULT 'active', created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS apex_order_reservations (
+      id TEXT PRIMARY KEY, order_id TEXT NOT NULL UNIQUE, portfolio_id TEXT NOT NULL, account_id TEXT NOT NULL,
+      ticker TEXT NOT NULL, currency TEXT NOT NULL DEFAULT 'USD', reserved_cash REAL NOT NULL DEFAULT 0,
+      reserved_exposure REAL NOT NULL DEFAULT 0, status TEXT NOT NULL DEFAULT 'open', created_at TEXT NOT NULL, released_at TEXT
+    );
+    CREATE TABLE IF NOT EXISTS apex_ledger_entries (
+      id TEXT PRIMARY KEY, journal_group_id TEXT NOT NULL, portfolio_id TEXT NOT NULL, account_id TEXT NOT NULL,
+      event_type TEXT NOT NULL, event_id TEXT, ledger_account TEXT NOT NULL, currency TEXT NOT NULL DEFAULT 'USD',
+      debit REAL NOT NULL DEFAULT 0, credit REAL NOT NULL DEFAULT 0, memo TEXT DEFAULT '', source_json TEXT DEFAULT '{}',
+      created_at TEXT NOT NULL
+    );
   `);
+
+  for (const sql of [
+    "ALTER TABLE apex_orders ADD COLUMN portfolio_id TEXT DEFAULT 'paper-default'",
+    "ALTER TABLE apex_orders ADD COLUMN account_id TEXT DEFAULT 'paper-account'",
+    "ALTER TABLE apex_orders ADD COLUMN owner_type TEXT DEFAULT 'manual'",
+    "ALTER TABLE apex_orders ADD COLUMN owner_id TEXT DEFAULT ''",
+    "ALTER TABLE apex_orders ADD COLUMN idempotency_key TEXT DEFAULT ''",
+    "ALTER TABLE apex_orders ADD COLUMN reserved_cash REAL DEFAULT 0",
+    "ALTER TABLE apex_orders ADD COLUMN reserved_exposure REAL DEFAULT 0",
+    "ALTER TABLE apex_fills ADD COLUMN portfolio_id TEXT DEFAULT 'paper-default'",
+    "ALTER TABLE apex_fills ADD COLUMN account_id TEXT DEFAULT 'paper-account'",
+    "ALTER TABLE apex_fills ADD COLUMN owner_type TEXT DEFAULT 'manual'",
+    "ALTER TABLE apex_fills ADD COLUMN owner_id TEXT DEFAULT ''",
+    "ALTER TABLE apex_positions ADD COLUMN portfolio_id TEXT DEFAULT 'paper-default'",
+    "ALTER TABLE apex_positions ADD COLUMN account_id TEXT DEFAULT 'paper-account'",
+    "ALTER TABLE apex_positions ADD COLUMN owner_type TEXT DEFAULT 'manual'",
+    "ALTER TABLE apex_positions ADD COLUMN owner_id TEXT DEFAULT ''",
+    "ALTER TABLE apex_positions ADD COLUMN strategy_version TEXT DEFAULT ''",
+  ]) {
+    try { db.exec(sql); } catch { /* column already exists */ }
+  }
 
   const S = {
     getAcct: db.prepare(`SELECT * FROM apex_paper_account WHERE id = 1`),
     initAcct: db.prepare(`INSERT OR IGNORE INTO apex_paper_account (id, cash, realized, start_cash, created_at) VALUES (1, ?, 0, ?, ?)`),
     setAcct: db.prepare(`UPDATE apex_paper_account SET cash = ?, realized = ? WHERE id = 1`),
-    getPos: db.prepare(`SELECT * FROM apex_positions WHERE id = ?`),
-    listPos: db.prepare(`SELECT * FROM apex_positions WHERE ABS(qty) > ${EPS} ORDER BY opened_at`),
-    upPos: db.prepare(`INSERT INTO apex_positions (id, ticker, qty, avg_price, side, opened_at)
-      VALUES (@id, @ticker, @qty, @avg_price, @side, @opened_at)
-      ON CONFLICT(id) DO UPDATE SET qty=@qty, avg_price=@avg_price, side=@side`),
+    getPos: db.prepare(`SELECT * FROM apex_positions WHERE id = ? AND COALESCE(portfolio_id, '${DEFAULT_PORTFOLIO_ID}') = '${DEFAULT_PORTFOLIO_ID}'`),
+    listPos: db.prepare(`SELECT * FROM apex_positions WHERE COALESCE(portfolio_id, '${DEFAULT_PORTFOLIO_ID}') = '${DEFAULT_PORTFOLIO_ID}' AND ABS(qty) > ${EPS} ORDER BY opened_at`),
+    upPos: db.prepare(`INSERT INTO apex_positions (id, ticker, qty, avg_price, side, opened_at, portfolio_id, account_id, owner_type, owner_id, strategy_version)
+      VALUES (@id, @ticker, @qty, @avg_price, @side, @opened_at, @portfolio_id, @account_id, @owner_type, @owner_id, @strategy_version)
+      ON CONFLICT(id) DO UPDATE SET qty=@qty, avg_price=@avg_price, side=@side, portfolio_id=@portfolio_id, account_id=@account_id,
+        owner_type=@owner_type, owner_id=@owner_id, strategy_version=@strategy_version`),
     delPos: db.prepare(`DELETE FROM apex_positions WHERE id = ?`),
-    insOrder: db.prepare(`INSERT INTO apex_orders (id, ticker, side, type, qty, price, status, algo, created_at, filled_at)
-      VALUES (@id, @ticker, @side, @type, @qty, @price, @status, @algo, @created_at, @filled_at)`),
+    insOrder: db.prepare(`INSERT INTO apex_orders (id, ticker, side, type, qty, price, status, algo, created_at, filled_at, portfolio_id, account_id, owner_type, owner_id, idempotency_key, reserved_cash, reserved_exposure)
+      VALUES (@id, @ticker, @side, @type, @qty, @price, @status, @algo, @created_at, @filled_at, @portfolio_id, @account_id, @owner_type, @owner_id, @idempotency_key, @reserved_cash, @reserved_exposure)`),
     setOrder: db.prepare(`UPDATE apex_orders SET status = ?, price = ?, filled_at = ? WHERE id = ?`),
-    cancelOrder: db.prepare(`UPDATE apex_orders SET status = 'canceled', filled_at = ? WHERE id = ? AND status = 'open'`),
+    cancelOrder: db.prepare(`UPDATE apex_orders SET status = 'canceled', filled_at = ?, reserved_cash = 0, reserved_exposure = 0 WHERE id = ? AND status = 'open'`),
     getOrder: db.prepare(`SELECT * FROM apex_orders WHERE id = ?`),
     listOpen: db.prepare(`SELECT * FROM apex_orders WHERE status = 'open' ORDER BY created_at DESC`),
     listOrders: db.prepare(`SELECT * FROM apex_orders ORDER BY created_at DESC LIMIT ?`),
-    insFill: db.prepare(`INSERT INTO apex_fills (id, order_id, ticker, qty, price, ts) VALUES (@id, @order_id, @ticker, @qty, @price, @ts)`),
+    insFill: db.prepare(`INSERT INTO apex_fills (id, order_id, ticker, qty, price, ts, portfolio_id, account_id, owner_type, owner_id)
+      VALUES (@id, @order_id, @ticker, @qty, @price, @ts, @portfolio_id, @account_id, @owner_type, @owner_id)`),
     listFills: db.prepare(`SELECT * FROM apex_fills ORDER BY ts DESC LIMIT ?`),
     insClose: db.prepare(`INSERT INTO apex_paper_closes (id, ticker, qty, pnl, ts) VALUES (@id, @ticker, @qty, @pnl, @ts)`),
     listCloses: db.prepare(`SELECT * FROM apex_paper_closes ORDER BY ts DESC LIMIT ?`),
@@ -78,12 +126,25 @@ function createApexPaper(runtimeDir) {
     insEquity: db.prepare(`INSERT OR REPLACE INTO apex_equity_curve (ts, equity, cash, buying_power, unrealized, realized) VALUES (?, ?, ?, ?, ?, ?)`),
     listEquity: db.prepare(`SELECT * FROM apex_equity_curve ORDER BY ts DESC LIMIT ?`),
     firstToday: db.prepare(`SELECT equity FROM apex_equity_curve WHERE ts >= ? ORDER BY ts LIMIT 1`),
+    insReservation: db.prepare(`INSERT INTO apex_order_reservations (id, order_id, portfolio_id, account_id, ticker, currency, reserved_cash, reserved_exposure, status, created_at, released_at)
+      VALUES (@id, @order_id, @portfolio_id, @account_id, @ticker, 'USD', @reserved_cash, @reserved_exposure, @status, @created_at, @released_at)
+      ON CONFLICT(order_id) DO UPDATE SET reserved_cash=@reserved_cash, reserved_exposure=@reserved_exposure, status=@status, released_at=@released_at`),
+    releaseReservation: db.prepare(`UPDATE apex_order_reservations SET status = 'released', reserved_cash = 0, reserved_exposure = 0, released_at = ? WHERE order_id = ? AND status = 'open'`),
+    openReservations: db.prepare(`SELECT COALESCE(SUM(reserved_cash),0) cash, COALESCE(SUM(reserved_exposure),0) exposure FROM apex_order_reservations WHERE status = 'open'`),
+    insLedger: db.prepare(`INSERT INTO apex_ledger_entries (id, journal_group_id, portfolio_id, account_id, event_type, event_id, ledger_account, currency, debit, credit, memo, source_json, created_at)
+      VALUES (@id, @journal_group_id, @portfolio_id, @account_id, @event_type, @event_id, @ledger_account, 'USD', @debit, @credit, @memo, @source_json, @created_at)`),
+    seedPortfolio: db.prepare(`INSERT OR IGNORE INTO apex_portfolios (id,name,description,kind,base_currency,mandate,risk_profile,status,demo,meta_json,created_at,updated_at)
+      VALUES (?, 'APEX Paper Portfolio', 'Default virtual portfolio connected to the paper trading desk.', 'paper', 'USD', 'Simulation only. No live broker.', 'balanced', 'active', 1, '{}', ?, ?)`),
+    seedAccount: db.prepare(`INSERT OR IGNORE INTO apex_accounts (id,portfolio_id,name,account_type,base_currency,start_cash,margin_policy_json,status,created_at,updated_at)
+      VALUES (?, ?, 'Default Paper Account', 'paper', 'USD', ?, '{"shortInitialMarginPct":1.5,"allowShort":true}', 'active', ?, ?)`),
     wipe: db.transaction(() => {
-      db.exec(`DELETE FROM apex_positions; DELETE FROM apex_orders; DELETE FROM apex_fills; DELETE FROM apex_paper_closes; DELETE FROM apex_equity_curve;`);
+      db.exec(`DELETE FROM apex_positions; DELETE FROM apex_orders; DELETE FROM apex_fills; DELETE FROM apex_paper_closes; DELETE FROM apex_equity_curve; DELETE FROM apex_order_reservations; DELETE FROM apex_ledger_entries;`);
     }),
   };
 
   S.initAcct.run(START_CASH, START_CASH, now());
+  S.seedPortfolio.run(DEFAULT_PORTFOLIO_ID, now(), now());
+  S.seedAccount.run(DEFAULT_ACCOUNT_ID, DEFAULT_PORTFOLIO_ID, START_CASH, now(), now());
   const acct = () => S.getAcct.get() || { cash: START_CASH, realized: 0, start_cash: START_CASH };
 
   // ── Live quote lookup (public Yahoo). A short 2.5s cache only dedupes rapid
@@ -103,7 +164,7 @@ function createApexPaper(runtimeDir) {
   }
 
   // ── Apply a signed fill to the account (delta>0 buy, delta<0 sell) ──
-  function applyFill(ticker, delta, price, orderId) {
+  const applyFillTx = db.transaction((ticker, delta, price, orderId) => {
     const a = acct();
     let cash = a.cash, realized = a.realized;
     const fee = Math.abs(delta) * price * (COMM_BPS / 10000);
@@ -132,15 +193,94 @@ function createApexPaper(runtimeDir) {
     }
 
     if (Math.abs(qty) < EPS) S.delPos.run(ticker);
-    else S.upPos.run({ id: ticker, ticker, qty, avg_price: +avg.toFixed(6), side: qty > 0 ? "long" : "short", opened_at: pos.opened_at });
+    else S.upPos.run({
+      id: ticker,
+      ticker,
+      qty,
+      avg_price: +avg.toFixed(6),
+      side: qty > 0 ? "long" : "short",
+      opened_at: pos.opened_at,
+      portfolio_id: DEFAULT_PORTFOLIO_ID,
+      account_id: DEFAULT_ACCOUNT_ID,
+      owner_type: "manual",
+      owner_id: "",
+      strategy_version: "",
+    });
     S.setAcct.run(+cash.toFixed(2), +realized.toFixed(2));
-    S.insFill.run({ id: id(), order_id: orderId, ticker, qty: delta, price: +price.toFixed(4), ts: now() });
+    const fillId = id();
+    S.insFill.run({
+      id: fillId,
+      order_id: orderId,
+      ticker,
+      qty: delta,
+      price: +price.toFixed(4),
+      ts: now(),
+      portfolio_id: DEFAULT_PORTFOLIO_ID,
+      account_id: DEFAULT_ACCOUNT_ID,
+      owner_type: "manual",
+      owner_id: "",
+    });
+    S.releaseReservation.run(now(), orderId);
+    writeBalancedFillLedger(fillId, ticker, delta, price, fee);
+  });
+
+  function writeBalancedFillLedger(fillId, ticker, delta, price, fee) {
+    const group = id();
+    const gross = Math.abs(delta) * price;
+    const t = now();
+    const rows = delta > 0
+      ? [
+          ["position_cost", gross, 0, `${ticker} buy notional`],
+          ["fees", fee, 0, `${ticker} commission`],
+          ["cash", 0, gross + fee, `${ticker} cash paid`],
+        ]
+      : [
+          ["cash", gross - fee, 0, `${ticker} cash received after fee`],
+          ["fees", fee, 0, `${ticker} commission`],
+          ["position_proceeds", 0, gross, `${ticker} sell/short proceeds`],
+        ];
+    for (const [ledgerAccount, debit, credit, memo] of rows) {
+      S.insLedger.run({
+        id: id(),
+        journal_group_id: group,
+        portfolio_id: DEFAULT_PORTFOLIO_ID,
+        account_id: DEFAULT_ACCOUNT_ID,
+        event_type: "fill",
+        event_id: fillId,
+        ledger_account: ledgerAccount,
+        debit: +debit.toFixed(6),
+        credit: +credit.toFixed(6),
+        memo,
+        source_json: JSON.stringify({ ticker, delta, price, fee }),
+        created_at: t,
+      });
+    }
+  }
+
+  function applyFill(ticker, delta, price, orderId) {
+    applyFillTx(ticker, delta, price, orderId);
   }
 
   function snapEquity(marked) {
     const a = acct();
     const equity = a.cash + (marked?.unrealizedBasis ?? 0);
-    S.insEquity.run(now(), +equity.toFixed(2), +a.cash.toFixed(2), +a.cash.toFixed(2), +(marked?.unrealized ?? 0).toFixed(2), +a.realized.toFixed(2));
+    S.insEquity.run(now(), +equity.toFixed(2), +a.cash.toFixed(2), +availableBuyingPower(marked).toFixed(2), +(marked?.unrealized ?? 0).toFixed(2), +a.realized.toFixed(2));
+  }
+
+  function reservationTotals() {
+    const r = S.openReservations.get() || {};
+    return { cash: Number(r.cash) || 0, exposure: Number(r.exposure) || 0 };
+  }
+
+  function shortMarginRequirement(marked) {
+    const rows = marked?.positions || [];
+    return rows.filter((p) => p.qty < 0).reduce((sum, p) => sum + Math.abs(p.marketValue) * SHORT_INITIAL_MARGIN, 0);
+  }
+
+  function availableBuyingPower(marked = null) {
+    const a = acct();
+    const r = reservationTotals();
+    return Math.max(0, a.cash - r.cash - r.exposure - shortMarginRequirement(marked));
   }
 
   // ── Mark positions to market ──
@@ -200,11 +340,29 @@ function createApexPaper(runtimeDir) {
     const last = q.last;
     const delta = side === "buy" ? qty : -qty;
 
-    const orderRow = { id: id(), ticker, side, type, qty, price: type === "limit" ? Number(limitPrice) : null, status: "open", algo: null, created_at: now(), filled_at: null };
+    const orderRow = {
+      id: id(),
+      ticker,
+      side,
+      type,
+      qty,
+      price: type === "limit" ? Number(limitPrice) : null,
+      status: "open",
+      algo: null,
+      created_at: now(),
+      filled_at: null,
+      portfolio_id: DEFAULT_PORTFOLIO_ID,
+      account_id: DEFAULT_ACCOUNT_ID,
+      owner_type: "manual",
+      owner_id: "",
+      idempotency_key: "",
+      reserved_cash: 0,
+      reserved_exposure: 0,
+    };
 
     if (type === "market") {
       const fill = side === "buy" ? last * (1 + SLIP_BPS / 10000) : last * (1 - SLIP_BPS / 10000);
-      preflightBuyingPower(delta, fill);
+      preflightOrderBuyingPower(ticker, delta, fill);
       S.insOrder.run(orderRow);
       applyFill(ticker, delta, fill, orderRow.id);
       S.setOrder.run("filled", +fill.toFixed(4), now(), orderRow.id);
@@ -216,14 +374,29 @@ function createApexPaper(runtimeDir) {
     const lp = Number(limitPrice);
     const marketable = side === "buy" ? last <= lp : last >= lp;
     if (marketable) {
-      preflightBuyingPower(delta, lp);
+      preflightOrderBuyingPower(ticker, delta, lp);
       S.insOrder.run(orderRow);
       applyFill(ticker, delta, lp, orderRow.id);
       S.setOrder.run("filled", lp, now(), orderRow.id);
       const m = await mark(); snapEquity(m);
       return { ok: true, status: "filled", orderId: orderRow.id, ticker, side, qty, fillPrice: lp, account: await metrics(m) };
     }
+    const reservation = reserveForOrder(ticker, delta, lp);
+    orderRow.reserved_cash = +reservation.cash.toFixed(2);
+    orderRow.reserved_exposure = +reservation.exposure.toFixed(2);
     S.insOrder.run(orderRow);
+    if (reservation.cash || reservation.exposure) S.insReservation.run({
+      id: id(),
+      order_id: orderRow.id,
+      portfolio_id: DEFAULT_PORTFOLIO_ID,
+      account_id: DEFAULT_ACCOUNT_ID,
+      ticker,
+      reserved_cash: +reservation.cash.toFixed(2),
+      reserved_exposure: +reservation.exposure.toFixed(2),
+      status: "open",
+      created_at: now(),
+      released_at: null,
+    });
     return { ok: true, status: "open", orderId: orderRow.id, ticker, side, qty, limitPrice: lp, last: +last.toFixed(4), account: await metrics() };
   }
 
@@ -234,9 +407,26 @@ function createApexPaper(runtimeDir) {
     if (cost > a.cash + EPS) throw err(`Insufficient buying power — need $${cost.toFixed(2)}, have $${a.cash.toFixed(2)}`, 400);
   }
 
+  function preflightOrderBuyingPower(ticker, delta, price) {
+    const need = reserveForOrder(ticker, delta, price);
+    const required = need.cash + need.exposure;
+    const available = availableBuyingPower();
+    if (required > available + EPS) throw err(`Insufficient buying power - need $${required.toFixed(2)}, have $${available.toFixed(2)}`, 400);
+  }
+
+  function reserveForOrder(ticker, delta, price) {
+    if (delta > 0) return { cash: delta * price * (1 + COMM_BPS / 10000), exposure: 0 };
+    const sym = ticker ? String(ticker).toUpperCase() : null;
+    const pos = sym ? (S.getPos.get(sym) || { qty: 0 }) : { qty: 0 };
+    const currentLong = Math.max(0, Number(pos.qty) || 0);
+    const shortQty = Math.max(0, Math.abs(delta) - currentLong);
+    return { cash: 0, exposure: shortQty * price * SHORT_INITIAL_MARGIN };
+  }
+
   function cancel(orderId) {
     const r = S.cancelOrder.run(now(), String(orderId || ""));
     if (!r.changes) throw err("Order not found or not open", 404);
+    S.releaseReservation.run(now(), String(orderId || ""));
     return { ok: true, canceled: orderId };
   }
 
@@ -255,7 +445,7 @@ function createApexPaper(runtimeDir) {
     return {
       equity: +equity.toFixed(2),
       cash: +a.cash.toFixed(2),
-      buyingPower: +a.cash.toFixed(2),
+      buyingPower: +availableBuyingPower(m).toFixed(2),
       marketValue: +m.marketValueLong.toFixed(2),
       unrealized: +m.unrealized.toFixed(2),
       realized: +a.realized.toFixed(2),
@@ -287,10 +477,10 @@ function createApexPaper(runtimeDir) {
     return { curve: S.listEquity.all(limit).reverse() };
   }
 
-  const fmtOrder = (o) => ({ id: o.id, ticker: o.ticker, side: o.side, type: o.type, qty: o.qty, price: o.price, status: o.status, createdAt: o.created_at, filledAt: o.filled_at });
-  const fmtFill = (f) => ({ id: f.id, ticker: f.ticker, qty: f.qty, side: f.qty > 0 ? "buy" : "sell", price: f.price, ts: f.ts });
+  const fmtOrder = (o) => ({ id: o.id, portfolioId: o.portfolio_id || DEFAULT_PORTFOLIO_ID, accountId: o.account_id || DEFAULT_ACCOUNT_ID, ticker: o.ticker, side: o.side, type: o.type, qty: o.qty, price: o.price, status: o.status, reservedCash: o.reserved_cash || 0, reservedExposure: o.reserved_exposure || 0, ownerType: o.owner_type || "manual", ownerId: o.owner_id || "", createdAt: o.created_at, filledAt: o.filled_at });
+  const fmtFill = (f) => ({ id: f.id, portfolioId: f.portfolio_id || DEFAULT_PORTFOLIO_ID, accountId: f.account_id || DEFAULT_ACCOUNT_ID, ticker: f.ticker, qty: f.qty, side: f.qty > 0 ? "buy" : "sell", price: f.price, ownerType: f.owner_type || "manual", ownerId: f.owner_id || "", ts: f.ts });
 
-  return { account, place, cancel, reset, orders, journal, equityCurve, metrics, sync, mark, START_CASH };
+  return { account, place, cancel, reset, orders, journal, equityCurve, metrics, sync, mark, close: () => db.close(), START_CASH };
 }
 
 function err(message, statusCode) { return Object.assign(new Error(message), { statusCode }); }

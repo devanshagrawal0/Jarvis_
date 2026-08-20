@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { fetchRiskLab, fetchVol, fetchMonteCarlo, type RiskLab, type VolReport, type MCReport } from "../apex-data";
+import { fetchRiskLab, fetchVol, fetchMonteCarlo, fetchCompanyIntel, fetchShortVolume, fetchOptionsChain, type RiskLab, type VolReport, type MCReport, type CompanyIntel, type ShortVolume, type OptionsChain } from "../apex-data";
 
 // APEX · Risk — the Quant Risk Lab. Full single-name risk decomposition from
 // public daily bars: realized/EWMA vol, historical VaR & CVaR, max drawdown,
@@ -16,15 +16,19 @@ export function RiskView() {
   const [risk, setRisk] = useState<RiskLab | null>(null);
   const [vol, setVol] = useState<VolReport | null>(null);
   const [mc, setMc] = useState<MCReport | null>(null);
+  const [company, setCompany] = useState<CompanyIntel | null>(null);
+  const [shortVol, setShortVol] = useState<ShortVolume | null>(null);
+  const [options, setOptions] = useState<OptionsChain | null>(null);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
 
   useEffect(() => {
     let dead = false;
     setLoading(true); setErr(null);
-    Promise.all([fetchRiskLab(sym), fetchVol(sym), fetchMonteCarlo(sym, 30)])
-      .then(([r, v, m]) => {
+    Promise.all([fetchRiskLab(sym), fetchVol(sym), fetchMonteCarlo(sym, 30), fetchCompanyIntel(sym), fetchShortVolume(sym), fetchOptionsChain(sym)])
+      .then(([r, v, m, c, sv, op]) => {
         if (dead) return;
+        setCompany(c); setShortVol(sv); setOptions(op);
         if (!r) { setErr(`No risk data for ${sym} — check the symbol.`); setRisk(null); setVol(null); setMc(null); }
         else { setRisk(r); setVol(v); setMc(m); }
       })
@@ -116,11 +120,77 @@ export function RiskView() {
             </div>
           )}
 
+          <TickerIntelPanels company={company} shortVol={shortVol} options={options} />
+
           <div className="axr-foot">All metrics derived from public daily bars. Informational only — not financial advice.</div>
         </div>
       ) : null}
     </div>
   );
+}
+
+function TickerIntelPanels({ company, shortVol, options }: { company: CompanyIntel | null; shortVol: ShortVolume | null; options: OptionsChain | null }) {
+  const money = (v: number | null | undefined) => {
+    if (v == null || !Number.isFinite(v)) return "-";
+    const abs = Math.abs(v);
+    if (abs >= 1e12) return "$" + (v / 1e12).toFixed(2) + "T";
+    if (abs >= 1e9) return "$" + (v / 1e9).toFixed(2) + "B";
+    if (abs >= 1e6) return "$" + (v / 1e6).toFixed(1) + "M";
+    return "$" + new Intl.NumberFormat("en-US").format(Math.round(v));
+  };
+  const num = (v: number | null | undefined) => v == null || !Number.isFinite(v) ? "-" : new Intl.NumberFormat("en-US").format(Math.round(v));
+  const factValue = (f: CompanyIntel["financials"][number]) => /USD/i.test(f.unit) ? money(f.value) : num(f.value);
+  return (
+    <div className="axr-intel-grid">
+      <div className="axr-panel">
+        <div className="axr-ph">SEC COMPANY INTEL <span>CompanyFacts + submissions</span></div>
+        {company ? (
+          <div className="axr-intel">
+            <div className="axr-company">{company.name}<span>CIK {company.cik}</span></div>
+            <div className="axr-facts">
+              {company.financials.slice(0, 8).map((f) => <div className="axr-fact" key={f.concept}><span>{f.label}</span><b>{factValue(f)}</b><i>{f.form || "-"} {f.end || ""}</i></div>)}
+            </div>
+            <div className="axr-filings">
+              {company.filings.slice(0, 5).map((f) => <div className="axr-filing" key={f.accession}><span>{f.form}</span><b>{f.description || f.document || "Filing"}</b><i>{f.filed}</i></div>)}
+            </div>
+          </div>
+        ) : <div className="axr-empty-mini">No SEC snapshot yet.</div>}
+      </div>
+
+      <div className="axr-panel">
+        <div className="axr-ph">SHORT / OPTIONS PRESSURE <span>FINRA + Yahoo options</span></div>
+        <div className="axr-pressure">
+          {shortVol ? (
+            <div className="axr-pressure-box">
+              <div className="axr-pressure-label">FINRA SHORT VOLUME <span>{shortVol.date}</span></div>
+              <div className="axr-pressure-big" style={{ color: shortVol.shortPct != null && shortVol.shortPct > 55 ? WARN : CY }}>{shortVol.shortPct ?? "-"}%</div>
+              <div className="axr-pressure-sub">{num(shortVol.shortVolume)} short / {num(shortVol.totalVolume)} total</div>
+            </div>
+          ) : <div className="axr-empty-mini">No FINRA short-volume snapshot yet.</div>}
+
+          {options ? (
+            <div className="axr-options">
+              <div className="axr-pressure-label">OPTIONS CHAIN <span>{options.expiry || "nearest"}</span></div>
+              <div className="axr-option-grid">
+                {mini("P/C VOL", options.putCallVolume?.toFixed(2), options.putCallVolume != null && options.putCallVolume > 1 ? WARN : POS)}
+                {mini("P/C OI", options.putCallOpenInterest?.toFixed(2), options.putCallOpenInterest != null && options.putCallOpenInterest > 1 ? WARN : POS)}
+                {mini("CALL IV", options.callIv == null ? "-" : options.callIv.toFixed(1) + "%", CY)}
+                {mini("PUT IV", options.putIv == null ? "-" : options.putIv.toFixed(1) + "%", WARN)}
+              </div>
+              <div className="axr-strikes">
+                {options.topCalls.slice(0, 3).map((x) => <span key={"c" + x.strike}>C {x.strike}: {num(x.volume)}</span>)}
+                {options.topPuts.slice(0, 3).map((x) => <span key={"p" + x.strike}>P {x.strike}: {num(x.volume)}</span>)}
+              </div>
+            </div>
+          ) : <div className="axr-empty-mini">No Yahoo options snapshot yet.</div>}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function mini(label: string, value: string | undefined, color: string) {
+  return <div className="axr-mini"><span>{label}</span><b style={{ color }}>{value || "-"}</b></div>;
 }
 
 function metric(label: string, value: string, color: string, tip: string) {
@@ -338,5 +408,27 @@ const RISK_CSS = `
 .axr-legend i { width:10px; height:10px; border-radius:3px; display:inline-block; }
 .axr-foot { font-size:9px; color:var(--ax-dim); padding-top:2px; }
 .axr-empty { color:var(--ax-mut); font-size:12px; padding:26px 4px; }
-@media (max-width:820px) { .axr-row2 { grid-template-columns:1fr; } }
+.axr-intel-grid { display:grid; grid-template-columns:1.1fr .9fr; gap:14px; }
+.axr-company { font-size:12px; font-weight:800; color:var(--ax-tx); margin-bottom:10px; display:flex; justify-content:space-between; gap:10px; }
+.axr-company span { font-family:var(--ax-mono); font-size:9px; color:var(--ax-dim); font-weight:500; white-space:nowrap; }
+.axr-facts { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:8px; margin-bottom:10px; }
+.axr-fact, .axr-mini { background:var(--ax-elev); border:1px solid var(--ax-bdsoft); border-radius:9px; padding:8px 9px; min-width:0; }
+.axr-fact span, .axr-mini span { display:block; font-size:8px; letter-spacing:.08em; color:var(--ax-dim); text-transform:uppercase; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.axr-fact b, .axr-mini b { display:block; font-family:var(--ax-mono); font-size:13px; color:var(--ax-tx); margin-top:4px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.axr-fact i { display:block; font-style:normal; font-size:8.5px; color:var(--ax-dim); margin-top:2px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.axr-filings, .axr-pressure { display:flex; flex-direction:column; gap:8px; }
+.axr-filing { display:grid; grid-template-columns:46px 1fr 74px; gap:8px; align-items:center; border-top:1px solid var(--ax-bdsoft); padding-top:7px; }
+.axr-filing span { font-family:var(--ax-mono); color:var(--ax-cydim); font-size:10px; }
+.axr-filing b { color:var(--ax-tx); font-size:10.5px; font-weight:600; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; }
+.axr-filing i { color:var(--ax-dim); font-size:9px; font-style:normal; text-align:right; }
+.axr-pressure-box, .axr-options { background:var(--ax-elev); border:1px solid var(--ax-bdsoft); border-radius:10px; padding:11px 12px; }
+.axr-pressure-label { font-size:8.5px; letter-spacing:.09em; color:var(--ax-dim); display:flex; justify-content:space-between; gap:8px; }
+.axr-pressure-label span { font-family:var(--ax-mono); letter-spacing:0; color:var(--ax-mut); }
+.axr-pressure-big { font-family:var(--ax-mono); font-size:26px; font-weight:900; margin:5px 0 2px; }
+.axr-pressure-sub { color:var(--ax-mut); font-size:10px; font-family:var(--ax-mono); }
+.axr-option-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:8px; margin-top:9px; }
+.axr-strikes { display:flex; flex-wrap:wrap; gap:6px; margin-top:9px; }
+.axr-strikes span { font-family:var(--ax-mono); font-size:9px; color:var(--ax-mut); border:1px solid var(--ax-bdsoft); border-radius:7px; padding:4px 6px; }
+.axr-empty-mini { color:var(--ax-mut); font-size:11px; padding:14px 2px; }
+@media (max-width:820px) { .axr-row2, .axr-intel-grid { grid-template-columns:1fr; } .axr-facts { grid-template-columns:1fr; } }
 `;

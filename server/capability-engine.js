@@ -77,15 +77,29 @@ const WIDGET_CATALOG = [
   ["graph", "the knowledge / reality graph"],
   ["vision", "camera and vision feeds"],
   ["receipts", "receipts and the audit trail of what JARVIS has done"],
-  // Full-screen rooms are NOT listed here on purpose. Opening one replaces the entire screen, so it
-  // happens only when the owner explicitly asks for it by name through the command bar — never
-  // inferred from a request like "I want to eyeball the market". Market data belongs on the Stage
-  // via stage_render and the apex_* tools, which is what panels are for.
-  ["helix", "the HELIX research room"],
-  ["synapse", "the Synapse co-op mesh room"],
 ];
 const WIDGET_IDS = WIDGET_CATALOG.map(([id]) => id);
 const WIDGET_LIST_TEXT = WIDGET_CATALOG.map(([id, what]) => `${id} — ${what}`).join("; ");
+
+// Full-screen ROOMS get their own catalog and their own tool (`ui_open_room`), because opening one
+// is a different act: a widget appears alongside what the owner is doing, a room REPLACES their
+// whole screen.
+//
+// While rooms sat in the widget catalog, four escalating attempts to describe that difference in
+// prose all failed on the same sentence — "I want to look at markets" kept opening the APEX markets
+// room. No wording separates them, because "markets" is the SUBJECT and the room's NAME at once, so
+// any instruction that reads on one reads on the other. Splitting the tools takes the decision out
+// of a sentence the model weighs against the request and makes it a deliberate choice of a
+// different tool — one whose description is navigation only, and carries none of the subject
+// vocabulary ("prices", "charts", "news") that was pulling the widget opener into every market turn.
+const ROOM_CATALOG = [
+  ["apex", "APEX — the trading room"],
+  ["arbiter", "Arbiter — prediction-market divergence"],
+  ["helix", "HELIX — the research workspace"],
+  ["synapse", "Synapse — the co-op mesh room"],
+];
+const ROOM_IDS = ROOM_CATALOG.map(([id]) => id);
+const ROOM_LIST_TEXT = ROOM_CATALOG.map(([id, what]) => `${id} (${what})`).join("; ");
 
 // The `id` parameter every widget tool shares: constrained to widgets that exist, and carrying what
 // each one actually shows, so the model can tell whether the thing being asked for exists at all.
@@ -421,8 +435,15 @@ function createCapabilityEngine({
     // the markets room", "take me to the trading screen", "get the research workspace up" and picked
     // it ZERO times out of five, so the model was never handed the tool that opens things and either
     // said it couldn't or claimed it had. The surface names live in the text so they can be matched.
-    ["ui_open_widget", `Open one of JARVIS's own on-screen surfaces — a widget or a full-screen room. Use it whenever the owner wants to SEE, watch, monitor, pull up, bring up, go to, jump into or be taken to one of them: "open the markets room", "take me to the trading screen", "get my calendar up", "I want to watch prices live", "show me the research workspace". Available surfaces: ${WIDGET_LIST_TEXT}. Pick the one that genuinely covers what was asked; if none does, say so rather than opening the nearest thing, or render the answer with stage_render instead.`, "observe", false],
-    ["ui_focus_widget", `Open one of JARVIS's on-screen surfaces in EXPANDED focus mode — full screen, for when the owner wants to look at it properly ("expand it", "full screen the calendar", "make the markets room bigger", "focus on that"). Same surfaces as ui_open_widget: ${WIDGET_LIST_TEXT}.`, "observe", false],
+    // The description is what tool RETRIEVAL scores, so it must describe the ACT of opening a
+    // surface and nothing else. Listing the surfaces here (".. markets .. prices .. charts .. news")
+    // made this tool match every market-flavoured sentence, and "i wanna eyeball markets" came back
+    // with a menu of six tools, five of them widget-openers and not one research tool — so the model
+    // opened a room because opening was all it had been handed. The catalog belongs on the `id`
+    // parameter, which is read when the tool is CALLED, not when it is being matched.
+    ["ui_open_widget", "Put one of JARVIS's small on-screen widgets up beside what the owner is already doing — 'open the today widget', 'get my calendar up', 'show me the connections panel'. Widgets only; it cannot open a full-screen room (that is ui_open_room). Mentioning a topic a widget happens to cover is not a request to open it — answer the question, or draw it with stage_render.", "observe", false],
+    ["ui_open_room", `Take the owner to a full-screen ROOM, replacing everything currently on their display. Call this ONLY when they asked to GO somewhere — "open the markets room", "take me to apex", "enter helix", "switch to the arbiter room". Rooms: ${ROOM_LIST_TEXT}. Because it wipes the owner's screen, wanting to LOOK AT or KNOW ABOUT a topic is never enough on its own, even when a room covers that topic: answer them instead. If they did not ask to be moved, do not call this.`, "observe", false],
+    ["ui_focus_widget", "Expand a surface that is already on screen to full size — 'expand it', 'full screen that', 'make it bigger', 'focus on this one'. Same navigation-only rule as ui_open_widget: this moves the owner's view, it is not how a question gets answered.", "observe", false],
     ["ui_close_widget", "Close the currently shown JARVIS widget or a specified widget.", "observe", false],
     ["ui_populate", "Populate a current-shell widget with explicitly supplied response data and a freshness state.", "observe", false],
     ["ui_move_widget", "Move a JARVIS widget to a screen position: top-left, top-right, bottom-left, bottom-right, center, left, right, top, or bottom. If the owner named a widget, pass its id; if they said 'it'/'this'/'that' or named none ('move to the top right'), OMIT id — it targets the widget currently focused on screen. Never ask which widget when one is on screen.", "observe", false],
@@ -651,6 +672,9 @@ function createCapabilityEngine({
       maxChars: { type: "INTEGER", description: "Maximum extracted characters to return." },
     }, required: ["url"] } },
     { name: "ui_open_widget", description: description("ui_open_widget"), parameters: { type: "OBJECT", properties: { id: widgetIdParam() }, required: ["id"] } },
+    { name: "ui_open_room", description: description("ui_open_room"), parameters: { type: "OBJECT", properties: {
+      id: { type: "STRING", enum: [...ROOM_IDS], description: `Which full-screen room the owner asked to be taken to: ${ROOM_LIST_TEXT}.` },
+    }, required: ["id"] } },
     { name: "ui_focus_widget", description: description("ui_focus_widget"), parameters: { type: "OBJECT", properties: { id: widgetIdParam() }, required: ["id"] } },
     { name: "ui_close_widget", description: description("ui_close_widget"), parameters: { type: "OBJECT", properties: { id: widgetIdParam() } } },
     { name: "ui_populate", description: description("ui_populate"), parameters: { type: "OBJECT", properties: {
@@ -2592,6 +2616,18 @@ function createCapabilityEngine({
             422,
           );
         }
+      } else if (blocks.some((b) => b.type === "stat")) {
+        // Nothing was fetched, and the surface is presenting FIGURES. The audit above compares
+        // rendered numbers against fetched data, so with no fetch there is nothing to compare and it
+        // silently passes — which is how a panel headed "Nvidia (NVDA) Intelligence Update" showed
+        // "NVDA Price = $128.50" when the real quote that same session was $217.56. A stat card is a
+        // claim of measurement: it is laid out like an instrument reading, so an invented one is
+        // worse than the same guess written in a sentence, where it at least looks like prose.
+        // Prose blocks are not gated — only stat cards, which are the ones that assert precision.
+        throw errorWithStatus(
+          "You're rendering stat cards but no tool fetched any data this turn, so those figures would be invented. Call the tool that actually has the numbers first (web_research, apex_market_snapshot, apex_ticker_report, kalshi_*, atlas_today — whatever fits), then render from what it returns. If the point is not numeric, use text/list blocks instead.",
+          422,
+        );
       }
       return { ok: true, shown: true, uiAction: { type: "stage-render", data: { title, blocks } }, message: `Rendered a ${blocks.length}-block surface on your screen, sir.` };
     },
@@ -2849,7 +2885,21 @@ function createCapabilityEngine({
       url: cleanString(args.url, 2000),
       maxChars: asNumber(args.maxChars, 18000, 500, 60000),
     }),
-    ui_open_widget: async (args, context) => ({ uiAction: { type: "open-widget", id: resolveWidgetTarget(args.id, context), focus: false } }),
+    ui_open_widget: async (args, context) => {
+      const id = resolveWidgetTarget(args.id, context);
+      // Rooms are not openable here even if the model names one — that is ui_open_room, and routing
+      // a room through the widget opener is exactly the screen-takeover this split exists to stop.
+      if (ROOM_IDS.includes(id)) {
+        throw errorWithStatus(`"${id}" is a full-screen room, not a widget. If the owner asked to be taken there, call ui_open_room; if they were only asking about the subject, answer them instead.`, 400);
+      }
+      return { uiAction: { type: "open-widget", id, focus: false } };
+    },
+    ui_open_room: async (args) => {
+      const id = cleanString(args.id, 40).toLowerCase();
+      if (!ROOM_IDS.includes(id)) throw errorWithStatus(`There is no "${id}" room. Rooms: ${ROOM_IDS.join(", ")}.`, 400);
+      // The HUD listens for the same event; the room ids are wired in JarvisUI's ROOMS map.
+      return { uiAction: { type: "open-widget", id, focus: false }, message: `Opened the ${id} room.` };
+    },
     ui_focus_widget: async (args, context) => ({ uiAction: { type: "open-widget", id: resolveWidgetTarget(args.id, context), focus: true } }),
     ui_close_widget: async (args) => ({ uiAction: { type: "close-widget", id: cleanString(args.id, 60) } }),
     ui_populate: async (args) => ({ uiAction: {

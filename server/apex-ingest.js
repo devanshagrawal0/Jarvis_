@@ -15,7 +15,7 @@ const DEFAULT_EQ = ["^GSPC", "^IXIC", "^DJI", "^VIX", "NVDA", "AAPL", "TSLA", "M
 const DEFAULT_CRYPTO = ["BTCUSDT", "ETHUSDT"];
 
 function createApexIngest({ apexDb, WebSocketImpl }) {
-  const hot = { quotes: {}, orderbook: {}, overview: { indices: [], updated: null }, gainers: [], nws: [], yields: [], cryptoGlobal: null, macro: [], movers: { stocks: { gainers: [], losers: [] }, crypto: { gainers: [], losers: [] } }, insider: [], regime: null, internals: null, sectors: [], session: [], correlation: null, rrg: [], depthHistory: [], trades: [], cryptoFng: null, attention: null, form4: [], btcNet: null, anomalies: null };
+  const hot = { quotes: {}, orderbook: {}, overview: { indices: [], updated: null }, gainers: [], nws: [], yields: [], cryptoGlobal: null, macro: [], macroAlt: { cboe: null, cftc: null, nasdaq: null, kenFrench: null, bls: null, fed: null, defi: null, updated: null }, movers: { stocks: { gainers: [], losers: [] }, crypto: { gainers: [], losers: [] } }, insider: [], regime: null, internals: null, sectors: [], session: [], correlation: null, rrg: [], depthHistory: [], trades: [], cryptoFng: null, attention: null, form4: [], btcNet: null, anomalies: null };
   const quant = createQuant({ adapters: A });
   const gov = createGovernor({
     onHealth: (id, health, err) => { try { apexDb.setSourceHealth(id, health === "ok" ? "ok" : "degraded", err || null); } catch { /* db optional */ } },
@@ -167,6 +167,13 @@ function createApexIngest({ apexDb, WebSocketImpl }) {
   async function pollAttention() { try { const a = await A.wikiAttention(Date.now()); if (a && a.items.length) hot.attention = a; } catch { /* keep last */ } }
   async function pollForm4() { try { const f = await A.secFormFour(30); if (f && f.length) hot.form4 = f; } catch { /* keep last */ } }
   async function pollBtcNet() { try { const b = await A.btcNetwork(); if (b) hot.btcNet = b; } catch { /* keep last */ } }
+  async function pollCboe() { try { const x = await A.cboeMarketSnapshot(); if (x) { hot.macroAlt.cboe = x; hot.macroAlt.updated = isoNowSafe(); } } catch { /* keep last */ } }
+  async function pollCftc() { try { const x = await A.cftcCotSnapshot(); if (x && x.items && x.items.length) { hot.macroAlt.cftc = x; hot.macroAlt.updated = isoNowSafe(); } } catch { /* keep last */ } }
+  async function pollNasdaqSymbols() { try { const x = await A.nasdaqTraderSymbols(); if (x && x.total) { hot.macroAlt.nasdaq = x; hot.macroAlt.updated = isoNowSafe(); } } catch { /* keep last */ } }
+  async function pollKenFrench() { try { const x = await A.kenFrenchSnapshot(); if (x && x.date) { hot.macroAlt.kenFrench = x; hot.macroAlt.updated = isoNowSafe(); } } catch { /* keep last */ } }
+  async function pollBls() { try { const x = await A.blsSnapshot(); if (x && x.series && x.series.length) { hot.macroAlt.bls = x; hot.macroAlt.updated = isoNowSafe(); } } catch { /* keep last */ } }
+  async function pollFed() { try { const x = await A.fedH15Snapshot(); if (x) { hot.macroAlt.fed = x; hot.macroAlt.updated = isoNowSafe(); } } catch { /* keep last */ } }
+  async function pollDefi() { try { const x = await A.defiLlamaSnapshot(); if (x) { hot.macroAlt.defi = x; hot.macroAlt.updated = isoNowSafe(); } } catch { /* keep last */ } }
 
   // ── keyed pollers (Wave 3) — only registered when the key is present ──
   async function pollFinnhubQuotes() {
@@ -254,6 +261,13 @@ function createApexIngest({ apexDb, WebSocketImpl }) {
     gov.register("sec-form4", pollForm4, 300);
     gov.register("btc-network", pollBtcNet, 120);
     gov.register("anomalies", pollAnomalies, 900);
+    gov.register("cboe-market", pollCboe, 3600);
+    gov.register("cftc-cot", pollCftc, 86400);
+    gov.register("nasdaq-trader", pollNasdaqSymbols, 86400);
+    gov.register("ken-french", pollKenFrench, 86400);
+    gov.register("bls", pollBls, 86400);
+    gov.register("federal-reserve", pollFed, 86400);
+    gov.register("defillama", pollDefi, 1800);
     if (keyPresent.finnhub) gov.register("insider", pollInsider, 900);
     // keyed pollers + registry enable (Wave 3) — only when the key is present
     if (keyPresent.finnhub) { enableSource("finnhub"); gov.register("finnhub", pollFinnhubQuotes, 60); }
@@ -344,6 +358,7 @@ function createApexIngest({ apexDb, WebSocketImpl }) {
     getYields: () => hot.yields,
     getCryptoGlobal: () => hot.cryptoGlobal,
     getMacro: () => hot.macro,
+    getMacroAlt: () => hot.macroAlt,
     getMovers: () => hot.movers,
     getRegime: () => hot.regime,
     getInternals: () => hot.internals,
@@ -370,6 +385,9 @@ function createApexIngest({ apexDb, WebSocketImpl }) {
     getBrief: (type) => getBrief(type),
     getInsider: (ticker) => ticker ? hot.insider.filter((t) => t.ticker === String(ticker).toUpperCase()) : hot.insider,
     getFundamentals: async (sym) => { if (!keyPresent.alphavantage) return null; try { return await KA.alphaOverview(sym); } catch { return null; } },
+    getCompanyIntel: async (sym) => { try { return await A.secCompanyIntel(sym); } catch { return null; } },
+    getShortVolume: async (sym) => { try { return await A.finraShortVolume(sym); } catch { return null; } },
+    getOptionsChain: async (sym) => { try { return await A.yahooOptionsChain(sym); } catch { return null; } },
     getHistory: async (sym, start) => { if (!keyPresent.tiingo) return []; try { return await KA.tiingoDaily(sym, start); } catch { return []; } },
     keysPresent: () => keyPresent,
     getKlines: A.binanceKlines,

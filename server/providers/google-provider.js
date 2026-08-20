@@ -198,11 +198,42 @@ function createGoogleProvider({
   function normalizedMessage(message = {}) {
     const recipient = cleanString(message.recipient, 320).replace(/[\r\n]/g, "");
     const subject = cleanString(message.subject, 200).replace(/[\r\n]/g, " ");
-    const body = cleanString(message.body, 10000);
+    // The composer writes markdown, and the message goes out as text/plain, so the recipient saw
+    // literal "## Prompt for Claude" and "**Role & Context:**" in their inbox. Flattening happens
+    // HERE because normalizedMessage is the single chokepoint for both sendEmail and createDraft —
+    // and because bodyHash is computed from normalized.body, so the hash, the bytes Gmail stores,
+    // and the read-after-write verification all stay derived from the same string. Flattening any
+    // later would make the hash disagree with the draft and delete every draft on creation.
+    const body = flattenMarkdown(cleanString(message.body, 10000));
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(recipient)) throw errorWithStatus("A valid recipient email address is required", 400);
     if (!subject) throw errorWithStatus("An email subject is required", 400);
     if (!body) throw errorWithStatus("An email body is required", 400);
     return { recipient, subject, body };
+  }
+
+  // Markdown -> readable plain text for email bodies.
+  //
+  // Deliberately conservative: it removes only syntax that is unambiguous, and never touches
+  // content. Numbered lists keep their numbers (they read correctly as text), code fences keep
+  // their contents, and anything that is not clearly markup is left exactly as written — a prompt
+  // about trading can legitimately contain *, _ and $ characters.
+  function flattenMarkdown(text) {
+    if (!text) return "";
+    return String(text)
+      .replace(/\r\n/g, "\n")
+      .replace(/^```[a-z0-9-]*\n?|^```$/gim, "")      // fenced code: drop the fences, keep the code
+      .replace(/^\s{0,3}#{1,6}\s+/gm, "")             // # Heading -> Heading
+      .replace(/^\s{0,3}>\s?/gm, "")                  // > quote -> quote
+      .replace(/^\s{0,3}([-*+])\s+/gm, "• ")          // - item / * item -> • item
+      .replace(/^\s{0,3}(?:---|\*\*\*|___)\s*$/gm, "")// horizontal rules -> blank line
+      .replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, "$1 ($2)") // [text](url) -> text (url)
+      .replace(/\*\*\*([^*\n]+)\*\*\*/g, "$1")        // ***both***
+      .replace(/\*\*([^*\n]+)\*\*/g, "$1")            // **bold**
+      .replace(/(^|[\s(])\*([^*\n]+)\*(?=[\s).,;:!?]|$)/g, "$1$2")   // *italic*, only when clearly paired
+      .replace(/(^|[\s(])_([^_\n]+)_(?=[\s).,;:!?]|$)/g, "$1$2")     // _italic_
+      .replace(/`([^`\n]+)`/g, "$1")                  // `code`
+      .replace(/\n{3,}/g, "\n\n")                     // collapse runaway blank lines
+      .trim();
   }
 
   async function sendEmail(message) {

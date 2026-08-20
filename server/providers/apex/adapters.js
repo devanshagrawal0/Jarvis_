@@ -4,7 +4,8 @@
    handles caching + DB writes. Keyed adapters (Finnhub/Tiingo/FRED/etc.)
    are added in Wave 3 once Dev drops keys. CommonJS. */
 
-const { fetchJson, fetchText } = require("./apex-fetch");
+const zlib = require("zlib");
+const { fetchJson, fetchText, fetchBuffer } = require("./apex-fetch");
 
 /* ── Crypto — Binance public REST, with Coinbase fallback (both keyless).
    Binance geo-blocks some IPs (HTTP 451); Coinbase Exchange is the fallback
@@ -106,10 +107,322 @@ async function edgarTickers() {
   return Object.values(d || {}).map((x) => ({ ticker: String(x.ticker), name: x.title, cik: String(x.cik_str).padStart(10, "0") }));
 }
 
+async function secTickerRecord(symbol) {
+  const sym = String(symbol || "").toUpperCase().trim();
+  if (!sym) return null;
+  const rows = await edgarTickers();
+  return rows.find((r) => r.ticker === sym) || null;
+}
+
+function latestFact(facts, concept, unitHint = null) {
+  const node = facts && facts["us-gaap"] && facts["us-gaap"][concept];
+  if (!node || !node.units) return null;
+  const units = Object.keys(node.units);
+  const unit = unitHint && node.units[unitHint] ? unitHint : units.find((u) => /USD|shares|USD\/shares|pure/i.test(u)) || units[0];
+  const arr = (node.units[unit] || [])
+    .filter((x) => x && x.val != null && x.end && x.filed)
+    .sort((a, b) => String(b.end).localeCompare(String(a.end)) || String(b.filed).localeCompare(String(a.filed)));
+  const x = arr[0];
+  return x ? { concept, label: node.label || concept, unit, value: +x.val, fy: x.fy, fp: x.fp, form: x.form, end: x.end, filed: x.filed } : null;
+}
+
+async function secCompanyIntel(symbol) {
+  const rec = await secTickerRecord(symbol);
+  if (!rec) return null;
+  const [facts, submissions] = await Promise.all([
+    fetchJson(`https://data.sec.gov/api/xbrl/companyfacts/CIK${rec.cik}.json`, SEC_UA).catch(() => null),
+    fetchJson(`https://data.sec.gov/submissions/CIK${rec.cik}.json`, SEC_UA).catch(() => null),
+  ]);
+  const concepts = [
+    ["Assets", "USD"], ["Liabilities", "USD"], ["StockholdersEquity", "USD"],
+    ["CashAndCashEquivalentsAtCarryingValue", "USD"], ["LongTermDebtNoncurrent", "USD"], ["DebtCurrent", "USD"],
+    ["Revenues", "USD"], ["RevenueFromContractWithCustomerExcludingAssessedTax", "USD"],
+    ["NetIncomeLoss", "USD"], ["OperatingIncomeLoss", "USD"], ["EarningsPerShareDiluted", "USD/shares"],
+    ["WeightedAverageNumberOfDilutedSharesOutstanding", "shares"],
+  ];
+  const seen = new Set();
+  const financials = [];
+  for (const [concept, unit] of concepts) {
+    const f = latestFact(facts && facts.facts, concept, unit);
+    if (f && !seen.has(f.label)) { seen.add(f.label); financials.push(f); }
+  }
+  const recent = submissions && submissions.filings && submissions.filings.recent;
+  const filings = recent && Array.isArray(recent.accessionNumber)
+    ? recent.accessionNumber.slice(0, 12).map((_, i) => ({
+      accession: recent.accessionNumber[i],
+      form: recent.form && recent.form[i],
+      filed: recent.filingDate && recent.filingDate[i],
+      report: recent.reportDate && recent.reportDate[i],
+      description: recent.primaryDocDescription && recent.primaryDocDescription[i],
+      document: recent.primaryDocument && recent.primaryDocument[i],
+    }))
+    : [];
+  return { ticker: rec.ticker, cik: rec.cik, name: rec.name, financials, filings, updated: Date.now() };
+}
+
 /* ── Treasury — average interest rates / yields (keyless) ───── */
 async function treasuryYields() {
   const d = await fetchJson("https://api.fiscaldata.treasury.gov/services/api/fiscal_service/v2/accounting/od/avg_interest_rates?sort=-record_date&page[size]=16");
   return ((d && d.data) || []).map((x) => ({ date: x.record_date, security: x.security_desc, rate: +x.avg_interest_rate_amt }));
+}
+
+function parseDelimited(text, delim = ",") {
+  return String(text || "").split(/\r?\n/).map((line) => line.trim()).filter(Boolean).map((line) => line.split(delim).map((x) => x.trim()));
+}
+
+function lastWeekdays(max = 12) {
+  const out = [];
+  const d = new Date();
+  for (let i = 0; out.length < max && i < 25; i++) {
+    const x = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() - i));
+    const day = x.getUTCDay();
+    if (day !== 0 && day !== 6) out.push(`${x.getUTCFullYear()}${String(x.getUTCMonth() + 1).padStart(2, "0")}${String(x.getUTCDate()).padStart(2, "0")}`);
+  }
+  return out;
+}
+
+async function finraShortVolume(symbol) {
+  const sym = String(symbol || "").toUpperCase().trim();
+  if (!sym) return null;
+  const feeds = ["CNMS", "FNYX", "FNQC", "FADF", "FORF"];
+  for (const ymd of lastWeekdays(14)) {
+    const rows = [];
+    for (const feed of feeds) {
+      try {
+        const txt = await fetchText(`https://cdn.finra.org/equity/regsho/daily/${feed}shvol${ymd}.txt`, { timeoutMs: 12000 });
+        const parsed = parseDelimited(txt, "|");
+        const head = parsed[0] || [];
+        const idx = (name) => head.findIndex((h) => h.toLowerCase() === name.toLowerCase());
+        const iSym = idx("Symbol"), iShort = idx("ShortVolume"), iExempt = idx("ShortExemptVolume"), iTotal = idx("TotalVolume"), iMarket = idx("Market");
+        for (const r of parsed.slice(1)) {
+          if (iSym < 0 || String(r[iSym]).toUpperCase() !== sym) continue;
+          rows.push({ market: iMarket >= 0 ? r[iMarket] : feed, shortVolume: +(r[iShort] || 0), exemptVolume: +(r[iExempt] || 0), totalVolume: +(r[iTotal] || 0) });
+        }
+      } catch { /* try next feed/date */ }
+    }
+    if (rows.length) {
+      const shortVolume = rows.reduce((a, b) => a + b.shortVolume, 0);
+      const exemptVolume = rows.reduce((a, b) => a + b.exemptVolume, 0);
+      const totalVolume = rows.reduce((a, b) => a + b.totalVolume, 0);
+      return { ticker: sym, date: `${ymd.slice(0, 4)}-${ymd.slice(4, 6)}-${ymd.slice(6)}`, shortVolume, exemptVolume, totalVolume, shortPct: totalVolume ? +(shortVolume / totalVolume * 100).toFixed(2) : null, venues: rows };
+    }
+  }
+  return null;
+}
+
+async function cboeMarketSnapshot() {
+  const csvLast = async (url) => {
+    const txt = await fetchText(url, { timeoutMs: 16000 });
+    const rows = parseDelimited(txt, ",");
+    const head = rows[0] || [];
+    const last = rows.slice(1).filter((r) => r.length >= 2).pop();
+    return { head, last };
+  };
+  const [vix, vvix, vix3m, pc] = await Promise.all([
+    csvLast("https://cdn.cboe.com/api/global/us_indices/daily_prices/VIX_History.csv").catch(() => null),
+    csvLast("https://cdn.cboe.com/api/global/us_indices/daily_prices/VVIX_History.csv").catch(() => null),
+    csvLast("https://cdn.cboe.com/api/global/us_indices/daily_prices/VIX3M_History.csv").catch(() => null),
+    csvLast("https://cdn.cboe.com/resources/options/volume_and_call_put_ratios/totalpc.csv").catch(() => null),
+  ]);
+  const closeFrom = (x) => {
+    if (!x || !x.last) return null;
+    const i = x.head.findIndex((h) => /close/i.test(h));
+    return i >= 0 ? +x.last[i] : +x.last[x.last.length - 1];
+  };
+  const dateFrom = (x) => x && x.last ? x.last[0] : null;
+  const vixClose = closeFrom(vix), vix3mClose = closeFrom(vix3m);
+  const pcRatio = pc && pc.last ? +(pc.last[pc.last.length - 1]) : null;
+  const snap = {
+    updated: Date.now(),
+    vix: vixClose, vvix: closeFrom(vvix), vix3m: vix3mClose,
+    vixDate: dateFrom(vix), putCallDate: dateFrom(pc),
+    termSpread: vixClose != null && vix3mClose != null ? +(vix3mClose - vixClose).toFixed(2) : null,
+    putCallRatio: Number.isFinite(pcRatio) ? pcRatio : null,
+  };
+  return [snap.vix, snap.vvix, snap.vix3m, snap.putCallRatio].some((x) => x != null && Number.isFinite(x)) ? snap : null;
+}
+
+async function cftcCotSnapshot() {
+  const markets = ["E-MINI S&P 500", "NASDAQ-100", "RUSSELL", "VIX", "GOLD", "CRUDE OIL", "U.S. DOLLAR INDEX"];
+  const where = encodeURIComponent(markets.map((m) => `market_and_exchange_names like '%${m}%'`).join(" OR "));
+  const url = `https://publicreporting.cftc.gov/resource/jun7-fc8e.json?$limit=80&$order=report_date_as_yyyy_mm_dd DESC&$where=${where}`;
+  const rows = await fetchJson(url, { timeoutMs: 20000 }).catch(() => []);
+  const byKey = new Map();
+  for (const r of Array.isArray(rows) ? rows : []) {
+    const key = (r.market_and_exchange_names || "").replace(/\s+/g, " ").trim();
+    if (!key || byKey.has(key)) continue;
+    const long = +(r.noncomm_positions_long_all || 0);
+    const short = +(r.noncomm_positions_short_all || 0);
+    byKey.set(key, {
+      market: key,
+      date: r.report_date_as_yyyy_mm_dd,
+      asset: r.cftc_contract_market_code,
+      nonCommercialLong: long,
+      nonCommercialShort: short,
+      nonCommercialNet: long - short,
+      openInterest: +(r.open_interest_all || 0),
+    });
+  }
+  const items = Array.from(byKey.values()).slice(0, 12);
+  return items.length ? { updated: Date.now(), items } : null;
+}
+
+async function nasdaqTraderSymbols() {
+  const listed = await fetchText("https://www.nasdaqtrader.com/dynamic/SymDir/nasdaqlisted.txt", { timeoutMs: 16000 }).catch(() => "");
+  const other = await fetchText("https://www.nasdaqtrader.com/dynamic/SymDir/otherlisted.txt", { timeoutMs: 16000 }).catch(() => "");
+  const parse = (txt, exchange) => {
+    const rows = parseDelimited(txt, "|").filter((r) => r[0] && !/^File Creation Time/i.test(r[0]));
+    const head = rows[0] || [];
+    const body = rows.slice(1);
+    const ix = (n) => head.findIndex((h) => h.toLowerCase() === n.toLowerCase());
+    return body.map((r) => ({
+      symbol: r[ix(exchange === "NASDAQ" ? "Symbol" : "ACT Symbol")],
+      name: r[ix("Security Name")] || r[ix("SecurityName")],
+      etf: /Y/i.test(r[ix("ETF")]),
+      test: /Y/i.test(r[ix("Test Issue")]),
+      exchange,
+    })).filter((r) => r.symbol);
+  };
+  const rows = [...parse(listed, "NASDAQ"), ...parse(other, "NYSE/AMEX")].filter((r) => !r.test);
+  if (!a && !b) return null;
+  return {
+    updated: Date.now(),
+    total: rows.length,
+    etfs: rows.filter((r) => r.etf).length,
+    stocks: rows.filter((r) => !r.etf).length,
+    nasdaq: rows.filter((r) => r.exchange === "NASDAQ").length,
+    other: rows.filter((r) => r.exchange !== "NASDAQ").length,
+    sample: rows.slice(0, 24),
+  };
+}
+
+function unzipFirstFile(buf) {
+  let off = 0;
+  while (off < buf.length - 30) {
+    if (buf.readUInt32LE(off) !== 0x04034b50) { off += 1; continue; }
+    const method = buf.readUInt16LE(off + 8);
+    const compSize = buf.readUInt32LE(off + 18);
+    const nameLen = buf.readUInt16LE(off + 26);
+    const extraLen = buf.readUInt16LE(off + 28);
+    const name = buf.slice(off + 30, off + 30 + nameLen).toString("utf8");
+    const start = off + 30 + nameLen + extraLen;
+    const data = buf.slice(start, start + compSize);
+    if (!/\/$/.test(name)) return method === 8 ? zlib.inflateRawSync(data).toString("utf8") : data.toString("utf8");
+    off = start + compSize;
+  }
+  return "";
+}
+
+function parseKenFrenchCsv(text) {
+  const rows = String(text || "").split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+  const data = [];
+  for (const line of rows) {
+    if (!/^\d{8},/.test(line)) continue;
+    const parts = line.split(",").map((x) => x.trim());
+    const date = `${parts[0].slice(0, 4)}-${parts[0].slice(4, 6)}-${parts[0].slice(6)}`;
+    data.push({ date, values: parts.slice(1).map(Number) });
+  }
+  return data;
+}
+
+async function kenFrenchSnapshot() {
+  const readZip = async (url) => parseKenFrenchCsv(unzipFirstFile(await fetchBuffer(url, { timeoutMs: 25000 })));
+  const [ff, mom] = await Promise.all([
+    readZip("https://mba.tuck.dartmouth.edu/pages/faculty/ken.french/ftp/F-F_Research_Data_Factors_daily_CSV.zip").catch(() => []),
+    readZip("https://mba.tuck.dartmouth.edu/pages/faculty/ken.french/ftp/F-F_Momentum_Factor_daily_CSV.zip").catch(() => []),
+  ]);
+  const a = ff[ff.length - 1], b = mom[mom.length - 1];
+  return {
+    updated: Date.now(),
+    date: a && a.date,
+    mktRf: a ? a.values[0] : null,
+    smb: a ? a.values[1] : null,
+    hml: a ? a.values[2] : null,
+    rf: a ? a.values[3] : null,
+    momentumDate: b && b.date,
+    momentum: b ? b.values[0] : null,
+  };
+}
+
+async function blsSnapshot() {
+  const now = new Date();
+  const body = JSON.stringify({
+    seriesid: ["CUSR0000SA0", "LNS14000000", "CES0000000001", "CES0500000003"],
+    startyear: String(now.getUTCFullYear() - 2),
+    endyear: String(now.getUTCFullYear()),
+  });
+  const d = await fetchJson("https://api.bls.gov/publicAPI/v2/timeseries/data/", { method: "POST", headers: { "content-type": "application/json" }, body, timeoutMs: 20000 });
+  const labels = { CUSR0000SA0: "CPI", LNS14000000: "Unemployment", CES0000000001: "Payrolls", CES0500000003: "Avg Hourly Earnings" };
+  const series = ((d && d.Results && d.Results.series) || []).map((s) => {
+    const rows = (s.data || []).slice().sort((a, b) => (a.year + a.period).localeCompare(b.year + b.period));
+    const cur = rows[rows.length - 1], prev = rows[rows.length - 2];
+    const value = cur ? +cur.value : null, prior = prev ? +prev.value : null;
+    return { id: s.seriesID, label: labels[s.seriesID] || s.seriesID, period: cur ? `${cur.periodName} ${cur.year}` : null, value, prev: prior, change: value != null && prior != null ? +(value - prior).toFixed(3) : null };
+  });
+  return { updated: Date.now(), series };
+}
+
+async function fedH15Snapshot() {
+  const txt = await fetchText("https://www.federalreserve.gov/releases/h15/current/default.htm", { timeoutMs: 16000 }).catch(() => "");
+  const pick = (label) => {
+    const rx = new RegExp(label + "[\\s\\S]{0,700}?([0-9]+\\.[0-9]+)", "i");
+    const m = txt.match(rx);
+    return m ? +m[1] : null;
+  };
+  const snap = {
+    updated: Date.now(),
+    fedFunds: pick("Federal funds"),
+    treasury3m: pick("3-month"),
+    treasury2y: pick("2-year"),
+    treasury10y: pick("10-year"),
+    source: "Federal Reserve H.15 current release",
+  };
+  return [snap.fedFunds, snap.treasury3m, snap.treasury2y, snap.treasury10y].some((x) => x != null && Number.isFinite(x)) ? snap : null;
+}
+
+async function defiLlamaSnapshot() {
+  const [protocols, stables] = await Promise.all([
+    fetchJson("https://api.llama.fi/protocols", { timeoutMs: 20000 }).catch(() => []),
+    fetchJson("https://stablecoins.llama.fi/stablecoins?includePrices=true", { timeoutMs: 20000 }).catch(() => null),
+  ]);
+  const ps = Array.isArray(protocols) ? protocols : [];
+  const topProtocols = ps.filter((p) => Number.isFinite(+p.tvl)).sort((a, b) => +b.tvl - +a.tvl).slice(0, 8).map((p) => ({ name: p.name, chain: p.chain, category: p.category, tvl: +p.tvl, change1d: +(p.change_1d || 0), change7d: +(p.change_7d || 0) }));
+  const tvl = ps.reduce((a, p) => a + (+p.tvl || 0), 0);
+  const stablecoins = ((stables && stables.peggedAssets) || [])
+    .filter((x) => Number.isFinite(+(x.circulating && x.circulating.peggedUSD)))
+    .sort((a, b) => +(b.circulating && b.circulating.peggedUSD || 0) - +(a.circulating && a.circulating.peggedUSD || 0))
+    .slice(0, 6)
+    .map((x) => ({ name: x.name, symbol: x.symbol, mcap: +(x.circulating && x.circulating.peggedUSD || 0) }));
+  const stableMcap = stablecoins.reduce((a, x) => a + x.mcap, 0);
+  return { updated: Date.now(), tvl, topProtocols, stableMcap, stablecoins };
+}
+
+async function yahooOptionsChain(symbol) {
+  const sym = String(symbol || "").toUpperCase().trim();
+  if (!sym) return null;
+  const d = await fetchJson(`https://query2.finance.yahoo.com/v7/finance/options/${encodeURIComponent(sym)}`, { timeoutMs: 16000 });
+  const root = d && d.optionChain && d.optionChain.result && d.optionChain.result[0];
+  const opt = root && root.options && root.options[0];
+  if (!root || !opt) return null;
+  const calls = opt.calls || [], puts = opt.puts || [];
+  const sum = (arr, key) => arr.reduce((a, x) => a + (+x[key] || 0), 0);
+  const avgIv = (arr) => {
+    const xs = arr.map((x) => +x.impliedVolatility).filter(Number.isFinite);
+    return xs.length ? +(xs.reduce((a, b) => a + b, 0) / xs.length * 100).toFixed(2) : null;
+  };
+  const callVol = sum(calls, "volume"), putVol = sum(puts, "volume");
+  const callOi = sum(calls, "openInterest"), putOi = sum(puts, "openInterest");
+  return {
+    ticker: sym,
+    quote: root.quote || null,
+    expiry: opt.expirationDate ? new Date(opt.expirationDate * 1000).toISOString().slice(0, 10) : null,
+    expirations: (root.expirationDates || []).slice(0, 8).map((t) => new Date(t * 1000).toISOString().slice(0, 10)),
+    callVolume: callVol, putVolume: putVol, putCallVolume: callVol ? +(putVol / callVol).toFixed(2) : null,
+    callOpenInterest: callOi, putOpenInterest: putOi, putCallOpenInterest: callOi ? +(putOi / callOi).toFixed(2) : null,
+    callIv: avgIv(calls), putIv: avgIv(puts),
+    topCalls: calls.filter((x) => x.volume || x.openInterest).sort((a, b) => (+b.volume || 0) - (+a.volume || 0)).slice(0, 5).map((x) => ({ strike: x.strike, volume: x.volume || 0, oi: x.openInterest || 0, iv: x.impliedVolatility ? +(x.impliedVolatility * 100).toFixed(2) : null })),
+    topPuts: puts.filter((x) => x.volume || x.openInterest).sort((a, b) => (+b.volume || 0) - (+a.volume || 0)).slice(0, 5).map((x) => ({ strike: x.strike, volume: x.volume || 0, oi: x.openInterest || 0, iv: x.impliedVolatility ? +(x.impliedVolatility * 100).toFixed(2) : null })),
+  };
 }
 
 /* ── TradingView scanner — top gainers + TA rating (public JSON; gray-area) ── */
@@ -242,4 +555,11 @@ async function btcNetwork() {
   };
 }
 
-module.exports = { binanceKlines, binanceDepth, binance24h, coinbaseDepth, coinbaseTrades, yahooChart, yahooChartPeriod, yahooQuotes, gdeltNews, nwsAlerts, edgarTickers, treasuryYields, tvScan, tvMovers, tvBreadth, cryptoFearGreed, wikiAttention, secFormFour, btcNetwork };
+module.exports = {
+  binanceKlines, binanceDepth, binance24h, coinbaseDepth, coinbaseTrades,
+  yahooChart, yahooChartPeriod, yahooQuotes, yahooOptionsChain,
+  gdeltNews, nwsAlerts, edgarTickers, secCompanyIntel, finraShortVolume,
+  treasuryYields, cboeMarketSnapshot, cftcCotSnapshot, nasdaqTraderSymbols,
+  kenFrenchSnapshot, blsSnapshot, fedH15Snapshot, defiLlamaSnapshot,
+  tvScan, tvMovers, tvBreadth, cryptoFearGreed, wikiAttention, secFormFour, btcNetwork,
+};

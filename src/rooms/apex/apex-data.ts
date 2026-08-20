@@ -8,7 +8,11 @@ import { api } from "../../api";
    fail-soft so the UI degrades to its last snapshot, never crashes.
    ───────────────────────────────────────────────────────────── */
 
-export interface Quote { ticker: string; last: number | null; prev?: number | null; changePct?: number | null; name?: string; open?: number | null; high?: number | null; low?: number | null }
+export interface Quote {
+  ticker: string; last: number | null; prev?: number | null; changePct?: number | null; name?: string;
+  open?: number | null; high?: number | null; low?: number | null;
+  bid?: number | null; ask?: number | null; bid_sz?: number | null; ask_sz?: number | null;
+}
 export interface Gainer { ticker: string; last: number | null; changePct: number | null; vol?: number; mktcap?: number; rating?: string }
 export interface Story { title: string; rank: number; verified?: number; corroboration?: number; lane?: string; tickers?: { t?: string; s?: string; dir: number; mag: number }[]; sources?: string[]; pinned?: boolean; firstSeen?: string }
 export interface Depth { bids: { p: number; q: number }[]; asks: { p: number; q: number }[] }
@@ -32,6 +36,21 @@ export interface Form4Filing { name: string; cik: string; role: string; date: st
 export interface BtcNet { fastFee: number | null; halfHourFee: number | null; hourFee: number | null; mempoolTxs: number | null; mempoolVsize: number | null; hashRateEH: number | null; nTx24h: number | null; price: number | null; difficulty: number | null; updated: number }
 export interface AnomalyItem { sym: string; changePct: number; z: number; sigma: number }
 export interface Anomalies { updated: string; items: AnomalyItem[] }
+export interface CboeMarket { updated: number; vix: number | null; vvix: number | null; vix3m: number | null; vixDate: string | null; putCallDate: string | null; termSpread: number | null; putCallRatio: number | null }
+export interface CftcCotItem { market: string; date: string; asset?: string; nonCommercialLong: number; nonCommercialShort: number; nonCommercialNet: number; openInterest: number }
+export interface CftcCot { updated: number; items: CftcCotItem[] }
+export interface NasdaqDirectory { updated: number; total: number; etfs: number; stocks: number; nasdaq: number; other: number; sample: { symbol: string; name?: string; etf: boolean; exchange: string }[] }
+export interface KenFrench { updated: number; date?: string; mktRf: number | null; smb: number | null; hml: number | null; rf: number | null; momentumDate?: string; momentum: number | null }
+export interface BlsSeries { id: string; label: string; period: string | null; value: number | null; prev: number | null; change: number | null }
+export interface BlsMacro { updated: number; series: BlsSeries[] }
+export interface FedH15 { updated: number; fedFunds: number | null; treasury3m: number | null; treasury2y: number | null; treasury10y: number | null; source: string }
+export interface DefiLlama { updated: number; tvl: number; stableMcap: number; topProtocols: { name: string; chain?: string; category?: string; tvl: number; change1d: number; change7d: number }[]; stablecoins: { name: string; symbol: string; mcap: number }[] }
+export interface MacroAlt { cboe: CboeMarket | null; cftc: CftcCot | null; nasdaq: NasdaqDirectory | null; kenFrench: KenFrench | null; bls: BlsMacro | null; fed: FedH15 | null; defi: DefiLlama | null; updated: string | null }
+export interface CompanyFact { concept: string; label: string; unit: string; value: number; fy?: number; fp?: string; form?: string; end?: string; filed?: string }
+export interface CompanyFiling { accession: string; form?: string; filed?: string; report?: string; description?: string; document?: string }
+export interface CompanyIntel { ticker: string; cik: string; name: string; financials: CompanyFact[]; filings: CompanyFiling[]; updated: number }
+export interface ShortVolume { ticker: string; date: string; shortVolume: number; exemptVolume: number; totalVolume: number; shortPct: number | null; venues: { market: string; shortVolume: number; exemptVolume: number; totalVolume: number }[] }
+export interface OptionsChain { ticker: string; expiry: string | null; expirations: string[]; callVolume: number; putVolume: number; putCallVolume: number | null; callOpenInterest: number; putOpenInterest: number; putCallOpenInterest: number | null; callIv: number | null; putIv: number | null; topCalls: { strike: number; volume: number; oi: number; iv: number | null }[]; topPuts: { strike: number; volume: number; oi: number; iv: number | null }[] }
 export interface RiskLab { symbol: string; realizedVol: number; ewmaVol: number; var95: number; cvar95: number; var99: number; cvar99: number; maxDD: number; sharpe: number; rollSharpe: number[]; beta: number | null; days: number; bins: { x: number; count: number }[] }
 export async function fetchRiskLab(sym: string): Promise<RiskLab | null> {
   const r = await safe<{ risklab: RiskLab | null }>(`/api/apex/risklab/${encodeURIComponent(sym)}`, { risklab: null });
@@ -68,6 +87,7 @@ export interface ApexLive {
   crypto: Record<string, Quote>;
   cryptoGlobal: CryptoGlobal | null;
   macro: MacroSeries[];
+  macroAlt: MacroAlt | null;
   movers: Movers;
   regime: Regime | null;
   internals: Internals | null;
@@ -86,7 +106,7 @@ export interface ApexLive {
 }
 
 const EMPTY_MOVERS: Movers = { stocks: { gainers: [], losers: [] }, crypto: { gainers: [], losers: [] } };
-const EMPTY: ApexLive = { indices: [], gainers: [], yields: [], news: [], book: null, crypto: {}, cryptoGlobal: null, macro: [], movers: EMPTY_MOVERS, regime: null, internals: null, sectors: [], insider: [], session: [], correlation: null, rrg: [], cryptoFng: null, attention: null, form4: [], btcNet: null, anomalies: null, live: false, updated: null };
+const EMPTY: ApexLive = { indices: [], gainers: [], yields: [], news: [], book: null, crypto: {}, cryptoGlobal: null, macro: [], macroAlt: null, movers: EMPTY_MOVERS, regime: null, internals: null, sectors: [], insider: [], session: [], correlation: null, rrg: [], cryptoFng: null, attention: null, form4: [], btcNet: null, anomalies: null, live: false, updated: null };
 
 export interface Fundamentals { ticker: string; name: string; sector: string; industry?: string; marketCap: number | null; pe: number | null; eps: number | null; beta: number | null; divYield: number | null; high52: number | null; low52: number | null }
 export async function fetchFundamentals(sym: string): Promise<Fundamentals | null> {
@@ -97,6 +117,22 @@ export async function fetchInsider(sym: string): Promise<Insider[]> {
   const r = await safe<{ insider: Insider[] }>(`/api/apex/insider/${encodeURIComponent(sym)}`, { insider: [] });
   return r.insider || [];
 }
+export async function fetchMacroAlt(): Promise<MacroAlt | null> {
+  const r = await safe<{ macroAlt: MacroAlt | null }>("/api/apex/macro-alt", { macroAlt: null });
+  return r.macroAlt;
+}
+export async function fetchCompanyIntel(sym: string): Promise<CompanyIntel | null> {
+  const r = await safe<{ company: CompanyIntel | null }>(`/api/apex/company-intel/${encodeURIComponent(sym)}`, { company: null });
+  return r.company;
+}
+export async function fetchShortVolume(sym: string): Promise<ShortVolume | null> {
+  const r = await safe<{ shortVolume: ShortVolume | null }>(`/api/apex/short-volume/${encodeURIComponent(sym)}`, { shortVolume: null });
+  return r.shortVolume;
+}
+export async function fetchOptionsChain(sym: string): Promise<OptionsChain | null> {
+  const r = await safe<{ options: OptionsChain | null }>(`/api/apex/options/${encodeURIComponent(sym)}`, { options: null });
+  return r.options;
+}
 
 async function safe<T>(path: string, fb: T): Promise<T> {
   try { return await api<T>(path); } catch { return fb; }
@@ -105,7 +141,22 @@ async function safe<T>(path: string, fb: T): Promise<T> {
 /* On-demand fetchers (symbol drawer, charts). */
 export async function fetchQuote(sym: string): Promise<Quote | null> {
   const r = await safe<{ quote: Quote | null }>(`/api/apex/quote/${encodeURIComponent(sym)}`, { quote: null });
-  return r.quote;
+  const q = r.quote as (Quote & { prev_c?: number | null; day_o?: number | null; day_h?: number | null; day_l?: number | null }) | null;
+  if (!q) return null;
+  const prev = q.prev ?? q.prev_c ?? null;
+  const last = q.last ?? null;
+  return {
+    ...q,
+    prev,
+    open: q.open ?? q.day_o ?? null,
+    high: q.high ?? q.day_h ?? null,
+    low: q.low ?? q.day_l ?? null,
+    bid: q.bid ?? null,
+    ask: q.ask ?? null,
+    bid_sz: q.bid_sz ?? null,
+    ask_sz: q.ask_sz ?? null,
+    changePct: q.changePct ?? (last != null && prev ? ((last - prev) / prev) * 100 : null),
+  };
 }
 export async function fetchBars(sym: string, tf = "1d", range = "6mo"): Promise<Bar[]> {
   const r = await safe<{ bars: Bar[] }>(`/api/apex/bars/${encodeURIComponent(sym)}?tf=${tf}&range=${range}`, { bars: [] });
@@ -132,7 +183,7 @@ export function useApexData(): ApexLive {
     let newsTimer: number | undefined;
 
     const pullFast = async () => {
-      const ov = await safe<{ overview: { indices: Quote[] }; gainers: Gainer[]; yields: { date: string; security: string; rate: number }[]; cryptoGlobal: CryptoGlobal | null; macro: MacroSeries[]; movers?: Movers; regime?: Regime | null; internals?: Internals | null; sectors?: Sector[]; insider?: Insider[]; session?: SessionQuote[]; correlation?: Correlation | null; rrg?: RRGPoint[]; cryptoFng?: CryptoFng | null; attention?: Attention | null; form4?: Form4Filing[]; btcNet?: BtcNet | null; anomalies?: Anomalies | null }>(
+      const ov = await safe<{ overview: { indices: Quote[] }; gainers: Gainer[]; yields: { date: string; security: string; rate: number }[]; cryptoGlobal: CryptoGlobal | null; macro: MacroSeries[]; macroAlt?: MacroAlt | null; movers?: Movers; regime?: Regime | null; internals?: Internals | null; sectors?: Sector[]; insider?: Insider[]; session?: SessionQuote[]; correlation?: Correlation | null; rrg?: RRGPoint[]; cryptoFng?: CryptoFng | null; attention?: Attention | null; form4?: Form4Filing[]; btcNet?: BtcNet | null; anomalies?: Anomalies | null }>(
         "/api/apex/overview", { overview: { indices: [] }, gainers: [], yields: [], cryptoGlobal: null, macro: [] });
       const book = await safe<{ book: Depth | null }>("/api/apex/orderbook/BTCUSDT", { book: null });
       const btc = await safe<{ quote: Quote | null }>("/api/apex/quote/BTCUSDT", { quote: null });
@@ -149,6 +200,7 @@ export function useApexData(): ApexLive {
         yields: ov.yields || [],
         cryptoGlobal: ov.cryptoGlobal || null,
         macro: ov.macro || [],
+        macroAlt: ov.macroAlt || null,
         movers: ov.movers || EMPTY_MOVERS,
         regime: ov.regime || null,
         internals: ov.internals || null,

@@ -38,6 +38,15 @@ test("frames are read one-shot, not one element at a time", () => {
     "the per-element frame walk (isVisible + evaluate per handle) is the bug being removed");
 });
 
+test("child frames are skipped when the main page already has a typable field", () => {
+  // The real cut. Even one-shot, reading Instagram's ad frames cost 3.3s of a 61ms read for content
+  // a send never uses. If the main frame produced a composer, the child frames are not read at all.
+  assert.match(CODE, /const mainFrameHasComposer = elements\.some/,
+    "the skip must be driven by whether the main frame already has a typable field");
+  assert.match(CODE, /const childFrames = mainFrameHasComposer\s*\?\s*\[\]/,
+    "and when it does, no child frames are read");
+});
+
 // The behaviour: a page with MANY cross-origin frames must read fast and still surface the main
 // frame's composer. Cross-origin is reproduced with a second server on its own port.
 test("a page full of cross-origin frames reads quickly and still finds the composer", { timeout: 60_000 }, async (t) => {
