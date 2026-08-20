@@ -77,6 +77,13 @@ const WIDGET_CATALOG = [
   ["graph", "the knowledge / reality graph"],
   ["vision", "camera and vision feeds"],
   ["receipts", "receipts and the audit trail of what JARVIS has done"],
+  // Full-screen rooms. APEX is the markets room — live quotes, indices, tickers, charts, news — and
+  // it was missing from this list even though it is built and mounted. Without it the model had no
+  // markets surface to name, so a request to SEE market prices could only reach for `kalshi`
+  // (prediction markets, not equities) or answer in prose. The apex_* tools fetch the same data for
+  // a stage_render; this is for when the owner wants the room itself.
+  ["apex", "the APEX markets room — live equity/index prices, tickers, charts, market news, watchlists"],
+  ["arbiter", "the Arbiter room — Kalshi vs Polymarket divergence"],
   ["helix", "the HELIX research room"],
   ["synapse", "the Synapse co-op mesh room"],
 ];
@@ -411,8 +418,14 @@ function createCapabilityEngine({
     ["research_v2", "JARVIS Research Engine v2: classify a public-info request, expand multiple search angles, run Gemini grounded search plus optional Tavily/Brave/Exa providers, read top URLs, verify evidence, and return progress, citations, confidence, and a grounded answer.", "observe", false],
     ["web_research_deep", "Cortex v2 deep public research: plan a live search, use grounded search, read top public source URLs, and return evidence objects with citations.", "observe", false],
     ["url_read", "Read and extract clean text from a public HTTP/HTTPS URL with SSRF protections and metadata.", "observe", false],
-    ["ui_open_widget", "Open a real current-shell JARVIS widget by id without navigating to an external website.", "observe", false],
-    ["ui_focus_widget", "Open a real current-shell JARVIS widget in expanded focus mode.", "observe", false],
+    // Described in the owner's words, and naming what each surface actually holds. The old text was
+    // "Open a real current-shell JARVIS widget by id without navigating to an external website" —
+    // accurate, and matching nothing a person says. Retrieval scored it against phrasings like "open
+    // the markets room", "take me to the trading screen", "get the research workspace up" and picked
+    // it ZERO times out of five, so the model was never handed the tool that opens things and either
+    // said it couldn't or claimed it had. The surface names live in the text so they can be matched.
+    ["ui_open_widget", `Open one of JARVIS's own on-screen surfaces — a widget or a full-screen room. Use it whenever the owner wants to SEE, watch, monitor, pull up, bring up, go to, jump into or be taken to one of them: "open the markets room", "take me to the trading screen", "get my calendar up", "I want to watch prices live", "show me the research workspace". Available surfaces: ${WIDGET_LIST_TEXT}. Pick the one that genuinely covers what was asked; if none does, say so rather than opening the nearest thing, or render the answer with stage_render instead.`, "observe", false],
+    ["ui_focus_widget", `Open one of JARVIS's on-screen surfaces in EXPANDED focus mode — full screen, for when the owner wants to look at it properly ("expand it", "full screen the calendar", "make the markets room bigger", "focus on that"). Same surfaces as ui_open_widget: ${WIDGET_LIST_TEXT}.`, "observe", false],
     ["ui_close_widget", "Close the currently shown JARVIS widget or a specified widget.", "observe", false],
     ["ui_populate", "Populate a current-shell widget with explicitly supplied response data and a freshness state.", "observe", false],
     ["ui_move_widget", "Move a JARVIS widget to a screen position: top-left, top-right, bottom-left, bottom-right, center, left, right, top, or bottom. If the owner named a widget, pass its id; if they said 'it'/'this'/'that' or named none ('move to the top right'), OMIT id — it targets the widget currently focused on screen. Never ask which widget when one is on screen.", "observe", false],

@@ -481,13 +481,24 @@ export function JarvisUI() {
     el.textContent = PANEL_CSS;
   }, []);
 
-  // Intercept helix widget open event
+  // Full-screen ROOMS, opened by id like any other widget.
+  //
+  // Only "helix" was wired here, so `ui_open_widget` could not open APEX or Arbiter at all: the one
+  // route into them was the command-bar regex further down, which matches the literal word "apex".
+  // The brain therefore had no way to reach the markets room and had never been told it existed, so
+  // "I want to eyeball the market, not read about it" resolved to the Kalshi widget — the closest
+  // market-shaped name it had ever seen. The room was finished and unreachable.
   useEffect(() => {
+    const ROOMS: Record<string, (open: boolean) => void> = {
+      helix: setHelixOpen,
+      apex: setApexOpen,
+      arbiter: setArbiterOpen,
+    };
     function handle(e: Event) {
-      if ((e as CustomEvent).detail?.id === "helix") {
-        setHelixOpen(true);
-        setLauncherOpen(false);
-      }
+      const open = ROOMS[String((e as CustomEvent).detail?.id || "")];
+      if (!open) return;
+      open(true);
+      setLauncherOpen(false);
     }
     document.addEventListener("jarvis:open-widget", handle);
     return () => document.removeEventListener("jarvis:open-widget", handle);
