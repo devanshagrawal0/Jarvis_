@@ -27,13 +27,32 @@ export type Surface = { root: string; blocks: Record<string, RBlock> };
 
 
 
+// Strip markdown from text that is rendered as plain characters. Deliberately narrow: leading
+// heading hashes, wrapping emphasis, and backticks — things that can only be markup. A ticker like
+// A*B or a label with an underscore is left exactly as written.
+function stripMarkup(text: string): string {
+  return String(text || "")
+    .replace(/^\s{0,3}#{1,6}\s+/, "")
+    .replace(/\*\*([^*\n]+)\*\*/g, "$1")
+    .replace(/(^|[\s(])\*([^*\n]+)\*(?=[\s).,;:!?]|$)/g, "$1$2")
+    .replace(/`([^`\n]+)`/g, "$1")
+    .trim();
+}
+
 type Entry = { validate: (b: any) => boolean; render: (b: any, kids: ReactNode) => ReactNode };
 
 // The catalog. `kids` is the already-rendered children array for container blocks (null for leaves).
 export const REGISTRY: Record<string, Entry> = {
   stack: { validate: () => true, render: (_b, kids) => <div className="jr-blocks">{kids}</div> },
   stat_row: { validate: () => true, render: (_b, kids) => <div className="jr-blk-stats">{kids}</div> },
-  heading: { validate: (b) => typeof b?.props?.text === "string" && b.props.text.trim().length > 0, render: (b) => <div className="jr-blk-heading">{b.props.text}</div> },
+  // The heading renders as PLAIN TEXT, so any markdown the model puts in it would be shown as
+  // characters — a surface went out titled "## NVDA 1-Month Trend (Daily)", hashes and all. The
+  // block already means "this is a heading"; the markup is redundant by the time it arrives, so it
+  // is stripped rather than honoured. Only unambiguous syntax is removed, never content.
+  heading: {
+    validate: (b) => typeof b?.props?.text === "string" && b.props.text.trim().length > 0,
+    render: (b) => <div className="jr-blk-heading">{stripMarkup(b.props.text)}</div>,
+  },
   text: { validate: (b) => typeof b?.props?.md === "string" && b.props.md.trim().length > 0, render: (b) => <div className="jr-blk-text"><JarvisMarkdown text={b.props.md} /></div> },
   stat: {
     validate: (b) => b?.props && (b.props.value || b.props.label),

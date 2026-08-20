@@ -26,9 +26,14 @@ const CHROME = 106;
 
 let stageSeq = 0;
 
-function defaultRect(cal = false): Rect {
+// What KIND of box a surface needs. Height fits itself to content afterwards; width cannot, so it
+// has to be right from the start — a chart squeezed into the 414px note column had 292px of drawing
+// room, and a month of daily closes is unreadable in that.
+type SurfaceKind = "note" | "wide" | "calendar";
+
+function defaultRect(kind: SurfaceKind = "note"): Rect {
   const vw = window.innerWidth, vh = window.innerHeight;
-  if (cal) {
+  if (kind === "calendar") {
     // The calendar room is a large, centered surface (its own HUD frame, no panel chrome). It must
     // sit ABOVE the command bar at the bottom, not behind it.
     const w = Math.min(1260, Math.round(vw * 0.9));
@@ -36,13 +41,21 @@ function defaultRect(cal = false): Rect {
     const h = Math.min(930, vh - topY - 178);
     return { x: Math.round((vw - w) / 2), y: topY, w, h };
   }
-  const w = Math.min(414, Math.max(300, Math.round(vw * 0.27)));
-  const h = Math.min(400, Math.max(230, Math.round(vh * 0.4)));
+  // A charted surface gets a landscape box — still docked right, still out of the way, but wide
+  // enough that a time series reads as a series rather than a squiggle.
+  const w = kind === "wide"
+    ? Math.min(720, Math.max(460, Math.round(vw * 0.44)))
+    : Math.min(414, Math.max(300, Math.round(vw * 0.27)));
+  const h = Math.min(kind === "wide" ? 520 : 400, Math.max(230, Math.round(vh * 0.4)));
   const x = Math.max(20, vw - w - 32);
   const y = Math.max(20, Math.round(vh * 0.11));
   return { x, y, w, h };
 }
 const isCalendar = (blocks?: Block[]) => Array.isArray(blocks) && blocks.some((b) => b.type === "calendar");
+const surfaceKind = (blocks?: Block[]): SurfaceKind =>
+  isCalendar(blocks) ? "calendar"
+    : Array.isArray(blocks) && blocks.some((b) => b.type === "chart") ? "wide"
+      : "note";
 const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v));
 const two = (n: number) => String(n).padStart(2, "0");
 
@@ -148,7 +161,11 @@ const STYLE = `
 .jr-blk-stats { display: flex; flex-wrap: wrap; gap: 9px; }
 .jr-blk-stat { flex: 1 1 120px; min-width: 108px; display: flex; flex-direction: column; gap: 2px; padding: 10px 12px; border-radius: 10px;
   border: 1px solid rgba(96,170,214,.16); background: linear-gradient(180deg, rgba(30,54,86,.26), rgba(16,28,46,.16)); }
-.jr-blk-stat-val { font-size: 20px; font-weight: 650; color: #e6f0fb; letter-spacing: .01em; font-variant-numeric: tabular-nums; line-height: 1.1; }
+/* A LONE stat must not stretch. The flex-grow above is right for a row of cards and wrong for one:
+   a single card grew to the full panel width and turned one number into a slab, which is the
+   oversized-tile look — chrome winning over content. Alone it sizes to its own content. */
+.jr-blk-stat:only-child { flex: 0 1 auto; min-width: 0; }
+.jr-blk-stat-val { font-size: 18px; font-weight: 650; color: #e6f0fb; letter-spacing: .01em; font-variant-numeric: tabular-nums; line-height: 1.1; }
 .jr-blk-stat-lbl { font-size: 9.5px; letter-spacing: .1em; text-transform: uppercase; color: rgba(150,180,205,.7); }
 .jr-blk-stat-delta { font-size: 11px; font-weight: 600; margin-top: 1px; font-variant-numeric: tabular-nums; }
 .jr-blk-stat-delta.up { color: #5fd3a0; }
@@ -206,7 +223,7 @@ export function StageSurface() {
   const drag = useRef<{ mode: "move" | "resize"; sx: number; sy: number; r: Rect } | null>(null);
   const contentRef = useRef<HTMLDivElement>(null);
   const userSized = useRef(false);
-  const rectKind = useRef<boolean | null>(null);   // which kind of surface the current rect was sized for
+  const rectKind = useRef<SurfaceKind | null>(null);   // which kind of surface the current rect was sized for
   const [meta, setMeta] = useState<{ id: string; date: string; time: string }>({ id: "STAGE.0001", date: "", time: "" });
 
   useEffect(() => {
@@ -231,8 +248,8 @@ export function StageSurface() {
         const title = d.data.title || "Jarvis";
         stamp(title);
         setStage({ title, content: d.data.content, key: Date.now() });
-        setRect((prev) => (prev && rectKind.current === false ? prev : defaultRect()));
-        rectKind.current = false;
+        setRect((prev) => (prev && rectKind.current === "note" ? prev : defaultRect("note")));
+        rectKind.current = "note";
       }
       if (d?.type === "stage-render") {
         const blocks = Array.isArray(d.data?.blocks) ? d.data.blocks : [];
@@ -251,9 +268,9 @@ export function StageSurface() {
         // whichever box the FIRST surface of the session happened to need and handed it to every
         // surface after it, so a calendar could land in a note-sized panel and never fit. Keep the
         // box only while the kind of surface is unchanged; when it changes, take the right default.
-        const cal = isCalendar(blocks);
-        setRect((prev) => (prev && rectKind.current === cal ? prev : defaultRect(cal)));
-        rectKind.current = cal;
+        const kind = surfaceKind(blocks);
+        setRect((prev) => (prev && rectKind.current === kind ? prev : defaultRect(kind)));
+        rectKind.current = kind;
       }
     };
     const onClose = () => setStage(null);
