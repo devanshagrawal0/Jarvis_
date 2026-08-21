@@ -2776,9 +2776,14 @@ function summarizeVerifiedToolResults(toolResults) {
   }
   for (const item of confirmations) {
     const reason = item.confirmation?.summary?.reason;
-    lines.push(reason
-      ? `${reason} is prepared and awaiting your confirmation.`
-      : `${item.tool} is ready and awaiting your confirmation.`);
+    const what = reason || item.tool;
+    // Say HOW to approve, not just that approval is pending. The old line — "<tool> is ready and
+    // awaiting your confirmation" — told the owner nothing about what to do next, and replying in
+    // chat cannot approve anything, so he answered "ok", "?" and "open what app?" and got the same
+    // sentence back three times. Approval needs the card on screen, so the sentence points at it.
+    lines.push(item.confirmation?.alreadyPending
+      ? `${what} is still waiting for you — press Approve on the card on screen (or Cancel to drop it). Replying here won't approve it.`
+      : `${what} is ready — press Approve on the card on screen to run it.`);
   }
   // A failure is reported in a sentence, not by pasting the command that failed. `error` on a
   // PowerShell-backed tool carries the ENTIRE script, so a blocked screen capture filled the reply

@@ -1116,6 +1116,36 @@ function createCapabilityEngine({
   function requestConfirmation(tool, args, actor = {}) {
     const definition = definitionFor(tool);
     if (!actor.sessionId) throw errorWithStatus("A trusted local session is required for confirmation", 401);
+
+    // The same request twice does not queue twice.
+    //
+    // A short reply gets the previous turn replayed into the prompt (see `continuationAction`), so
+    // while an action is waiting for approval, answering "ok" makes the model call the tool AGAIN —
+    // and this minted a fresh confirmation every time. The owner asked to launch an app, then typed
+    // "ok", "?" and "open what app?" and got "open_app is ready and awaiting your confirmation" to
+    // all three, with no way out by typing, because approval requires the on-screen card (it needs
+    // a one-time owner challenge the model deliberately never sees). Returning the EXISTING
+    // confirmation means the reply names what is already waiting instead of stacking another copy.
+    const sessionKey = cleanString(actor.sessionId, 200);
+    const argsHash = hash(args);
+    const existing = loadConfirmations().find((c) => c
+      && c.tool === tool
+      && c.argumentHash === argsHash
+      && c.actor?.sessionId === sessionKey
+      && new Date(c.expiresAt).getTime() > Date.now());
+    if (existing) {
+      return {
+        id: existing.id,
+        tool,
+        summary: confirmationSummary(existing.args),
+        commit: commitCard(existing.args),
+        risk: existing.risk,
+        expiresAt: existing.expiresAt,
+        alreadyPending: true,
+        message: `${tool} is ALREADY waiting for the owner's approval — this is the same request repeated, not a new one. Do NOT call it again. It cannot be approved by replying in chat: say plainly that the confirmation card is on screen and he needs to press Approve on it, or Cancel to drop it.`,
+      };
+    }
+
     const item = {
       id: crypto.randomUUID(),
       tool,
