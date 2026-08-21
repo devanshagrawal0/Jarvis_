@@ -169,7 +169,23 @@ function createMemoryStore(runtimeDir, { neuralVaultBridge } = {}) {
         `).all(now, ...kindArgs, limit);
     return candidates.map((row) => {
       const exact = row.normalized_text.includes(String(query || "").toLowerCase()) ? 1 : 0;
-      const score = Number(row.term_hits || 0) * 0.2 + Number(row.importance) * 0.35 + Number(row.confidence) * 0.25 + exact * 0.2;
+      // Recency counts, and how much it counts depends on what kind of memory this is.
+      //
+      // The score had no time term at all, so a transcript from 12 August ranked exactly level with
+      // one written a minute ago; `updated_at` only broke ties after term hits and importance had
+      // already tied, which is almost never. An old exchange whose words happened to overlap won
+      // permanently — eleven stored turns about a poem kept surfacing for eight days against
+      // anything that mentioned a file.
+      //
+      // EPISODIC memories record a moment and go stale fast: a one-day half-life keeps yesterday
+      // relevant and stops last week outvoting the present. SEMANTIC and PROCEDURAL memories are
+      // facts about the owner and things learned — they do not become less true, so they decay an
+      // order of magnitude slower and effectively hold their rank. Nothing is deleted or filtered;
+      // old memories simply stop beating new ones on equal keywords.
+      const halfLifeMs = row.kind === "episodic" ? 24 * 60 * 60 * 1000 : 30 * 24 * 60 * 60 * 1000;
+      const ageMs = Math.max(0, Date.now() - new Date(row.updated_at || row.created_at || 0).getTime());
+      const recency = Math.pow(0.5, ageMs / halfLifeMs);
+      const score = Number(row.term_hits || 0) * 0.2 + Number(row.importance) * 0.3 + Number(row.confidence) * 0.2 + exact * 0.15 + recency * 0.35;
       return {
         id: row.id,
         kind: row.kind,

@@ -400,12 +400,19 @@ function createCapabilityEngine({
     terminal: { command: "cmd.exe", args: ["/c", "start", "", "wt.exe"], process: "WindowsTerminal" },
     vscode: { command: "cmd.exe", args: ["/c", "start", "", "code"], process: "Code" },
     spotify: { command: "cmd.exe", args: ["/c", "start", "", "spotify"], process: "Spotify" },
+    // Asked to "open my chatgpt app on my desktop", JARVIS opened the website instead and said it
+    // could not launch a standalone application. That was TRUE and it was this list's fault — the
+    // app simply was not in it, so the only thing left to reach for was a URL. Both of these are
+    // installed here and are launched by protocol handler rather than by a path, because the
+    // install directory carries a content hash that changes on every update.
+    chatgpt: { command: "cmd.exe", args: ["/c", "start", "", "chatgpt://"], process: "ChatGPT" },
+    claude: { command: "cmd.exe", args: ["/c", "start", "", "claude://"], process: "Claude" },
   };
 
   const definitions = [
     ["system_status", "Read real local CPU, memory, uptime, network interfaces, and load information.", "observe", false],
     ["list_processes", "List running Windows processes, sorted by memory use.", "observe", false],
-    ["open_app", "Open an allowlisted Windows application.", "execute", false],
+    ["open_app", "Launch a desktop application that is installed on this machine — 'open chatgpt', 'launch spotify', 'open my claude app', 'start vscode'. It looks the app up in what is ACTUALLY installed here, so any installed app can be opened by name; there is no fixed list and you should never tell the owner you cannot launch desktop applications. Use this rather than opening a website when they ask for the app.", "execute", false],
     ["open_url", "Open a validated HTTP/HTTPS URL or common site name such as YouTube, Gmail, Canvas, Instagram, GitHub, Reddit, Google, or Kalshi in the laptop default browser.", "execute", false],
     ["screen_inspect", "Inspect the current visible laptop screen through Windows UI Automation and return visible controls, labels, roles, and screen-coordinate bounds.", "observe", false],
     ["screen_act", "Operate on the current visible laptop screen by first capturing and inspecting it, locating a visible target, performing a bounded click/type/hotkey/fullscreen action, then capturing again to verify.", "execute", false],
@@ -601,7 +608,7 @@ function createCapabilityEngine({
   const declarations = [
     { name: "system_status", description: description("system_status"), parameters: { type: "OBJECT", properties: {} } },
     { name: "list_processes", description: description("list_processes"), parameters: { type: "OBJECT", properties: { limit: { type: "INTEGER", description: "Maximum processes, 1 to 50." } } } },
-    { name: "open_app", description: description("open_app"), parameters: { type: "OBJECT", properties: { app: { type: "STRING", description: `One of: ${Object.keys(appCatalog).join(", ")}.` } }, required: ["app"] } },
+    { name: "open_app", description: description("open_app"), parameters: { type: "OBJECT", properties: { app: { type: "STRING", description: "The app's name as the owner would say it — chatgpt, claude, spotify, vscode, notepad, whatever they have installed. Matched against what is actually installed on this machine, so you do NOT need it to be on a list; just pass the name." } }, required: ["app"] } },
     { name: "open_url", description: description("open_url"), parameters: { type: "OBJECT", properties: { url: { type: "STRING", description: "An HTTP or HTTPS URL. Bare domains are opened with HTTPS." } }, required: ["url"] } },
     { name: "screen_inspect", description: description("screen_inspect"), parameters: { type: "OBJECT", properties: {
       limit: { type: "INTEGER", description: "Maximum visible controls to return, 1 to 120." },
@@ -1253,13 +1260,61 @@ function createCapabilityEngine({
     return neuralVault;
   }
 
+  // What is actually installed, asked of Windows rather than remembered by hand. `Get-StartApps` is
+  // the same list the Start menu shows, and every entry carries an AppID that launches it — so this
+  // covers Store apps, which have no .exe path to find, as well as ordinary desktop programs.
+  // Cached for a few minutes: installing something mid-conversation is rare, re-shelling out on
+  // every request is not.
+  let installedAppsCache = { at: 0, apps: [] };
+  async function installedApps() {
+    if (Date.now() - installedAppsCache.at < 300_000 && installedAppsCache.apps.length) return installedAppsCache.apps;
+    try {
+      const out = await powershell("Get-StartApps | Select-Object Name,AppID | ConvertTo-Json -Compress");
+      const parsed = out ? JSON.parse(out) : [];
+      const apps = (Array.isArray(parsed) ? parsed : [parsed])
+        .filter((a) => a && a.Name && a.AppID)
+        .map((a) => ({ name: String(a.Name), id: String(a.AppID) }));
+      if (apps.length) installedAppsCache = { at: Date.now(), apps };
+      return apps;
+    } catch { return []; }
+  }
+
   async function openApp(args) {
-    const key = cleanString(args.app, 40).toLowerCase();
-    const app = appCatalog[key];
-    if (!app) throw errorWithStatus(`Unsupported app. Allowed: ${Object.keys(appCatalog).join(", ")}`);
-    const child = spawn(app.command, app.args, { detached: true, stdio: "ignore", windowsHide: true });
-    child.unref();
-    return { opened: key, processStarted: true };
+    const asked = cleanString(args.app, 60);
+    if (!asked) throw errorWithStatus("Which app should I open?");
+    const key = asked.toLowerCase();
+
+    // Ask the machine what it has before falling back to anything hand-maintained. The old version
+    // was ONLY a nine-entry map, so "open my chatgpt app" was refused with "I cannot launch
+    // standalone desktop applications" — untrue of the machine, true only of the list. Adding a
+    // tenth entry would have fixed exactly one app and failed on the eleventh.
+    const apps = await installedApps();
+    const norm = (s) => s.toLowerCase().replace(/[^a-z0-9]/g, "");
+    const target = norm(key);
+    const match = apps.find((a) => norm(a.name) === target)
+      || apps.find((a) => norm(a.name).startsWith(target))
+      || apps.find((a) => norm(a.name).includes(target));
+    if (match) {
+      // shell:AppsFolder launches by AppID, which works for Store apps and desktop apps alike.
+      const child = spawn("explorer.exe", [`shell:AppsFolder\\${match.id}`], { detached: true, stdio: "ignore", windowsHide: true });
+      child.unref();
+      return { opened: match.name, appId: match.id, processStarted: true, source: "installed-apps" };
+    }
+
+    const known = appCatalog[key];
+    if (known) {
+      const child = spawn(known.command, known.args, { detached: true, stdio: "ignore", windowsHide: true });
+      child.unref();
+      return { opened: key, processStarted: true, source: "catalog" };
+    }
+    // Name what IS installed rather than a fixed allowlist, so the owner can correct the name.
+    const near = apps.filter((a) => norm(a.name).includes(target.slice(0, 4))).slice(0, 6).map((a) => a.name);
+    throw errorWithStatus(
+      near.length
+        ? `No installed app matches "${asked}". Closest installed: ${near.join(", ")}.`
+        : `No installed app matches "${asked}".`,
+      404,
+    );
   }
 
   function normalizeOpenUrl(value) {

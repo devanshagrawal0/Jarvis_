@@ -3,6 +3,12 @@ const fs = require("fs");
 const path = require("path");
 const Database = require("better-sqlite3");
 
+// How long an artifact stays the thing "it" refers to when nothing newer has been produced.
+// Six hours covers "open it" after stepping away for lunch, and expires long before it can become
+// the answer to a question asked the following week — which is exactly what happened when this had
+// no bound at all and one file stayed the referent for eight days.
+const ACTIVE_ARTIFACT_TTL_MS = 6 * 60 * 60 * 1000;
+
 const PRIVACY_LEVELS = new Set(["public", "internal", "private", "secret"]);
 const SECRET_VALUE_PATTERN = /\bAIza[0-9A-Za-z_-]{20,}|sk-[0-9A-Za-z_-]{20,}|[A-Za-z0-9_-]{32,}\b/;
 
@@ -1650,29 +1656,59 @@ function createNeuralVault({ runtimeDir, getProviders = () => ({}), getToolDefin
     return { originalMessage: text, resolvedMessage, confidence: best?.confidence || 0, candidates, continuity };
   }
 
-  function updateContinuityFromTurn({ userMessage = "", assistantMessage = "", turnId = "", route = {}, artifacts = [], toolResults = [] } = {}) {
+  function updateContinuityFromTurn({ userMessage = "", assistantMessage = "", turnId = "", route = {}, artifacts = [], toolResults = [], effectiveTools = [] } = {}) {
+    const now = isoNow();
     const text = `${userMessage}\n${assistantMessage}`;
     const continuity = getContinuity();
     const topic = inferTopic(text) || continuity.active_topic;
     const project = inferProjectId(text) === "jarvis" ? "Jarvis" : continuity.active_project;
     const entities = extractEntities(text).map((item) => item.name);
-    const artifact = artifacts.find((item) => item?.title || item?.path)?.title || artifacts.find((item) => item?.path)?.path || continuity.active_artifact;
+    // An artifact this turn actually produced, or one still fresh enough that "it" could plausibly
+    // still mean that.
+    //
+    // This was `|| continuity.active_artifact` with no qualifier, so a turn producing nothing
+    // inherited the previous artifact — forever. A poem written on 13 August was still the active
+    // artifact 450 turns later and, because `nextObject` puts the artifact FIRST, it outranked the
+    // subject of every conversation since: "open it", "do it again", "where is this file" and even
+    // "thanks that was helpful" all resolved to that poem for eight days. Carrying context forward
+    // is right. Carrying it forever is what made the assistant seem stuck.
+    const freshArtifact = artifacts.find((item) => item?.title || item?.path)?.title
+      || artifacts.find((item) => item?.path)?.path
+      || "";
+    const inheritedAge = Date.now() - new Date(continuity.active_artifact_at || 0).getTime();
+    const artifact = freshArtifact
+      || (continuity.active_artifact && inheritedAge < ACTIVE_ARTIFACT_TTL_MS ? continuity.active_artifact : "");
     const lastTool = [...(toolResults || [])].reverse().find((item) => item?.tool)?.tool || continuity.active_tool;
     const issue = /\b(failed|broken|issue|problem|wrong|bad|error|not working|could not|can't|cannot)\b/i.test(text)
       ? normalizeText(userMessage).slice(0, 240)
       : continuity.active_issue;
-    const nextObject = artifact || entities[0] || topic || continuity.last_discussed_object;
+    // THE PRESENT WINS. What this turn is about outranks anything carried in.
+    //
+    // The order used to be `artifact || entities[0] || topic || …`, which put a possibly-ancient
+    // artifact ahead of the entities and topic of the conversation actually happening. A freshly
+    // produced artifact IS the subject and still comes first; an inherited one now sits behind the
+    // live turn, where it can only be chosen when this turn gave us nothing better.
+    const nextObject = freshArtifact || entities[0] || topic || artifact || continuity.last_discussed_object;
     const next = saveContinuity({
       ...continuity,
       active_project: project,
       active_topic: topic,
       active_issue: issue,
       active_artifact: artifact,
+      // Stamped so the TTL above measures the artifact's own age rather than the age of the file,
+      // which every turn rewrites.
+      active_artifact_at: freshArtifact ? now : (continuity.active_artifact_at || ""),
       active_tool: lastTool,
       active_goal: route?.intent === "action" ? normalizeText(userMessage).slice(0, 240) : continuity.active_goal,
       last_discussed_object: nextObject,
       last_user_correction: /\b(actually|i meant|wrong|not that|no,?)\b/i.test(userMessage) ? normalizeText(userMessage).slice(0, 240) : continuity.last_user_correction,
-      last_assistant_commitment: /\b(i will|i'll|done|created|updated|opened|saved|fixed)\b/i.test(assistantMessage) ? normalizeText(assistantMessage).slice(0, 240) : continuity.last_assistant_commitment,
+      // A commitment is only remembered if something actually happened. This matched on the WORDS
+      // "done / opened / saved / fixed" alone, so JARVIS's false claims became durable context and
+      // were replayed to it as fact — including "I have switched over to your YouTube tab", which it
+      // never did. Saying a thing is not evidence of the thing; a tool that took effect is.
+      last_assistant_commitment: (effectiveTools.length && /\b(i will|i'll|done|created|updated|opened|saved|fixed)\b/i.test(assistantMessage))
+        ? normalizeText(assistantMessage).slice(0, 240)
+        : continuity.last_assistant_commitment,
       recent_entities: [...new Set([...entities, ...(continuity.recent_entities || [])])].slice(0, 24),
       recent_pronoun_targets: {
         ...(continuity.recent_pronoun_targets || {}),
@@ -1867,7 +1903,16 @@ function createNeuralVault({ runtimeDir, getProviders = () => ({}), getToolDefin
     for (const result of toolResults || []) {
       recordToolResultEvent(result, turnId);
     }
-    const continuity = updateContinuityFromTurn({ userMessage, assistantMessage, turnId, route, artifacts, toolResults });
+    // Which tools actually CHANGED something this turn. A successful read tells us nothing about
+    // whether a claimed action happened, so observe-only results and results whose own payload says
+    // they stopped short (blocked, awaiting confirmation, cancelled) do not count as evidence.
+    const effectiveTools = (toolResults || []).filter((item) => {
+      if (!item || item.ok !== true) return false;
+      const r = item.result && typeof item.result === "object" ? item.result : {};
+      if (r.completed === false) return false;
+      return !["blocked", "requiresConfirmation", "requiresLogin", "cancelled"].some((flag) => r[flag] === true);
+    });
+    const continuity = updateContinuityFromTurn({ userMessage, assistantMessage, turnId, route, artifacts, toolResults, effectiveTools });
     maybeSuggestMacro(userMessage);
     return { rawEvent: raw, stored, continuity };
   }

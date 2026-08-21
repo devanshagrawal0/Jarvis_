@@ -687,14 +687,20 @@ export function JarvisUI() {
       setMeta(r);
       if (r.artifacts?.[0]) setToastArtifact(r.artifacts[0]);
       if (Array.isArray(r?.pendingConfirmations) && r.pendingConfirmations.length > 0) {
+        // The turn already told us an approval is outstanding, so SOMETHING must be shown. The
+        // re-fetch only exists to pick up the one-time owner challenge the direct surface gets, and
+        // an empty array from it used to win the ternary and wipe the approval away — the reply then
+        // read "write_file is ready and awaiting your confirmation" with nothing on screen to
+        // confirm, and the request simply died there. Same for open_app, calendar and email.
+        let shown: ApprovalRequest[] = r.pendingConfirmations;
         try {
           const pending = await api<{ confirmations?: ApprovalRequest[] }>("/api/confirmations/pending");
-          setApprovals(Array.isArray(pending.confirmations) ? pending.confirmations : r.pendingConfirmations);
+          if (Array.isArray(pending.confirmations) && pending.confirmations.length) shown = pending.confirmations;
         } catch {
           // Remote/paired surfaces may see that approval is required, but only
           // the direct owner surface receives the one-time approval challenge.
-          setApprovals(r.pendingConfirmations);
         }
+        setApprovals(shown);
       }
       // Cortex v4 P1.3 — HUD actions from the backend (open a widget, optionally in focus mode).
       if (Array.isArray(r?.uiActions)) dispatchUiActions(r.uiActions);

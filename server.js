@@ -2392,9 +2392,31 @@ function brainSystemInstruction(mode, recalledMemories = [], runtimeContext = ""
     capabilityTruthInstruction(selectedTools),
     lifeGraphInstruction(),
     runtimeContext || "No additional runtime context was assembled for this turn.",
-    recalledMemories.length
-      ? `Durable memory about the owner and past work — reference material, generally reliable but may be incomplete or dated; prefer it over guessing, and defer to the owner if they correct it: ${recalledMemories.slice(0, 8).map((item) => `[${item.category}] ${item.text}`).join(" | ")}`
-      : "No relevant durable memory was retrieved for this turn.",
+    // Facts and old transcripts are NOT the same thing, and calling both "durable memory ... prefer
+    // it over guessing" taught the model to trust a week-old exchange over the conversation in front
+    // of it. 465 of the 670 stored memories are raw turn records; retrieved on keyword overlap they
+    // surfaced eleven old exchanges about a poem against anything mentioning a file, and the model
+    // treated them as established fact. They are separated here and dated, so an old exchange reads
+    // as an old exchange.
+    ...(() => {
+      const items = recalledMemories.slice(0, 8);
+      const when = (item) => {
+        const t = new Date(item.updatedAt || item.createdAt || 0).getTime();
+        if (!t) return "";
+        const days = Math.floor((Date.now() - t) / 86_400_000);
+        return days <= 0 ? " (today)" : days === 1 ? " (yesterday)" : ` (${days}d ago)`;
+      };
+      const facts = items.filter((item) => item.kind !== "episodic");
+      const past = items.filter((item) => item.kind === "episodic");
+      const lines = [];
+      lines.push(facts.length
+        ? `What you know about the owner — durable facts and learned procedures; prefer these over guessing, and defer to the owner if he corrects one: ${facts.map((item) => `[${item.category}] ${item.text}`).join(" | ")}`
+        : "No durable facts about the owner were retrieved for this turn.");
+      if (past.length) {
+        lines.push(`Earlier exchanges that share wording with this request. These are a RECORD OF WHAT WAS SAID, not facts, and they may be stale or about something else entirely — the conversation in front of you outranks all of them, and never resolve "it"/"this"/"that" to something in here when the current turn names its own subject: ${past.map((item) => `${when(item)} ${item.text}`).join(" | ")}`);
+      }
+      return lines;
+    })(),
   ].join("\n");
 }
 
@@ -2761,6 +2783,33 @@ function summarizeVerifiedToolResults(toolResults) {
   for (const item of failed) lines.push(`${item.tool} failed: ${item.error || "the adapter returned an error"}.`);
   if (!lines.length) return "The request did not produce a verified tool result.";
   return `${summaryPrefix({ effective, confirmations, completed })}\n\n${lines.map((line) => `- ${line}`).join("\n")}`;
+}
+
+// A completion claim has to survive the turn's own tool results.
+//
+// Asked to switch to a YouTube tab and read it, JARVIS ran the screen tools, watched them fail, and
+// answered "I have switched over to your YouTube tab and gathered the visible video titles:" —
+// followed by an invented feed. The owner was looking at a different tab the whole time. Nothing in
+// the loop objected, because the honesty summary only replaces the answer when the model has NO
+// text of its own; a confident paragraph sails past it.
+//
+// The condition is narrow and needs no judgement about intent: a tool FAILED, nothing that could
+// have changed anything SUCCEEDED, and the reply nonetheless says the thing was done. Grounded
+// answers, read-only lookups and honest refusals are all untouched — they either have an effective
+// tool behind them or make no claim.
+const COMPLETION_CLAIM = /\b(?:i(?:'ve| have)\s+(?:successfully\s+)?(?:switched|opened|launched|gathered|read|captured|moved|resized|arranged|closed|sent|saved|written|exported|updated|set|added|scheduled|deleted|renamed)|已)\b/i;
+
+function guardUnearnedClaim(text, toolResults = []) {
+  const body = String(text || "");
+  if (!body.trim() || !COMPLETION_CLAIM.test(body)) return text;
+  const list = Array.isArray(toolResults) ? toolResults : [];
+  const { failed, effective } = classifyToolResults(list, observeOnlyTools());
+  if (!failed.length || effective.length) return text;
+
+  const names = [...new Set(failed.map((item) => String(item.tool || "a tool").replace(/_/g, " ")))].join(", ");
+  const why = String(failed[0]?.error || "").split("\n")[0].slice(0, 160);
+  console.warn(`[honesty] withheld a completion claim: ${names} failed and nothing else took effect`);
+  return `I couldn't do that — ${names} failed${why ? ` (${why})` : ""}, and nothing else went through, so anything I told you about the result would be made up. Say the word and I'll try a different route.`;
 }
 
 function collectSourcesFromEvidence(toolResults = [], groundingMetadata = {}) {
@@ -4570,6 +4619,7 @@ async function callGemini({ prompt, imageData, attachments = [], mode, sessionId
     if (stageSkeletonRaised && !collectUiOutput(toolResults).uiActions.some((a) => a?.type === "stage-render")) {
       onUiActions?.([{ type: "stage-dismiss" }]);
     }
+    finalText = guardUnearnedClaim(finalText, toolResults);
     const sources = collectSourcesFromEvidence(toolResults, groundingMetadata);
     const artifacts = collectArtifactsFromTools(toolResults);
     const uiOutput = collectUiOutput(toolResults);
@@ -4703,7 +4753,16 @@ async function callGemini({ prompt, imageData, attachments = [], mode, sessionId
         // Tier-1 fix: ground ANY fresh-info question (same needsFreshInfo predicate the evidence
         // gate uses — so "did retrieval run" and "does the gate require it" can never disagree),
         // but NOT on action/artifact turns, which need their function tools (grounding strips them).
-        const wantsFresh = (prepared.route.fresh || needsFreshInfo(rawUserMessage(promptStr))) && !prepared.route.action && !prepared.route.workComposer;
+        // Native grounding and function tools are mutually exclusive — turning grounding on strips
+        // every declaration, which is why action and artifact turns are already excluded. A turn
+        // that means to DRAW something belongs in the same exclusion: "put apple's price history up"
+        // selected stage_render and apex_price_history, had both discarded before the model saw
+        // them, and came back "I looked for a live source but didn't get a usable result" — it was
+        // never able to render anything, whatever it found. Nothing is lost by staying on function
+        // tools, because web_research performs the same grounded search and returns its sources.
+        const wantsSurface = (prepared.selectedTools || []).some((tool) => String(tool?.name || "") === "stage_render");
+        const wantsFresh = (prepared.route.fresh || needsFreshInfo(rawUserMessage(promptStr)))
+          && !prepared.route.action && !prepared.route.workComposer && !wantsSurface;
         const useGrounding = !useCompute && !useMaps && Boolean(wantsFresh && !prepared.route.deepResearch);
         const sendFns = !useGrounding && !useCompute && !useMaps && functionDeclarations.length > 0;
         // Set by the execution-lane router when the prompt names a commit verb and a surface. It is
@@ -4982,6 +5041,7 @@ async function callGemini({ prompt, imageData, attachments = [], mode, sessionId
     if (stageSkeletonRaised && !collectUiOutput(toolResults).uiActions.some((a) => a?.type === "stage-render")) {
       onUiActions?.([{ type: "stage-dismiss" }]);
     }
+    finalText = guardUnearnedClaim(finalText, toolResults);
     const sources = collectSourcesFromEvidence(toolResults, groundingMetadata);
     const artifacts = collectArtifactsFromTools(toolResults);
     const uiOutput = collectUiOutput(toolResults);
@@ -11418,7 +11478,14 @@ ${entryText}`;
     const clientHistory = Array.isArray(data.history)
       ? data.history.slice(-16).map((h) => ({ role: (h.role === "model" || h.role === "assistant") ? "model" : "user", text: String(h.text || h.content || "").slice(0, 4000) })).filter((h) => h.text)
       : null;
-    const history = (clientHistory && clientHistory.length) ? clientHistory : loadConversation();
+    // The fallback is a WINDOW, not the whole log. The client sends no `history` field at all, so
+    // every turn was falling back to loadConversation() and shipping all 500 stored turns — eight
+    // days, ~13k tokens, on every message. Two things came out of that: the oldest concrete object
+    // in the blob became the referent for anything vague, which is why "open it", "do the thing",
+    // "thanks" and "where is this file" all resolved to a poem written on 13 August; and 29 old
+    // refusals rode along as examples, so the model kept declining things it could do. The same
+    // sixteen-turn window the client path uses applies here.
+    const history = (clientHistory && clientHistory.length) ? clientHistory : loadConversation().slice(-16);
     res.writeHead(200, {
       "content-type": "application/x-ndjson; charset=utf-8",
       "cache-control": "no-store",
