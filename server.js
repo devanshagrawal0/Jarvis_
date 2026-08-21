@@ -2763,53 +2763,6 @@ function summarizeVerifiedToolResults(toolResults) {
   return `${summaryPrefix({ effective, confirmations, completed })}\n\n${lines.map((line) => `- ${line}`).join("\n")}`;
 }
 
-// Prose gets the same treatment as a rendered surface: a figure the owner is given has to have come
-// from somewhere.
-//
-// The Stage's fabrication gate only sees blocks, so a made-up number written as a sentence went
-// straight through. Asked "whats bitcoin doing" with no BTC bars stored, JARVIS called the price
-// tool, watched it fail, and answered "$72,263, up about 10.3%" — then "$71,523" on the next run,
-// a different invention each time. Telling the model not to do that did not work; the tool's own
-// error already said "do NOT answer from memory" and it did anyway.
-//
-// So this is decided in code, on a condition that needs no judgement about what the owner meant:
-// a data tool was CALLED and FAILED this turn, and the answer states figures that appear in none of
-// the tools that succeeded. That combination has one explanation — the gap was filled from memory.
-// Nothing here fires on a turn that fetched nothing (arithmetic, general knowledge), or on figures
-// that trace to a tool that worked.
-function guardFabricatedProse(text, toolResults = []) {
-  const body = String(text || "");
-  if (!body.trim()) return text;
-  // The trigger is a MARKET QUOTE — a currency amount paired with a move ("up 10.3%", "+4.04%",
-  // "$341.85 from $328.58"). That pairing is what makes a sentence a price claim rather than a
-  // mention of money, which is what keeps "what's 20% of $50" and "the iPhone launched at $499"
-  // out of it: they carry a figure but never assert a move.
-  const quotesAMove = /[$£€]\s?\d/.test(body) && /\b\d+(\.\d+)?\s?%|\bup\b|\bdown\b|\brally|\bsurg|\bfell\b|\bgained\b|\blost\b/i.test(body);
-  if (!quotesAMove) return text;
-
-  const list = Array.isArray(toolResults) ? toolResults : [];
-  const succeeded = list.filter((item) => item && item.ok);
-  const failed = list.filter((item) => item && item.ok === false && item.status !== "confirmation_required");
-
-  // Nothing ran at all. The model had the price tool in front of it, declined to call it, and
-  // quoted from memory anyway — "$72,263, up 10.3%", then "$71,523" on the next run, then "$71,750".
-  // A different number every time is the tell.
-  if (!succeeded.length && !failed.length) {
-    console.warn("[honesty] withheld a market quote produced with no tool call at all");
-    return "I'd be quoting that from memory rather than from data, so I won't. I only have stored price history for a fixed set of tickers — ask me about one of those and I'll pull the real bars, or ask again once a live source is connected.";
-  }
-
-  // If ANY tool came back with data, the answer stands. Prose legitimately derives figures the
-  // payload never contains — "up 4.04%" is computed from two closes that are both in it — and
-  // auditing prose number-by-number withholds correct answers, which is a worse failure than the
-  // one being prevented. The narrow case is what gets caught: a quote with nothing behind it.
-  if (succeeded.length) return text;
-
-  const missing = [...new Set(failed.map((item) => String(item.tool || "a data tool")))].join(", ") || "the lookup";
-  console.warn(`[honesty] withheld a market quote containing unfetched figures after ${missing} failed`);
-  return `I couldn't fetch that — ${missing} came back with nothing for it, and I'm not going to quote you a number from memory as though it were live. Ask me again in a moment, or name a ticker I hold history for.`;
-}
-
 function collectSourcesFromEvidence(toolResults = [], groundingMetadata = {}) {
   const toolSources = toolResults
     .flatMap((item) => Array.isArray(item.result?.sources) ? item.result.sources : [])
@@ -4608,7 +4561,6 @@ async function callGemini({ prompt, imageData, attachments = [], mode, sessionId
       lastToolCall: toolResults.at(-1)?.tool || mode || "chat",
       latencyMs: Date.now() - started,
     });
-    finalText = guardFabricatedProse(finalText, toolResults);
     const sources = collectSourcesFromEvidence(toolResults, groundingMetadata);
     const artifacts = collectArtifactsFromTools(toolResults);
     const uiOutput = collectUiOutput(toolResults);
@@ -4998,7 +4950,6 @@ async function callGemini({ prompt, imageData, attachments = [], mode, sessionId
       lastToolCall: toolResults.at(-1)?.tool || mode || "chat",
       latencyMs: Date.now() - started,
     });
-    finalText = guardFabricatedProse(finalText, toolResults);
     const sources = collectSourcesFromEvidence(toolResults, groundingMetadata);
     const artifacts = collectArtifactsFromTools(toolResults);
     const uiOutput = collectUiOutput(toolResults);
