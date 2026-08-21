@@ -2780,7 +2780,20 @@ function summarizeVerifiedToolResults(toolResults) {
       ? `${reason} is prepared and awaiting your confirmation.`
       : `${item.tool} is ready and awaiting your confirmation.`);
   }
-  for (const item of failed) lines.push(`${item.tool} failed: ${item.error || "the adapter returned an error"}.`);
+  // A failure is reported in a sentence, not by pasting the command that failed. `error` on a
+  // PowerShell-backed tool carries the ENTIRE script, so a blocked screen capture filled the reply
+  // with `Add-Type -TypeDefinition 'using System;using System.Runtime.InteropServices;...` and
+  // several hundred characters of C#. The owner cannot act on that and it buries whatever else the
+  // turn did — in one case an approval dialog waiting behind it.
+  for (const item of failed) {
+    const raw = String(item.error || "").replace(/\s+/g, " ").trim();
+    // Windows surfaces "Command failed: <the whole script>"; the useful part is the reason, which
+    // is what follows the script, so prefer a recognisable cause over the first 200 characters.
+    const cause = /command failed/i.test(raw)
+      ? (raw.match(/\b(access is denied|is not recognized|cannot find|denied by|blocked|timed out|permission)\b[^.]*/i)?.[0] || "the local command was blocked or failed to run")
+      : raw;
+    lines.push(`${item.tool} failed: ${(cause || "the adapter returned an error").slice(0, 180)}.`);
+  }
   if (!lines.length) return "The request did not produce a verified tool result.";
   return `${summaryPrefix({ effective, confirmations, completed })}\n\n${lines.map((line) => `- ${line}`).join("\n")}`;
 }
