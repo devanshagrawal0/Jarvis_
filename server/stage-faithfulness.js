@@ -23,25 +23,28 @@ function numbersIn(str) {
   return out;
 }
 
-// Collect the numeric, data-bearing values from the rendered blocks, with their location.
+// The values a surface presents AS MEASUREMENTS: a stat card's figure and a chart's series.
+//
+// Prose is not audited, and neither are derived figures, because auditing them punishes correct
+// work. Every number in a sentence went through here originally, and the gate then rejected "29"
+// out of "bottomed on Jul 29" — a date — and "2.07" out of a delta the model had correctly computed
+// from two closes that were both in the payload. Three round-trips later the model had stripped its
+// own accurate content to get past me: "dropping the calculated delta metrics", "removing the
+// literal number 29". A gate that makes the answer worse is not protecting anyone.
+//
+// What stays gated is the claim that cannot be derived and cannot be a date: the value on a stat
+// card and the points on a line. Those are laid out as instrument readings, and inventing one is
+// the failure actually worth blocking.
 function dataValues(blocks) {
   const vals = [];
   for (const b of Array.isArray(blocks) ? blocks : []) {
     if (!b || typeof b !== "object") continue;
     if (b.type === "stat") {
       if (b.value) vals.push({ where: `stat "${b.label || ""}" value`, text: String(b.value) });
-      if (b.delta) vals.push({ where: `stat "${b.label || ""}" delta`, text: String(b.delta) });
-    } else if (b.type === "list") {
-      (Array.isArray(b.items) ? b.items : []).forEach((it, i) => vals.push({ where: `list item ${i + 1}`, text: String(it) }));
     } else if (b.type === "chart") {
-      // A chart is the most persuasive way there is to state a number, so its series is audited
-      // exactly like a stat card. Without this, a fabricated price becomes invisible to the gate the
-      // moment it is drawn as a line instead of written as a figure.
       (Array.isArray(b.points) ? b.points : []).forEach((p, i) => {
         if (p && Number.isFinite(Number(p.v))) vals.push({ where: `chart "${b.label || ""}" point ${i + 1}`, text: String(p.v) });
       });
-    } else if (b.type === "text" || b.type === "heading") {
-      if (b.text) vals.push({ where: b.type, text: String(b.text) });
     }
   }
   return vals;

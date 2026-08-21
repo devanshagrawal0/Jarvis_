@@ -771,7 +771,20 @@ function createCapabilityEngine({
     // `stage_show` is deliberately NOT declared — see the merge note beside the definitions. It has
     // one job (a prose note) that `stage_render` covers with a single 'text' block, and while both
     // were on the menu it won every panel request on description wording alone.
-    { name: "stage_render", description: description("stage_render"), parameters: { type: "OBJECT", properties: {
+    // W3d — think before drawing, in ONE call.
+    //
+    // A schema constrains the model while it is still working out what it wants to say, and the
+    // measured cost of that is large: reasoning-first vs straight-to-structure is 77.9% against
+    // 48.9% on GSM8K (arXiv 2601.07525), for the price of a handful of tokens. The master plan
+    // called for a separate planning call to dodge this, citing 2024 work; the newer result is that
+    // a second call is both slower and worse than simply letting the model speak first inside the
+    // same one. So `plan` is a scratch field it fills before it lays anything out.
+    //
+    // `propertyOrdering` is what makes that real. Gemini does NOT follow the order properties are
+    // declared in — without this it may emit `blocks` first and the plan afterwards, which is the
+    // exact failure being avoided, with the cost and none of the benefit.
+    { name: "stage_render", description: description("stage_render"), parameters: { type: "OBJECT", propertyOrdering: ["plan", "title", "blocks"], properties: {
+      plan: { type: "STRING", description: "FILL THIS IN FIRST, before the blocks. One line, for your own working out: what does this surface need to show, in what order, and which figures come from which tool result? e.g. 'three price cards from apex_price_history, then the daily close chart, then one line on the move'. The owner never sees it." },
       title: { type: "STRING", description: "Short title for the Stage panel." },
       blocks: { type: "ARRAY", description: "Ordered blocks to render top-to-bottom.", items: { type: "OBJECT", properties: {
         type: { type: "STRING", description: "One of: heading, text, stat, list, chart, divider." },
@@ -2660,7 +2673,22 @@ function createCapabilityEngine({
           422,
         );
       }
-      return { ok: true, shown: true, uiAction: { type: "stage-render", data: { title, blocks } }, message: `Rendered a ${blocks.length}-block surface on your screen, sir.` };
+      // W3e — provenance rides on the surface.
+      //
+      // The gate above guarantees every figure traces to something fetched, and until now that
+      // guarantee was invisible: the owner saw "$216.45" and had to take it on trust. The panel now
+      // names what fed it. Derived from the turn's actual tool results, never from anything the
+      // model asserts about its own sources — a claimed citation is worth nothing.
+      const provenance = {
+        tools: [...new Set(fetched.map((item) => String(item.tool)))],
+        sources: fetched
+          .flatMap((item) => (Array.isArray(item.result?.sources) ? item.result.sources : []))
+          .filter((s) => s && s.url)
+          .map((s) => ({ title: String(s.title || s.url).slice(0, 60), url: String(s.url) }))
+          .slice(0, 4),
+        at: new Date().toISOString(),
+      };
+      return { ok: true, shown: true, uiAction: { type: "stage-render", data: { title, blocks, provenance } }, message: `Rendered a ${blocks.length}-block surface on your screen, sir.` };
     },
     calendar_list_events: async (args) => {
       if (!providers?.google?.listCalendarEvents) throw errorWithStatus("Google Calendar isn't connected.", 412);

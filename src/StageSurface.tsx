@@ -17,7 +17,8 @@ type Block =
   | { type: "calendar"; events?: unknown[]; upcoming?: unknown[]; dateLabel?: string }
   | { type: "chart"; points?: { t: string; v: number }[]; kind?: string; label?: string }
   | { type: "divider" };
-type StageState = { title: string; content?: string; blocks?: Block[]; loading?: string; key: number } | null;
+type Provenance = { tools?: string[]; sources?: { title: string; url: string }[] };
+type StageState = { title: string; content?: string; blocks?: Block[]; loading?: string; provenance?: Provenance; key: number } | null;
 type Rect = { x: number; y: number; w: number; h: number };
 
 const MIN_W = 380, MIN_H = 240;
@@ -120,6 +121,12 @@ const STYLE = `
   box-shadow: inset 0 10px 18px -18px rgba(0,0,0,.6); }
 .jr-stage-body::-webkit-scrollbar { width: 8px; }
 .jr-stage-body::-webkit-scrollbar-thumb { background: rgba(96,204,255,.28); border-radius: 8px; }
+/* provenance — a receipt line, deliberately quieter than anything it vouches for */
+.jr-stage-prov { flex: none; display: flex; align-items: center; gap: 7px; padding: 5px 20px 4px 22px; }
+.jr-stage-prov-dot { width: 5px; height: 5px; border-radius: 50%; flex: none; background: #4fd4a0;
+  box-shadow: 0 0 6px rgba(79,212,160,.7); }
+.jr-stage-prov-txt { font-size: 9.5px; letter-spacing: .08em; text-transform: uppercase; color: rgba(140,175,200,.72);
+  font-family: ui-monospace, "SF Mono", Consolas, monospace; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 /* footer meta */
 .jr-stage-foot { flex: none; display: flex; align-items: center; justify-content: space-between; padding: 5px 20px 6px 22px; gap: 12px; }
 .jr-stage-meta { font-size: 9px; letter-spacing: .06em; color: rgba(96,182,218,.8); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
@@ -265,11 +272,25 @@ export function StageSurface() {
         const title = d.data.title || "Jarvis";
         stamp(title);
         setStage({ title, content: d.data.content, key: Date.now() });
-        setRect((prev) => (prev && rectKind.current === "note" ? prev : defaultRect("note")));
+        // Read the PREVIOUS kind before overwriting it: a functional setState runs during render,
+        // after this line, so a ref compared inside the updater has already been mutated and the
+        // comparison can never fail. That is how a chart surface following a skeleton kept the
+        // skeleton's narrow note-width box — the switch to a wide box looked like it was happening
+        // and never did.
+        const prevKindShow = rectKind.current;
         rectKind.current = "note";
+        setRect((prev) => (prev && prevKindShow === "note" ? prev : defaultRect("note")));
+      }
+      // The server puts a skeleton up when a render begins and takes it down if the turn ends
+      // without producing one. Only a STILL-LOADING frame is cleared — a surface that has real
+      // blocks in it is the owner's, and a late dismiss must never pull it out from under him.
+      if (d?.type === "stage-dismiss") {
+        setStage((prev) => (prev && prev.loading && !prev.blocks?.length ? null : prev));
+        return;
       }
       if (d?.type === "stage-render") {
         const blocks = Array.isArray(d.data?.blocks) ? d.data.blocks : [];
+        const provenance = (d.data as { provenance?: Provenance } | undefined)?.provenance;
         const loading = typeof d.data?.loading === "string" ? d.data.loading : "";
         if (!blocks.length && !loading) return; // nothing to show
         userSized.current = false;
@@ -279,15 +300,16 @@ export function StageSurface() {
         // morphs in place instead of remounting/flickering between phases.
         setStage((prev) => {
           const key = prev && prev.loading ? prev.key : Date.now();
-          return blocks.length ? { title, blocks, key } : { title, loading, key };
+          return blocks.length ? { title, blocks, provenance, key } : { title, loading, key };
         });
         // A calendar surface and a stat surface want completely different boxes. `prev ?? …` kept
         // whichever box the FIRST surface of the session happened to need and handed it to every
         // surface after it, so a calendar could land in a note-sized panel and never fit. Keep the
         // box only while the kind of surface is unchanged; when it changes, take the right default.
         const kind = surfaceKind(blocks);
-        setRect((prev) => (prev && rectKind.current === kind ? prev : defaultRect(kind)));
+        const prevKind = rectKind.current;   // see the note above — must be read before the mutation
         rectKind.current = kind;
+        setRect((prev) => (prev && prevKind === kind ? prev : defaultRect(kind)));
       }
     };
     const onClose = () => setStage(null);
@@ -376,6 +398,22 @@ export function StageSurface() {
   const stop = (e: React.PointerEvent) => e.stopPropagation();
 
   // The calendar renders bare — no panel chrome, since the room provides its own HUD frame + header.
+  // Named web sources read better than tool ids, so they win when both exist; otherwise the tool
+  // name is de-underscored into something a person can read. No provenance means no line at all —
+  // an empty "Sources:" would imply the surface had been checked when it had not.
+  const sourceLine = (() => {
+    const p = stage.provenance;
+    if (!p) return null;
+    const sites = [...new Set((p.sources || []).map((s) => {
+      try { return new URL(s.url).hostname.replace(/^www\./, ""); } catch { return s.title; }
+    }))].filter(Boolean);
+    const tools = (p.tools || []).map((t) => t.replace(/_/g, " "));
+    const parts = sites.length ? sites : tools;
+    if (!parts.length) return null;
+    const full = `Figures from ${parts.join(", ")}`;
+    return { full, short: parts.length > 3 ? `${parts.slice(0, 3).join(" · ")} +${parts.length - 3}` : parts.join(" · ") };
+  })();
+
   if (isCalendar(stage.blocks)) {
     return (
       <div className="jr-stage deploy jr-stage-bare" key={stage.key} role="dialog" aria-label={stage.title}
@@ -412,6 +450,19 @@ export function StageSurface() {
             : stage.blocks ? <SurfaceRenderer surface={blocksToSurface(stage.blocks)} /> : <JarvisMarkdown text={stage.content || ""} />}
         </div>
       </div>
+
+      {/* W3e — where the figures came from. The gate guarantees every value on this surface traces
+          to something fetched this turn; without saying so, the owner has to take that on trust.
+          Kept to one quiet line: it is a receipt, not a headline. */}
+      {sourceLine ? (
+        <>
+          <div className="jr-stage-div" />
+          <div className="jr-stage-prov" title={sourceLine.full}>
+            <span className="jr-stage-prov-dot" />
+            <span className="jr-stage-prov-txt">{sourceLine.short}</span>
+          </div>
+        </>
+      ) : null}
 
       <div className="jr-stage-div" />
 

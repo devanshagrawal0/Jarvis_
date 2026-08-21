@@ -3558,7 +3558,10 @@ async function fetchWeatherContext(loc) {
   return parts.join(" ");
 }
 
-async function callGemini({ prompt, imageData, attachments = [], mode, sessionId = "", deviceId = "", source = "", history = [], strength, deepResearch, clientContext = null, focusedWidget = "", openWidgets = null, onTextDelta, onProgress, onEvent, forceModel, forceThinkingLevel }) {
+async function callGemini({ prompt, imageData, attachments = [], mode, sessionId = "", deviceId = "", source = "", history = [], strength, deepResearch, clientContext = null, focusedWidget = "", openWidgets = null, onTextDelta, onProgress, onEvent, onUiActions, forceModel, forceThinkingLevel }) {
+  // Raised when a Stage skeleton has been put on screen mid-turn, so the end of the turn knows it
+  // owes the owner either a real surface or the removal of the frame.
+  let stageSkeletonRaised = false;
   // Feed the browser's real timezone / geolocation for THIS turn so weather, "near me",
   // and local-time answers use where the owner actually is, not the seeded home.
   if (userContext && clientContext) { try { userContext.setClientSignal(clientContext); } catch { /* bad payload — keep seeded location */ } }
@@ -4561,6 +4564,12 @@ async function callGemini({ prompt, imageData, attachments = [], mode, sessionId
       lastToolCall: toolResults.at(-1)?.tool || mode || "chat",
       latencyMs: Date.now() - started,
     });
+    // The skeleton's debt is settled here, once, whatever happened. If a surface was actually
+    // produced it replaces the frame on its own; if every attempt was rejected or the model gave up,
+    // the frame comes down rather than sitting on the owner's screen claiming to still be building.
+    if (stageSkeletonRaised && !collectUiOutput(toolResults).uiActions.some((a) => a?.type === "stage-render")) {
+      onUiActions?.([{ type: "stage-dismiss" }]);
+    }
     const sources = collectSourcesFromEvidence(toolResults, groundingMetadata);
     const artifacts = collectArtifactsFromTools(toolResults);
     const uiOutput = collectUiOutput(toolResults);
@@ -4831,6 +4840,23 @@ async function callGemini({ prompt, imageData, attachments = [], mode, sessionId
       const responseParts = [];
       for (const functionCall of functionCalls) {
         onEvent?.({ kind: "tool", status: "running", label: functionCall.name.replace(/_/g, " "), detail: "Tool started", tool: functionCall.name });
+        // W3d — the panel appears the moment we know one is coming, instead of after the turn ends.
+        //
+        // A surface can take several seconds to arrive even once the model has decided on it: the
+        // faithfulness gate can reject a render and send it back to be redrawn, and that round trip
+        // is currently invisible — the owner watches an empty screen and assumes nothing happened.
+        // The frame goes up now, carrying the title the model already chose, and the real blocks
+        // replace it in place.
+        //
+        // The skeleton is only ever raised here, where a render is certain, and it is ALWAYS taken
+        // down at the end of the turn (see the dismiss below). The previous attempt at this raised
+        // one speculatively and had no path to clear it, so a turn that changed its mind left
+        // "Building your panel" on screen permanently. Never again: put it up only when it is
+        // certain, and own its removal.
+        if (functionCall.name === "stage_render") {
+          stageSkeletonRaised = true;
+          onUiActions?.([{ type: "stage-render", data: { title: String(functionCall.args?.title || "").trim().slice(0, 120) || "Building…", blocks: [], loading: "Composing the surface…" } }]);
+        }
         // 2.1 — duplicate suppression: if the model re-requests the exact same tool+args,
         // return the prior result instead of re-executing (prevents loops / wasted calls).
         const dedupeKey = `${functionCall.name}:${JSON.stringify(functionCall.args || {})}`;
@@ -4950,6 +4976,12 @@ async function callGemini({ prompt, imageData, attachments = [], mode, sessionId
       lastToolCall: toolResults.at(-1)?.tool || mode || "chat",
       latencyMs: Date.now() - started,
     });
+    // The skeleton's debt is settled here, once, whatever happened. If a surface was actually
+    // produced it replaces the frame on its own; if every attempt was rejected or the model gave up,
+    // the frame comes down rather than sitting on the owner's screen claiming to still be building.
+    if (stageSkeletonRaised && !collectUiOutput(toolResults).uiActions.some((a) => a?.type === "stage-render")) {
+      onUiActions?.([{ type: "stage-dismiss" }]);
+    }
     const sources = collectSourcesFromEvidence(toolResults, groundingMetadata);
     const artifacts = collectArtifactsFromTools(toolResults);
     const uiOutput = collectUiOutput(toolResults);
@@ -11542,6 +11574,9 @@ ${entryText}`;
       forceThinkingLevel: cortexExecution.thinkingLevel,
       onProgress: (ev) => sendEvent({ type: "progress", phase: ev.phase, message: ev.message }), // Cortex v4 P1.2 — live research timeline
       onEvent: (event) => sendEvent({ type: "event", event }),
+      // Mid-turn surface updates: the skeleton going up when a render starts, and coming down if
+      // the turn ends without one. The client already applies `ui` envelopes as they arrive.
+      onUiActions: (uiActions) => sendEvent({ type: "ui", uiActions }),
       onTextDelta: (text) => {
         streamedText += text;
         sendEvent({ type: "delta", text });
