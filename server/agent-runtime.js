@@ -321,10 +321,16 @@ function createAgentRuntime({ getSettings, toolGateway, codeKnowledge, memorySto
               ? `${historyTail}\n${prompt}`
               : prompt;
     // T4c: intent-aware tool limit — deep/complex gets 12, browser/screen/mesh gets 10, action 8, else 5
+    // The floor is 8, not 5. Five was too few for any request that needs two specific tools to
+    // cooperate, which is most of the interesting ones: "graph tesla's closes for the past three
+    // weeks" has to fetch the series AND draw it, and with five slots the word "graph" pulled in
+    // pc_graph_search and pc_graph_rebuild on a name match and stage_render never made the list —
+    // so JARVIS fetched real prices and printed them as a text table. The cost of three more
+    // declarations is a few hundred tokens; the cost of being one slot short is the feature.
     const toolLimit = route.complexity === "deep" ? 12
       : (browserTask || screenTask || meshTask) ? 10
         : (route.action || route.agentSwarm || continuationAction) ? 8
-          : 5;
+          : 8;
     // Prefer the async entry point (it can consult the semantic index); fall back to the
     // synchronous one for any gateway/stub that predates it. `await` on a plain array is a no-op,
     // so existing test stubs returning arrays keep working untouched.

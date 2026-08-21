@@ -281,9 +281,16 @@ function createToolGateway({ capabilityEngine, moduleRegistry, codeKnowledge, to
       || /https?:\/\/[^\s)]+/i.test(prompt)) {
       alwaysUseful.push("research_v2", "web_research_deep", "url_read", "web_research");
     }
-    if (/\b(open|show|focus|expand|close|populate|render|display)\b.*\b(widgets?|panels?|cards?|hud|modules?)\b/i.test(prompt)) {
-      alwaysUseful.push("ui_open_widget", "ui_focus_widget", "ui_close_widget", "ui_populate", "ui_render_card");
-    }
+    // The widget openers are NOT force-fed here any more.
+    //
+    // This pushed five ui_* tools into `alwaysUseful`, which is never truncated, so on a turn with a
+    // budget of five they took every slot. "show me amd over the last month on the panel" was
+    // offered ui_open_widget, ui_focus_widget, ui_close_widget, ui_populate and ui_render_card, and
+    // nothing else — no stage_render to draw the chart with and no price tool to fill it. JARVIS
+    // opened the Kalshi widget and said it had no equity charting widget, which was true only
+    // because the tool that draws one had been crowded off its own list by a keyword match on the
+    // word "panel". They are found the same way every other tool is now: by what they say they do.
+
     // W1: widget command & control — move / resize / arrange open windows.
     if (/\b(move|drag|put|place|shift|resize|shrink|grow|enlarge|expand|collapse|maximi[sz]e|minimi[sz]e|bigger|smaller|full ?screen|fullscreen|focus)\b.*\b(widgets?|panels?|windows?|cards?|modules?|it|this|that)\b/i.test(prompt)
       || /\b(widgets?|panels?|windows?|modules?)\b.*\b(top[- ]?(?:left|right)|bottom[- ]?(?:left|right)|left|right|center|corner|smaller|bigger|full ?screen)\b/i.test(prompt)
