@@ -147,3 +147,63 @@ The same vague prompts, run against the live server, must resolve to the current
 an eight-day-old artifact: "where is this file", "open it", "do it again", "that was interesting
 tell me more", "thanks that was helpful". Plus no regression on the things that work now —
 charts, general knowledge, and genuine follow-ups where the referent really is the previous turn.
+
+
+---
+
+## 7. Result — measured after the fix
+
+Run against the live server, transient so none of it entered the owner's history (verified: 500
+turns before, 500 after).
+
+```
+PASS [chart]   chart nvidia over the last month
+PASS [chart]   graph tesla's closes for the past three weeks
+PASS [chart]   put apple's price history up
+PASS [chart]   plot amd for the last 30 days
+PASS [know]    who wrote hamlet / capital of japan / 17 times 23
+PASS [live]    hows btc doing today / whats the weather like
+PASS [vague]   where is this file
+PASS [vague]   open it
+PASS [vague]   do it again
+PASS [vague]   that was interesting tell me more
+PASS [vague]   thanks that was helpful
+PASS [approve] launch the chatgpt desktop app
+PASS [approve] write today's conversation out to a text file
+PASS [honest]  switch my tab to youtube and read all the videos
+PASS [noise]   hi
+```
+
+The five `vague` prompts are the ones that returned the poem for eight days. None of them does now,
+and "tell me more" picks up the most recent subject instead.
+
+The `honest` case is the YouTube fabrication. It used to answer "I have switched over to your
+YouTube tab and gathered the visible video titles" followed by an invented feed, while the owner was
+looking at a different tab. It now switches the tab for real and reports that the page is empty.
+
+Continuity released itself on the first turn after the change: poem references 11 -> 1,
+`active_artifact` empty, `it` pointing at the live subject.
+
+Retrieved-memory age, measured on the real store:
+
+| prompt | before | after |
+|---|---|---|
+| "open it" | 21.4 days | 1.2 days |
+| "do it again" | 8.5 days | 0.2 days |
+| "send it to the right person" | 7.5 days | 2.5 days |
+
+Side effects of clearing the reminder-doubling damage:
+
+| | before | after |
+|---|---|---|
+| atlas.sqlite | 349 MB | 0.1 MB |
+| /api/atlas/today | ~8s at worst | 0.44-0.82s |
+| /api/atlas/notes | 1.1s | 0.017s |
+
+## 8. Not fixed
+
+- **Screen capture is intermittently blocked** by local security policy — it succeeded three times
+  in four during testing. The failure is now reported in a sentence rather than by pasting the
+  PowerShell source, but the block itself is environmental and not something the code can remove.
+- **The calendar widget still scales like an image** (`StageCalendar.tsx`, a fixed 1180x740 canvas
+  under a CSS transform). The owner said explicitly to leave it alone, so it was left alone.
