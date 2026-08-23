@@ -363,7 +363,22 @@ export function StageSurface() {
       const maxBottom = Math.max(220, cbTop - 14);
       setRect((r) => {
         const base = r ?? defaultRect();
-        const wanted = content.offsetHeight + CHROME;
+        // Measure the SCROLLING BOX, not the div inside it, and work out the chrome instead of
+        // assuming it.
+        //
+        // `content.offsetHeight` is the inner div's own height. It leaves out the padding of the
+        // scroll container around it — 13px top and 14px bottom here — so every panel came out
+        // exactly that much too short and sat permanently overflowing by a sliver. Measured on the
+        // real page with 15 open tasks: content 339, body clientHeight 345, body scrollHeight 366,
+        // panel 445. It had 625px of room available and used 445, then clipped the last line anyway.
+        //
+        // scrollHeight is the measurement meant for this: it reports the full content height
+        // including padding, whether or not any of it is currently scrolled out of sight. The chrome
+        // (title bar, divider, grip) is the difference between the panel and its body right now,
+        // which is exact and cannot drift from a hardcoded constant the way CHROME did.
+        const scroller = content.parentElement;
+        const chromeNow = scroller ? Math.max(0, base.h - scroller.clientHeight) : CHROME;
+        const wanted = scroller ? scroller.scrollHeight + chromeNow : content.offsetHeight + CHROME;
         const maxH = maxBottom - base.y;               // room from the panel's top down to the bar
         const h = clamp(wanted, MIN_H, Math.max(MIN_H, maxH));
         let y = base.y;

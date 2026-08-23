@@ -10,7 +10,19 @@ const { fetchJson, fetchText, fetchBuffer } = require("./apex-fetch");
 /* ── Crypto — Binance public REST, with Coinbase fallback (both keyless).
    Binance geo-blocks some IPs (HTTP 451); Coinbase Exchange is the fallback
    so crypto works regardless of region. Same normalized shape either way. ── */
-const cbProduct = (sym) => sym.replace(/USDT$|USD$/i, "") + "-USD"; // BTCUSDT → BTC-USD
+// Binance style in, Coinbase style out — and it has to survive being handed Coinbase style already.
+//
+// This was `sym.replace(/USDT$|USD$/i, "") + "-USD"`, which assumed the input was always
+// "BTCUSDT". Given "BTC-USD" it stripped the trailing USD to leave "BTC-", appended "-USD", and
+// asked Coinbase for BTC--USD. Measured 2026-08-22: HTTP 404, zero bars stored, and Jarvis
+// answering "I do not have price data for BTC-USD" — a whole asset class missing because of one
+// double hyphen. It was honest about not knowing, which is why it never looked like a bug.
+const cbProduct = (sym) => {
+  const raw = String(sym || "").toUpperCase().trim();
+  if (/^[A-Z0-9]{2,10}-[A-Z]{3,4}$/.test(raw)) return raw;      // already a Coinbase product id
+  const base = raw.replace(/[-_]?(USDT|USDC|USD)$/, "");
+  return base ? `${base}-USD` : raw;
+};
 async function coinbaseTicker(symbol) {
   const p = cbProduct(symbol);
   const [t, s] = await Promise.all([
@@ -60,8 +72,40 @@ function _parseChartResult(r) {
   if (!r) return { meta: null, bars: [] };
   const ts = r.timestamp || [], q = (r.indicators && r.indicators.quote && r.indicators.quote[0]) || {};
   const adj = (r.indicators && r.indicators.adjclose && r.indicators.adjclose[0] && r.indicators.adjclose[0].adjclose) || null;
-  const bars = ts.map((t, i) => ({ t: new Date(t * 1000).toISOString(), o: q.open && q.open[i], h: q.high && q.high[i], l: q.low && q.low[i], c: q.close && q.close[i], adjc: adj && adj[i] != null ? adj[i] : (q.close && q.close[i]), v: q.volume && q.volume[i] })).filter((b) => b.c != null);
-  return { meta: { symbol: r.meta && r.meta.symbol, price: r.meta && r.meta.regularMarketPrice, prevClose: r.meta && r.meta.chartPreviousClose, currency: r.meta && r.meta.currency }, bars };
+  // The last bar of an open session is TODAY SO FAR, not a finished day.
+  //
+  // Yahoo appends the session in progress to the daily series, and it was being stored like any
+  // other bar. Measured 2026-08-21: the cached "2026-08-20" bar held c=316.60 on 15.2M shares while
+  // the real close that day was 311.30 on 40.9M — a mid-session snapshot taken while the market was
+  // open, written once and never revisited, so a half-finished day became the permanent record of
+  // that day. Every ticker showed it (newest bar carried 0.24-0.72x the usual volume), and the true
+  // close appeared nowhere in the table. That is the whole of "Apple's price disagrees with itself":
+  // the live quote was right and the stored bar was a fossil.
+  //
+  // `regular.end` comes from the provider, so this asks the exchange when its own session ends
+  // rather than hardcoding market hours that would be wrong on a half-day or a holiday.
+  const regular = r.meta && r.meta.currentTradingPeriod && r.meta.currentTradingPeriod.regular;
+  const sessionOpenNow = Boolean(regular && Date.now() < regular.end * 1000);
+  const bars = ts.map((t, i) => ({
+    t: new Date(t * 1000).toISOString(),
+    o: q.open && q.open[i], h: q.high && q.high[i], l: q.low && q.low[i], c: q.close && q.close[i],
+    adjc: adj && adj[i] != null ? adj[i] : (q.close && q.close[i]),
+    v: q.volume && q.volume[i],
+    // True only for a bar inside a session that has not closed yet. Callers may SHOW it (a chart of
+    // today is legitimate); they must not persist it as the final word on that day.
+    inProgress: Boolean(sessionOpenNow && regular && t >= regular.start),
+  })).filter((b) => b.c != null);
+  return {
+    meta: {
+      symbol: r.meta && r.meta.symbol,
+      price: r.meta && r.meta.regularMarketPrice,
+      prevClose: r.meta && r.meta.chartPreviousClose,
+      currency: r.meta && r.meta.currency,
+      sessionEndsAt: regular ? new Date(regular.end * 1000).toISOString() : null,
+      sessionOpenNow,
+    },
+    bars,
+  };
 }
 async function yahooChart(symbol, range = "6mo", interval = "1d") {
   const d = await fetchJson(`https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?range=${range}&interval=${interval}`);
@@ -81,7 +125,20 @@ async function yahooQuotes(symbols = []) {
     try {
       const c = await yahooChart(s, "5d", "1d");
       const m = c.meta; if (!m || m.price == null) return null;
-      return { ticker: s, last: m.price, prev: m.prevClose, changePct: m.prevClose ? ((m.price - m.prevClose) / m.prevClose) * 100 : null, name: m.symbol || s };
+      // Previous close comes from the bars, not from meta.chartPreviousClose.
+      //
+      // `chartPreviousClose` is the close BEFORE THE REQUESTED WINDOW — with range=5d that is about
+      // a week old, not yesterday. Measured 2026-08-21: it reported 7785.76 for ^GSPC and 305.93 for
+      // AAPL, both the Aug-14 close, while the real previous closes were 7641.16 and 311.30. Every
+      // index quote therefore carried a stale "previous close", and a percentage change computed
+      // against it was wrong by whatever the market had done in between. That is the other half of
+      // "Apple's price disagrees with itself": one number was a fossil and nothing said so.
+      //
+      // The last SETTLED bar in the same response is the previous close, by definition. Falling back
+      // to the old field only if there is no settled bar to read.
+      const settled = (c.bars || []).filter((b) => !b.inProgress);
+      const prev = settled.length ? settled[settled.length - 1].c : m.prevClose;
+      return { ticker: s, last: m.price, prev, changePct: prev ? ((m.price - prev) / prev) * 100 : null, name: m.symbol || s };
     } catch { return null; }
   }));
   return out.filter(Boolean);

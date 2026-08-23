@@ -1,3 +1,5 @@
+const { isDeclared, hasAnyEffect, isIrreversibleOrLeaves } = require("./tool-effects");
+
 const LEVELS = Object.freeze({
   observe: 0,
   prepare: 1,
@@ -98,6 +100,36 @@ function evaluateAutonomy({ definition, tool, args, profile, context, recentActi
   // confirmed at EVERY autonomy level, like run_command. (The preferred path is still
   // gmail_prepare_email → gmail_send_prepared, whose approval is bound to an exact provider draft.)
   const alwaysConfirm = new Set(["run_command", "email_smart"]);
+
+  // A tool that DECLARES what it causes is judged on that, not on its name.
+  //
+  // `lowRiskLocalExecute` above is a list of names, and a list of names is defeated by any second
+  // route to the same outcome: `open_app` was gated, `desktop_control` was on the list, and
+  // `desktop_control` opens sites, sends hotkeys, clicks and types. On 2026-08-21 the model reached
+  // open_app's outcome through it while open_app's own card sat unapproved. Effects cannot drift
+  // from the tool the way a name list drifts from what the tool grew into.
+  //
+  // The owner's rule, 2026-08-21, in his words: no cards for opening apps and all that — cards for
+  // sending messages on email, Instagram and the like, and that is it.
+  //
+  // So the card is reserved for what CANNOT BE TAKEN BACK: something that leaves the machine
+  // (egress) or destroys data (destructive). Launching an app, focusing a window, typing into a
+  // local editor, writing a local note — he can undo all of it himself, and asking about them is
+  // what trains a person to click Approve without reading. That habit is the actual vulnerability:
+  // the published attack (ATR-2026-00118) is to flood an owner with routine approvals so the one
+  // that matters goes through with the rest. Rare prompts are readable prompts.
+  //
+  // Causes nothing -> never confirmed. Undeclared tools keep exactly the old decision, so this
+  // still migrates one tool at a time.
+  if (isDeclared(definition)) {
+    const requiresConfirmation = Boolean(
+      alwaysConfirm.has(tool)
+      || context.forceConfirmation
+      || isIrreversibleOrLeaves(definition),
+    );
+    return { allowed: true, requiresConfirmation, profile: normalized, required, effectiveLevel };
+  }
+
   const requiresConfirmation = Boolean(definition.risk === "commit"
     || alwaysConfirm.has(tool)
     || (definition.risk === "execute" && effectiveLevel !== "autopilot" && !lowRiskLocalExecute.has(tool))

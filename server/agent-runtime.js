@@ -1,5 +1,5 @@
 const { GoogleGenAI } = require("@google/genai");
-const { MODELS, fallbacksFor } = require("./gemini-models");
+const { MODELS, fallbacksFor, candidatesFor, noteModelFailure, noteModelSuccess } = require("./gemini-models");
 const { declarationsForLane, routeExecutionLane } = require("./automation/execution-lane-router");
 
 function tokenize(value) {
@@ -49,8 +49,23 @@ function createAgentRuntime({ getSettings, toolGateway, codeKnowledge, memorySto
       && /\b(find|search|check|look|where|what|current|live|today|right now|is there|has it|show|odds|market|bet|game|match)\b/.test(lower);
     const workComposer = /\b(make|create|generate|write|build|compose|draft|turn .* into)\b/.test(lower)
       && /\b(report|brief|briefing|document|doc|pdf|deck|slides?|presentation|study sheet|one[- ]pager|artifact|write[- ]up|summary sheet|trading brief|research brief)\b/.test(lower);
-    const deepResearch = /\b(deep research|research report|investigate|source-backed|source backed|citations?|evidence|read sources?|compare sources?|summarize (?:this )?(?:url|link|page|article)|read (?:this )?(?:url|link|page|article))\b/.test(lower)
-      || /https?:\/\/[^\s)]+/i.test(text);
+    // A LINK IS NOT A RESEARCH TOPIC. It is a place to go and read.
+    //
+    // This used to end with `|| /https?:\/\//.test(text)`, so any address anywhere in the message
+    // marked the turn "deep research". That sets `fresh`, which hands the turn to the research lane
+    // in server.js: it web-searches the owner's whole sentence and answers from the results, and the
+    // link is never opened. Measured 2026-08-22 on "read https://example.com and tell me exactly
+    // what that page says" — the only tool that ran was research_v2, and the reply described the
+    // domain from search results while claiming "according to the provided sources".
+    //
+    // Handing over an address is the owner saying "read THIS", which is the opposite of "go and
+    // search". The genuine research phrases below still route to research; a bare link no longer
+    // does. Fixed by deleting a rule rather than adding one to compensate for it.
+    // `summarize this page` and `read this article` went too, for the same reason: both name ONE
+    // document the owner is pointing at. Sending those to a web search answers about the topic
+    // instead of reading the thing he pointed at. "read sources" and "compare sources" stay — those
+    // ask for breadth across sources, which is what research is for.
+    const deepResearch = /\b(deep research|research report|investigate|source-backed|source backed|citations?|evidence|read sources?|compare sources?)\b/.test(lower);
     // An email intent — "email <person>", "e-mail/gmail", "send/reply/draft … a note/message/line",
     // or any raw address in the text. Without this, "email devanshhagrawal@… that I'll be late"
     // classified as plain conversation → the prepare() gate skipped selectTools → zero tools → the
@@ -276,6 +291,103 @@ function createAgentRuntime({ getSettings, toolGateway, codeKnowledge, memorySto
     }
   }
 
+  // ── Retrieval-query rewriting (decontextualisation) ─────────────────────────────────────────
+  // The gateway scores TOOLS against a string. A short follow-up ("can u redo it", "yes", "same
+  // again") carries no nouns of its own, so scoring it alone strips the turn of tools. The previous
+  // answer was to glue the last four turns onto the front of that string. That is the documented
+  // failure mode "topic drift": whatever tool family the recent turns touched gets re-retrieved no
+  // matter what was actually asked. It is why ANY short message resurfaced the pending open_app,
+  // and why "can u redo it" reached neural_vault_maintenance.
+  //
+  // Established practice for multi-turn retrieval is to rewrite the turn into a STANDALONE query
+  // and retrieve against that. One cheap call turns "can u redo it" into "re-plot the AMD 30-day
+  // price chart" — the retrieval string carries the real nouns, and nothing else from history leaks
+  // in. There is no length test and no keyword list; the model reads the words.
+  //
+  // Fails OPEN to the bare prompt, and never back to history concatenation: a failed rewrite must
+  // not reintroduce the drift it exists to remove.
+  //
+  // Raw fetch + AbortController, matching the browser planner — the SDK path used by
+  // classifyWithModel has no timeout, and an unbounded call on the hot path is not acceptable.
+  const REWRITE_TIMEOUT_MS = 4_000;
+  const REWRITE_CACHE_MAX = 200;
+  const rewriteCache = new Map();
+
+  async function rewriteForRetrieval(prompt, history = []) {
+    const text = String(prompt || "").trim();
+    // With no prior turn there is nothing to decontextualise — the query already stands alone.
+    // A structural fact about the conversation, not a guess about the wording.
+    if (!text || !Array.isArray(history) || !history.length) return text;
+
+    const settings = getSettings();
+    const key = settings.geminiKey;
+    if (!key) return text;
+
+    const turns = history
+      .slice(-6)
+      .map((h) => `${(h && h.role) || "user"}: ${String((h && (h.text || h.content)) || "").slice(0, 400)}`)
+      .filter((line) => line.trim().length > 6)
+      .join("\n");
+    if (!turns) return text;
+
+    const cacheKey = `${text} ${turns}`;
+    if (rewriteCache.has(cacheKey)) return rewriteCache.get(cacheKey);
+    const remember = (value) => {
+      if (rewriteCache.size >= REWRITE_CACHE_MAX) rewriteCache.delete(rewriteCache.keys().next().value);
+      rewriteCache.set(cacheKey, value);
+      return value;
+    };
+
+    const instruction = [
+      "Rewrite the owner's latest message as a STANDALONE search query, using the conversation only to resolve what it refers to.",
+      "Rules:",
+      "- Replace references (it, that, them, again, the same, the last one) with the actual thing they point at.",
+      "- Keep his own words and intent. Do not answer it, do not add instructions, do not invent detail he never said.",
+      "- If the message already stands on its own, return it unchanged.",
+      "- Return the query and nothing else.",
+      `Conversation so far:\n${turns}`,
+      `Latest message:\n${text}`,
+    ].join("\n\n");
+
+    for (const model of candidatesFor(settings.geminiRouterModel || MODELS.router).slice(0, 2)) {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), REWRITE_TIMEOUT_MS);
+      try {
+        const response = await fetch(
+          `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(key)}`,
+          {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            signal: controller.signal,
+            body: JSON.stringify({
+              contents: [{ role: "user", parts: [{ text: instruction }] }],
+              generationConfig: {
+                temperature: 0,
+                maxOutputTokens: 200,
+                responseMimeType: "application/json",
+                responseSchema: { type: "object", properties: { query: { type: "string" } }, required: ["query"] },
+              },
+            }),
+          },
+        );
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(data?.error?.message || `Gemini ${response.status}`);
+        const raw = data.candidates?.[0]?.content?.parts?.map((part) => part.text || "").join("") || "";
+        const rewritten = String(JSON.parse(raw || "{}").query || "").trim();
+        noteModelSuccess(model);
+        // Empty, or far longer than the turn it decontextualises, means the model went off-script.
+        // The owner's own words are safer than an invented query.
+        if (!rewritten || rewritten.length > Math.max(240, text.length * 12)) return remember(text);
+        return remember(rewritten);
+      } catch {
+        noteModelFailure(model);
+      } finally {
+        clearTimeout(timer);
+      }
+    }
+    return remember(text);
+  }
+
   async function prepare({ prompt, history = [], mode = "chat", source = "" }) {
     // THE FORGE generative calls (compose / improve / adversary / genesis / agent)
     // are pure text generation — they must NEVER select a tool (research_v2 etc.).
@@ -289,37 +401,30 @@ function createAgentRuntime({ getSettings, toolGateway, codeKnowledge, memorySto
     const meshTask = route.deviceMesh || /\b(mesh_status|device mesh|omnipresence|object portal|command cards?|cloudflare|stable phone|webhook|phone link|ipad link|trusted devices?)\b/i.test(String(prompt || ""));
     // THE FORGE — strategy/bot questions must reach apex_strategies, not memory/web.
     const forgeTask = /\b(strateg(?:y|ies)|the forge|my bots?|trading bots?|backtest|which bots?|what bots?|signals?|variables?|folders?|sortino|sharpe|calmar|drawdown|deep analysis|report)\b/i.test(String(prompt || ""));
-    // RW3 (coreference) — a short continuation ("yes", "send it", "move it to 1pm", "actually make
-    // it 5pm", "cancel that") carries NO nouns of its own, so the classifier/gateway saw no
-    // email/calendar/task signal and stripped the turn of tools. The brain then said "no email tool
-    // active for this turn" or, worse, FALSELY claimed success ("Lunch is moved to 1 PM") with no tool
-    // call. Fold the last couple of exchanges into the text the GATEWAY scores (this never touches the
-    // model prompt — the model already gets full history), so a follow-up re-exposes the same tool
-    // family the prior turn used. Then the model can actually act on "it"/"that"/"yes".
-    const rawPrompt = String(prompt || "");
-    const isContinuation = rawPrompt.trim().split(/\s+/).filter(Boolean).length <= 6
-      || /^\s*(y|ok|okay|sure|yes|yeah|yep|yup|do it|go ?ahead|please|confirm|send (?:it|now|that)|make it|change it|move it|reschedule|cancel (?:it|that)|actually\b|instead\b|nah?\b|no,? )/i.test(rawPrompt);
-    const historyTail = Array.isArray(history)
-      ? history.slice(-4).map((h) => String((h && (h.text || h.content)) || "")).filter(Boolean).join("\n")
-      : "";
-    const continuationAction = isContinuation && historyTail.trim().length > 0;
+    // RW3 (coreference), rebuilt. A short continuation ("yes", "send it", "move it to 1pm",
+    // "cancel that") carries no nouns of its own, so scoring it alone strips the turn of tools and
+    // the brain then says "no email tool active for this turn" — or, worse, falsely claims success
+    // with no tool call at all. The previous cure was worse than the disease: any turn of six words
+    // or fewer had the last four exchanges pasted in front of the string the GATEWAY scores, so a
+    // short message inherited whatever tools the recent conversation happened to touch.
+    //
+    // Now the turn is decontextualised into a standalone query first, and THAT is what the gateway
+    // scores. A follow-up carries its own nouns instead of dragging the previous topic along.
+    const retrievalQuery = await rewriteForRetrieval(prompt, history);
     // The keyword bait below exists to game the LEXICAL scorer: appending literal tool names makes
     // scoreTool match them. Feeding that to an embedding model is actively harmful — it would
     // retrieve against "screen_capture screen_inspect screen_act desktop_control" instead of
-    // against what the owner actually asked for. So the semantic path gets the real prompt, with
-    // only the genuine conversational context (historyTail) folded in.
+    // against what the owner actually asked for. So the semantic path gets the query clean.
     const semanticSelection = process.env.JARVIS_SEMANTIC_TOOLS === "1";
     const toolPrompt = semanticSelection
-      ? (continuationAction ? `${historyTail}\n${prompt}` : prompt)
+      ? retrievalQuery
       : screenTask
-        ? `${prompt}\ncurrent laptop screen screen_capture screen_inspect screen_act desktop_control`
+        ? `${retrievalQuery}\ncurrent laptop screen screen_capture screen_inspect screen_act desktop_control`
         : meshTask
-          ? `${prompt}\ndevice mesh mesh_status mesh_objects mesh_send_command device_files device_latest_image`
+          ? `${retrievalQuery}\ndevice mesh mesh_status mesh_objects mesh_send_command device_files device_latest_image`
           : forgeTask
-            ? `${prompt}\napex_strategies strategies bots forge portfolio backtest`
-            : continuationAction
-              ? `${historyTail}\n${prompt}`
-              : prompt;
+            ? `${retrievalQuery}\napex_strategies strategies bots forge portfolio backtest`
+            : retrievalQuery;
     // T4c: intent-aware tool limit — deep/complex gets 12, browser/screen/mesh gets 10, action 8, else 5
     // The floor is 8, not 5. Five was too few for any request that needs two specific tools to
     // cooperate, which is most of the interesting ones: "graph tesla's closes for the past three
@@ -329,7 +434,7 @@ function createAgentRuntime({ getSettings, toolGateway, codeKnowledge, memorySto
     // declarations is a few hundred tokens; the cost of being one slot short is the feature.
     const toolLimit = route.complexity === "deep" ? 12
       : (browserTask || screenTask || meshTask) ? 10
-        : (route.action || route.agentSwarm || continuationAction) ? 8
+        : (route.action || route.agentSwarm) ? 8
           : 8;
     // Prefer the async entry point (it can consult the semantic index); fall back to the
     // synchronous one for any gateway/stub that predates it. `await` on a plain array is a no-op,

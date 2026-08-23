@@ -2,6 +2,10 @@ const crypto = require("crypto");
 const fs = require("fs");
 const os = require("os");
 const path = require("path");
+// Effect-scoped authority: what a tool causes decides what it needs, and a lease answers it once
+// per task instead of once per call. See server/tool-effects.js and server/effect-grants.js.
+const effectGrants = require("./effect-grants");
+const { effectsFor, isDeclared, hasAnyEffect, isIrreversibleOrLeaves, reachesOutOrActsOnMachine } = require("./tool-effects");
 const { execFile, spawn } = require("child_process");
 const { promisify } = require("util");
 const { evaluateAutonomy, requiredAutonomyLevel } = require("./autonomy-policy");
@@ -115,10 +119,26 @@ function widgetIdParam() {
 // above, and the schema only lets it name a real widget. A bare "move it" / "close this" carries no
 // id, and that is the one case worth resolving in code: fall through to whatever is actually focused
 // on screen, so coreference is grounded in the live screen rather than a stale mention in chat.
-function resolveWidgetTarget(argId, context) {
+// Resolve which widget a UI tool is talking about — and, for tools that change an EXISTING one,
+// refuse unless it is actually open.
+//
+// The fast path in widget-control.js checks this carefully and declines when the target is not
+// open. The model then reached the same outcome through ui_set_widget_view, which checked nothing,
+// and told the owner "The Kalshi widget has been minimized, sir" for a widget that was not there.
+// Measured 2026-08-22. It is the same shape as the open_app/desktop_control bug: a gate on one
+// route and an open door on another, so the careful check bought nothing.
+//
+// Opening or focusing a widget may legitimately name one that is not open yet, so those callers
+// leave mustBeOpen off. Moving, resizing and changing the view of one cannot.
+function resolveWidgetTarget(argId, context, { mustBeOpen = false } = {}) {
   const arg = cleanString(argId, 60);
-  if (arg) return arg;
-  return cleanString(context && context.focusedWidget, 60);
+  const id = arg || cleanString(context && context.focusedWidget, 60);
+  if (!id || !mustBeOpen) return id;
+  const open = Array.isArray(context && context.openWidgets) ? context.openWidgets : [];
+  if (!open.some((item) => item && item.id === id)) {
+    throw errorWithStatus(`The ${id} widget is not open, sir — there is nothing on screen to change.`, 409);
+  }
+  return id;
 }
 
 function parsePowerShellJson(output, label = "PowerShell") {
@@ -412,13 +432,13 @@ function createCapabilityEngine({
   const definitions = [
     ["system_status", "Read real local CPU, memory, uptime, network interfaces, and load information.", "observe", false],
     ["list_processes", "List running Windows processes, sorted by memory use.", "observe", false],
-    ["open_app", "Launch a desktop application that is installed on this machine — 'open chatgpt', 'launch spotify', 'open my claude app', 'start vscode'. It looks the app up in what is ACTUALLY installed here, so any installed app can be opened by name; there is no fixed list and you should never tell the owner you cannot launch desktop applications. Use this rather than opening a website when they ask for the app.", "execute", false],
-    ["open_url", "Open a validated HTTP/HTTPS URL or common site name such as YouTube, Gmail, Canvas, Instagram, GitHub, Reddit, Google, or Kalshi in the laptop default browser.", "execute", false],
+    ["open_app", "Launch a desktop application that is installed on this machine — 'open chatgpt', 'launch spotify', 'open my claude app', 'start vscode'. It looks the app up in what is ACTUALLY installed here, so any installed app can be opened by name; there is no fixed list and you should never tell the owner you cannot launch desktop applications. Use this rather than opening a website when they ask for the app.", "execute", false, ["launch"]],
+    ["open_url", "Open a validated HTTP/HTTPS URL or common site name such as YouTube, Gmail, Canvas, Instagram, GitHub, Reddit, Google, or Kalshi in the laptop default browser.", "execute", false, ["launch"]],
     ["screen_inspect", "Inspect the current visible laptop screen through Windows UI Automation and return visible controls, labels, roles, and screen-coordinate bounds.", "observe", false],
-    ["screen_act", "Operate on the current visible laptop screen by first capturing and inspecting it, locating a visible target, performing a bounded click/type/hotkey/fullscreen action, then capturing again to verify.", "execute", false],
+    ["screen_act", "Operate on the current visible laptop screen by first capturing and inspecting it, locating a visible target, performing a bounded click/type/hotkey/fullscreen action, then capturing again to verify.", "execute", false, ["input"]],
     ["youtube_open_video", "Fallback YouTube video opener. Prefer screen_act when the user is referring to the current visible screen.", "execute", false],
-    ["desktop_control", "Control the visible laptop desktop with bounded actions: open a site full-screen, toggle full-screen, switch browser tabs, send safe hotkeys, click visible text or screen coordinates, or type text into the active window.", "execute", false],
-    ["close_app", "Close an allowlisted Windows application.", "commit", true],
+    ["desktop_control", "Control the visible laptop desktop with bounded actions: open a site full-screen, toggle full-screen, switch browser tabs, send safe hotkeys, click visible text or screen coordinates, or type text into the active window.", "execute", false, ["input", "launch"]],
+    ["close_app", "Close an allowlisted Windows application.", "commit", true, ["launch", "destructive"]],
     ["network_inventory", "Read passive local adapter, route, and neighbor information. It does not scan arbitrary hosts.", "observe", false],
     ["search_projects", "Search project names and package metadata in the approved workspace.", "observe", false],
     ["open_project", "Open an indexed workspace project in Windows Explorer.", "execute", false],
@@ -465,9 +485,9 @@ function createCapabilityEngine({
     ["pc_graph_timeline", "Reconstruct recent laptop activity from indexed file/project timestamps for Time Machine style questions.", "observe", false],
     ["pc_graph_explain", "Explain why a file/project appears relevant by returning graph neighbors, project containment, timestamps, and evidence.", "observe", false],
     ["pc_graph_inspect", "Inspect Personal Reality Graph health, counts, last index run, and recent indexed nodes.", "observe", false],
-    ["agent_deploy", "Deploy a typed autonomous JARVIS agent mission such as browser, kalshi, canvas, pc, research, verifier, or coordinator.", "prepare", false],
+    ["agent_deploy", "Deploy a typed autonomous JARVIS agent mission such as browser, kalshi, canvas, pc, research, verifier, or coordinator.", "prepare", false, ["input"]],
     ["skill_compile", "Compile a repeated natural-language procedure into a reusable skill with agent steps, tools, approval gates, and tests.", "prepare", false],
-    ["skill_run", "Run a compiled skill by deploying its agent mission swarm and coordinator.", "prepare", false],
+    ["skill_run", "Run a compiled skill by deploying its agent mission swarm and coordinator.", "prepare", false, ["input"]],
     ["skill_list", "List compiled reusable JARVIS skills and their reliability metadata.", "observe", false],
     ["skill_inspect", "Inspect the Skill Autopilot engine, agent profiles, compiled skills, and run counts.", "observe", false],
     ["news_headlines", "Read current news headlines using the configured News API key.", "observe", false],
@@ -492,7 +512,7 @@ function createCapabilityEngine({
     ["mesh_objects", "List or inspect objects sent through the device mesh, including phone photos, links, notes, screen captures, and uploaded files.", "observe", false],
     ["mesh_pair_link", "Create a one-time phone/iPad pairing code and return public Cloudflare/stable pair links first, followed by local/LAN fallback links.", "prepare", false],
     ["mesh_self_test", "Run Device Mesh emergency repair diagnostics for LAN IP, QR URL, pairing page, text/link/file routes, memory writes, and event logging.", "prepare", false],
-    ["mesh_send_command", "Create a device-mesh command card for a phone, iPad, laptop, or any paired device.", "prepare", false],
+    ["mesh_send_command", "Create a device-mesh command card for a phone, iPad, laptop, or any paired device.", "prepare", false, ["egress"]],
     ["coop_symbiote_status", "Read Jarvis Co-Op Symbiote Mesh workspace status, active session, repo fingerprint, connection quality, manifest summary, and memory counts.", "observe", false],
     ["coop_symbiote_create_session", "Create a trusted two-person Co-Op Symbiote Mesh session with a short expiring join code and invite links.", "prepare", false],
     ["coop_symbiote_manifest", "Generate a secret-scanned safe source-code file manifest for the current Jarvis project.", "observe", false],
@@ -505,8 +525,8 @@ function createCapabilityEngine({
     ["jarvis_self_inspect", "Read JARVIS runtime architecture, code-index health, capabilities, and application inventory.", "observe", false],
     ["draft_email", "Prepare an email draft without sending it.", "prepare", false],
     ["gmail_prepare_email", "Create a real Gmail draft, read it back, and return the immutable draft identity and content hash without sending it.", "prepare", false],
-    ["gmail_send_prepared", "Send one previously prepared Gmail draft after re-reading it and proving its recipient, subject, and body hash are unchanged.", "commit", true],
-    ["send_email", "Legacy one-step Gmail sender. Prefer gmail_prepare_email followed by gmail_send_prepared so approval is bound to an exact provider draft.", "commit", true],
+    ["gmail_send_prepared", "Send one previously prepared Gmail draft after re-reading it and proving its recipient, subject, and body hash are unchanged.", "commit", true, ["egress"]],
+    ["send_email", "Legacy one-step Gmail sender. Prefer gmail_prepare_email followed by gmail_send_prepared so approval is bound to an exact provider draft.", "commit", true, ["egress"]],
     ["browser_search", "Open a web search in the default browser.", "execute", false],
     ["browser_status", "Report the persistent JARVIS browser session, tabs, active page, saved profile, and snapshot readiness.", "observe", false],
     ["browser_login_handoff", "Open a login-required website in the persistent JARVIS browser and pause for the user to authenticate manually.", "prepare", false],
@@ -515,7 +535,7 @@ function createCapabilityEngine({
     ["browser_navigate", "Navigate the isolated persistent JARVIS browser to a validated HTTP or HTTPS URL.", "prepare", false],
     ["browser_snapshot", "Observe the active browser page as compact semantic elements with stable short-lived references.", "observe", false],
     ["browser_tabs", "List, open, switch, or close tabs in the persistent JARVIS browser.", "prepare", false],
-    ["browser_act", "Perform a reversible browser action using a semantic element reference or CSS selector. Consequential controls are blocked.", "prepare", false],
+    ["browser_act", "Perform a reversible browser action using a semantic element reference or CSS selector. Consequential controls are blocked.", "prepare", false, ["input"]],
     ["browser_commit", "Perform one user-approved consequential browser operation or bounded operation batch, such as submitting, sending, publishing, purchasing, or uploading.", "commit", true],
     ["browser_file_search", "Find recent files in approved workspace, Desktop, Documents, and Downloads locations for browser workflows.", "observe", false],
     ["browser_inspect", "Inspect visible interactive elements in the isolated JARVIS browser.", "observe", false],
@@ -529,7 +549,7 @@ function createCapabilityEngine({
     ["instagram_reply", "Reply through the official Instagram professional messaging API.", "commit", true],
     ["instagram_like_current", "Like the currently visible Instagram Reel only after verifying that a reel URL is open; returns proof that the control changed from Like to Unlike.", "commit", true],
     ["instagram_prepare_dm", "Open an exact visible Instagram Direct thread and place the requested text in its composer without sending it.", "prepare", false],
-    ["instagram_send_current", "Send the already-prepared text in the currently visible Instagram Direct conversation only after verifying the chat URL, recipient context, and exact composer value; returns proof that the composer cleared and the text appeared in the conversation.", "commit", true],
+    ["instagram_send_current", "Send the already-prepared text in the currently visible Instagram Direct conversation only after verifying the chat URL, recipient context, and exact composer value; returns proof that the composer cleared and the text appeared in the conversation.", "commit", true, ["egress"]],
     ["instagram_read_inbox", "Read the Instagram Direct inbox: the list of conversations with each one's name, latest-message snippet, unread flag, and time. Read-only, changes nothing. Use for 'read my DMs', 'check my messages', 'who messaged me', 'any unread chats'.", "observe", false],
     ["instagram_read_conversation", "Open one Instagram Direct conversation by the person's name (or a known thread URL) and read its recent messages in order. Read-only. Use for 'read my chat with X', 'what did X say', 'open my conversation with X'.", "observe", false],
     ["instagram_read_notifications", "Read the Instagram notifications/activity panel: pending follow requests, new followers, likes, comments, and mentions. Read-only. Use for 'check my notifications', 'any follow requests', 'who followed me', 'what's new on Instagram'.", "observe", false],
@@ -546,7 +566,7 @@ function createCapabilityEngine({
     ["write_clipboard", "Write text to the Windows clipboard.", "execute", false],
     ["toast_notification", "Show a Windows toast notification with a title and message.", "execute", false],
     ["screen_analyze", "Capture the current screen once and analyze it with Gemini Vision. Returns what is visible and answers a specific question about the screen.", "observe", false],
-    ["computer_use", "Run a task through the policy-selected browser lane: signed-in personal Chrome, isolated headless browser, or explicitly visible desktop. Navigation and preparation run first; Send, Like, Post, Submit, Delete, Purchase, and similar external commits pause at the exact final-action boundary for owner approval.", "execute", false],
+    ["computer_use", "Run a task through the policy-selected browser lane: signed-in personal Chrome, isolated headless browser, or explicitly visible desktop. Navigation and preparation run first; Send, Like, Post, Submit, Delete, Purchase, and similar external commits pause at the exact final-action boundary for owner approval.", "execute", false, ["input", "launch"]],
     ["screen_locate", "Find any visible UI element on the current screen using Gemini Vision and return its pixel coordinates. Works on web apps with no accessibility labels.", "observe", false],
     ["mouse_scroll", "Scroll the mouse wheel at a screen coordinate in a specified direction and amount. Use for scrolling feeds, lists, pages, or DM threads.", "execute", false],
     ["apex_catalog_search", "Search the APEX trading-room data catalog by keyword and get matching datasets, database tables, and local files with their columns, row counts, date coverage, source, and a plain-language summary. Use this first to discover what market/news/history data APEX holds before answering data questions.", "observe", false],
@@ -574,7 +594,7 @@ function createCapabilityEngine({
     ["atlas_add_reminder", "Add a durable reminder. YOU extract: title (what to remind about) and fireAt as an ISO 8601 timestamp computed from the current date/time in the owner's timezone. Use for 'remind me to <X> at <time>', 'nudge me at 5'. RECURRING reminders are supported and repeat automatically — for 'remind me every weekday at 9', 'every monday', 'daily at 8pm', just pass the title and fireAt; the tool detects the recurrence from the owner's words and re-arms it after each fire. Saves immediately, no confirmation.", "execute", false],
     ["atlas_complete_task", "Mark one of the owner's LOCAL Today tasks as done/completed. Pass `title` = a few words identifying the task ('call the plumber', 'file taxes'); the tool finds the best-matching OPEN task and completes it. Use for 'mark X done', 'I finished X', 'check off X', 'that's done'. Saves immediately. Returns which task it completed (or says none matched) — never claim a task is done unless this returns ok.", "execute", false],
     ["atlas_reschedule_event", "Move or rename one of the owner's LOCAL Today events (not Google Calendar). Pass `title` to identify the event and `newStartAt` (ISO 8601, owner-local) to move it, and/or `newTitle` to rename. Use for 'move lunch to 1pm', 'push the dentist appt to 4', 'rename X to Y'. Finds the best-matching upcoming event and updates it in place (no duplicate). Returns the updated event — never claim it moved unless this returns ok.", "execute", false],
-    ["atlas_cancel_item", "Cancel/remove one of the owner's LOCAL Today items — a task, event, or reminder. Pass `title` to identify it and optional `kind` ('task'|'event'|'reminder') to disambiguate. Use for 'cancel lunch', 'delete the plumber task', 'remove that reminder'. This deletes local data, so it is confirmed with the owner first; do NOT say it's removed until the confirmation completes. Returns what was cancelled.", "execute", false],
+    ["atlas_cancel_item", "Cancel/remove one of the owner's LOCAL Today items — a task, event, or reminder. Pass `title` to identify it and optional `kind` ('task'|'event'|'reminder') to disambiguate. Use for 'cancel lunch', 'delete the plumber task', 'remove that reminder'. This deletes local data, so it is confirmed with the owner first; do NOT say it's removed until the confirmation completes. Returns what was cancelled.", "execute", false, ["write", "destructive"]],
     ["atlas_undo", "Undo the owner's most recent Today/calendar change — reverse the last add/complete/move (add→delete, complete→reopen, move→move back). Use the moment the owner says 'undo', 'undo that', 'nevermind', 'take that back', 'revert that', 'oops undo'. Runs immediately. Returns what was undone, or says there's nothing to undo.", "execute", false],
     ["atlas_clear_window", "Bulk-clear the owner's LOCAL events across a whole time window in one shot — 'clear my afternoon', 'cancel everything tomorrow morning', 'wipe my evening', 'clear the rest of today', 'cancel my friday'. Pass `window` = the owner's window phrase exactly as they said it (e.g. 'this afternoon', 'tomorrow morning', 'after 3pm today', 'friday evening'). It finds every local event in that window and cancels them together. This deletes multiple items, so it is confirmed with the owner first (the preview shows how many and which). Undoable afterwards. Returns the count and titles.", "commit", true],
     ["atlas_move_window", "Bulk-MOVE every LOCAL event in a time window to another day in one shot — 'push my afternoon to tomorrow', 'move everything after 3pm to friday', 'shift my morning to monday', 'bump today's meetings to next week'. Pass `window` (the source window phrase, e.g. 'this afternoon', 'after 3pm today') and `target` (the destination day phrase, e.g. 'tomorrow', 'friday', 'next monday'). Each event keeps its time-of-day and duration, only the date shifts. Confirmed first with a preview; undoable. Returns count and titles.", "commit", true],
@@ -594,13 +614,16 @@ function createCapabilityEngine({
     ["calendar_move_event", "Move/reschedule an existing Google Calendar event to a new time. First call calendar_list_events to find the event and its id, then call this with eventId and newStartAt (ISO 8601, owner-local with offset). Confirmed before it goes through.", "commit", true],
     ["calendar_cancel_event", "Cancel/delete an event from the owner's Google Calendar. First call calendar_list_events to find the event id, then call this with eventId. Confirmed before it goes through.", "commit", true],
     ["resolve_contact", "Resolve a person's NAME to their email BEFORE sending, when you're not certain there's exactly one saved contact. Returns status 'resolved' (with the single email), 'ambiguous' (with the list of matching contacts — then ASK the owner which one), or 'unknown' (no email on file — then ASK for the address). Runs instantly, sends nothing. Use this first for 'email <name>' whenever a name could match more than one person, so a message never goes to the wrong person.", "observe", false],
-    ["email_smart", "PREFERRED one-step email sender. Send an email to a saved contact BY NAME (or to a raw email address) in a single step — no separate draft, no extra approval prompt. Use for casual requests like 'email AJ that I'm running late' or 'send TG a note saying dinner at 8'. If an email is on file for that name it sends immediately and returns sent:true. If NO email is on file it does NOT send and returns status:recipient_unknown — then ask the owner for the address. If the owner supplies a new address (pass it as `email`), it sends and returns a saveSuggestion so you can offer to remember it. Prefer this over gmail_prepare_email/gmail_send_prepared for everyday sends to people.", "execute", false],
+    ["email_smart", "PREFERRED one-step email sender. Send an email to a saved contact BY NAME (or to a raw email address) in a single step — no separate draft, no extra approval prompt. Use for casual requests like 'email AJ that I'm running late' or 'send TG a note saying dinner at 8'. If an email is on file for that name it sends immediately and returns sent:true. If NO email is on file it does NOT send and returns status:recipient_unknown — then ask the owner for the address. If the owner supplies a new address (pass it as `email`), it sends and returns a saveSuggestion so you can offer to remember it. Prefer this over gmail_prepare_email/gmail_send_prepared for everyday sends to people.", "execute", false, ["egress"]],
     ["contact_add_email", "Save or update a person's email address so future 'email <name>' sends resolve on their own. Use right after email_smart returns a saveSuggestion and the owner agrees, or when the owner says 'save X's email as …'.", "execute", false],
-  ].map(([name, description, risk, confirmationRequired]) => ({
+  ].map(([name, description, risk, confirmationRequired, effects]) => ({
     name,
     description,
     risk,
     confirmationRequired,
+    // Declared effects — see server/tool-effects.js. Omitted entirely when undeclared, so
+    // isDeclared() can tell "nobody has looked at this yet" apart from "looked at, causes nothing".
+    ...(Array.isArray(effects) ? { effects } : {}),
     requiredAutonomyLevel: requiredAutonomyLevel({ risk }),
   }));
 
@@ -1104,6 +1127,20 @@ function createCapabilityEngine({
     return active;
   }
 
+  // The card's own lines, plus a plain warning when the request traces back to content the owner
+  // did not write. It rides in the summary rather than a new field so the existing card shows it
+  // without the surface having to know anything new — the owner sees WHY he is being asked.
+  function summaryFor(args = {}, provenance = null) {
+    const base = confirmationSummary(args);
+    if (!provenance || !provenance.indirect) return base;
+    return {
+      "⚠ triggered by": provenance.source
+        ? `content read from ${provenance.source} this turn — not typed by you`
+        : "content read from the web/screen this turn — not typed by you",
+      ...base,
+    };
+  }
+
   function confirmationSummary(args = {}) {
     return Object.fromEntries(Object.entries(args).map(([key, value]) => {
       if (/token|secret|password|authorization|api.?key|cookie/i.test(key)) return [key, "[redacted]"];
@@ -1137,7 +1174,7 @@ function createCapabilityEngine({
       return {
         id: existing.id,
         tool,
-        summary: confirmationSummary(existing.args),
+        summary: summaryFor(existing.args, existing.provenance),
         commit: commitCard(existing.args),
         risk: existing.risk,
         expiresAt: existing.expiresAt,
@@ -1162,6 +1199,24 @@ function createCapabilityEngine({
         placement: cleanString(actor.placement, 40) || null,
         surface: cleanString(actor.surface, 80) || null,
       },
+      // Was this card raised in a turn that had already read untrusted content?
+      //
+      // The whole prompt-injection guard hangs on `context.indirect`, and that flag existed for the
+      // length of one turn and was never written down. A card outlives its turn: the model reads a
+      // poisoned page, drafts an email, the card goes up, and the owner presses Approve a minute
+      // later — by which time nothing remembers a web page asked for it. The word `indirect`
+      // appeared in exactly one place in this file, the check itself, so approval ran with the
+      // injection guard entirely absent.
+      //
+      // Published work calls this the open question ("whether approvals raised during a tainted
+      // context should themselves be considered suspect"), and separately warns that approval
+      // dialogs are attacked directly — the rule there is that the dialog must show the real
+      // situation rather than a description the model wrote. So the provenance is recorded here and
+      // shown on the card, and the owner decides knowing where the request came from.
+      provenance: {
+        indirect: Boolean(actor.indirect),
+        source: cleanString(actor.indirectSource, 80) || null,
+      },
       ownerChallenge: crypto.randomBytes(32).toString("base64url"),
       status: "pending",
       createdAt: new Date().toISOString(),
@@ -1171,7 +1226,7 @@ function createCapabilityEngine({
     return {
       id: item.id,
       tool,
-      summary: confirmationSummary(args),
+      summary: summaryFor(args, item.provenance),
       // The card used to render `summary` — the raw argument bag — so an owner deciding whether to
       // send a message read `_commitBoundary: [object Object]` next to `plannerTask` and a truncated
       // `task`. `commit` is the same decision expressed as the three things that actually matter:
@@ -2203,20 +2258,39 @@ function createCapabilityEngine({
     return { query, matches };
   }
 
-  async function memoryAdd(args) {
+  // A memory keeps WHERE IT CAME FROM, and the turn decides that, not the model.
+  //
+  // Everything else the injection guard does is scoped to one turn; memory is the one thing that
+  // outlives it. Content read off a web page can be written here and then recalled in a later
+  // session as though the owner had said it — the persistence attack, and the reason the published
+  // guidance says provenance has to survive into future sessions rather than stopping at the block.
+  //
+  // Writing is still allowed: "read this page and remember the deadline" is ordinary work, and
+  // blocking it would be the over-blocking this codebase has already been burned by. What changes
+  // is that the record cannot lie about its origin. `source` used to be whatever the model passed,
+  // defaulting to "conversation", so a model acting on injected text could label it as something
+  // the owner said. The turn's own taint now wins over anything the model claims.
+  async function memoryAdd(args, context = {}) {
     const text = cleanString(args.text, 1000);
     if (!text) throw errorWithStatus("Memory text is required");
+    const declaredSource = cleanString(args.source || "conversation", 100);
+    const source = context && context.indirect
+      ? `untrusted:${cleanString(context.indirectSource || "external content", 60)}`
+      : declaredSource;
     const item = memoryStore
       ? memoryStore.add({
           text,
           kind: cleanString(args.kind || "semantic", 40),
           category: cleanString(args.category || "personal", 50),
-          source: cleanString(args.source || "conversation", 100),
+          source,
           confidence: asNumber(args.confidence, 1, 0, 1),
           importance: asNumber(args.importance, 0.5, 0, 1),
           expiresAt: args.expiresAt || null,
         })
-      : { id: crypto.randomUUID(), category: cleanString(args.category || "personal", 50), text, createdAt: new Date().toISOString() };
+      // The no-store fallback carries `source` too. Without it the provenance survived only on
+      // the path that happened to have a store attached, which is the sort of half-applied guard
+      // that reads as working right up until the day it matters.
+      : { id: crypto.randomUUID(), category: cleanString(args.category || "personal", 50), text, source, createdAt: new Date().toISOString() };
     if (!memoryStore) {
       const items = memoryItems();
       writeJsonAtomic(memoryPath, [item, ...items].slice(0, 500));
@@ -2710,7 +2784,19 @@ function createCapabilityEngine({
       const raw = Array.isArray(args.blocks) ? args.blocks : [];
       const blocks = raw.map((b) => {
         const type = cleanString(b && b.type, 20).toLowerCase();
-        if (type === "stat") return { type: "stat", label: cleanString(b.label, 60), value: cleanString(b.value, 40), delta: cleanString(b.delta, 24) };
+        // A stat card is read at a glance, so it shows a price, not a float.
+        //
+        // Values arrive straight from the tool payload, and SQLite hands back REALs at full
+        // precision: the AAPL panel rendered "309.350006103516" as its headline figure on
+        // 2026-08-22. It is the right number and it reads like a bug, which costs the surface the
+        // credibility the faithfulness gate exists to earn it. Only a value that is ENTIRELY a
+        // number with runaway decimals is touched — "$1,204.10", "up 3%" and "12" are left alone,
+        // and the rounding stays inside the audit's tolerance so a trimmed figure still traces.
+        if (type === "stat") {
+          const rawValue = cleanString(b.value, 40);
+          const value = /^-?\d+\.\d{3,}$/.test(rawValue.trim()) ? String(Math.round(Number(rawValue) * 100) / 100) : rawValue;
+          return { type: "stat", label: cleanString(b.label, 60), value, delta: cleanString(b.delta, 24) };
+        }
         if (type === "list") return { type: "list", items: Array.isArray(b.items) ? b.items.map((i) => cleanString(i, 400)).filter(Boolean).slice(0, 24) : [] };
         if (type === "heading") return { type: "heading", text: cleanString(b.text, 160) };
         if (type === "divider") return { type: "divider" };
@@ -3085,13 +3171,13 @@ function createCapabilityEngine({
       data: args.data && typeof args.data === "object" ? args.data : {},
     } }),
     ui_move_widget: async (args, context) => {
-      const id = resolveWidgetTarget(args.id, context);
+      const id = resolveWidgetTarget(args.id, context, { mustBeOpen: true });
       if (!id) throw errorWithStatus("Which widget should I move, sir?", 400);
       const position = (cleanString(args.position, 24) || "center").toLowerCase();
       return { ok: true, uiAction: { type: "move-widget", id, position }, message: `Moved the ${id} widget to the ${position}, sir.` };
     },
     ui_resize_widget: async (args, context) => {
-      const id = resolveWidgetTarget(args.id, context);
+      const id = resolveWidgetTarget(args.id, context, { mustBeOpen: true });
       if (!id) throw errorWithStatus("Which widget should I resize, sir?", 400);
       const size = (cleanString(args.size, 24) || "medium").toLowerCase();
       return { ok: true, uiAction: { type: "resize-widget", id, size }, message: `Resized the ${id} widget to ${size}, sir.` };
@@ -3101,7 +3187,7 @@ function createCapabilityEngine({
       return { ok: true, uiAction: { type: "arrange-widgets", layout }, message: `Tidied your open widgets into a ${layout} layout, sir.` };
     },
     ui_set_widget_view: async (args, context) => {
-      const id = resolveWidgetTarget(args.id, context);
+      const id = resolveWidgetTarget(args.id, context, { mustBeOpen: true });
       if (!id) throw errorWithStatus("Which widget's view should I change, sir?", 400);
       const view = (cleanString(args.view, 40) || "").toLowerCase();
       const filter = (cleanString(args.filter, 40) || "").toLowerCase();
@@ -3753,8 +3839,11 @@ function createCapabilityEngine({
         takeoverStarted = true;
       }
       const actionRuntimeControl = automationOptions.controlState;
+      // Ask about THIS task, not about whatever the desktop service last remembered. Without the id
+      // the service answered from a stored phase that could belong to a task from days ago, and a
+      // headless browser run — which never touches the desktop service at all — was stopped by it.
       automationOptions.controlState = async () => {
-        const takeoverControl = desktopTakeover?.controlState?.() || "running";
+        const takeoverControl = desktopTakeover?.controlState?.(automationOptions.taskId) || "running";
         if (takeoverControl !== "running") return takeoverControl;
         return typeof actionRuntimeControl === "function" ? actionRuntimeControl() : "running";
       };
@@ -4012,67 +4101,7 @@ function createCapabilityEngine({
         error: policy.reason,
       };
     }
-    const safeBrowserContinuation = new Set([
-      "browser_navigate",
-      "browser_status",
-      "browser_login_handoff",
-      "browser_login_complete",
-      "browser_page_brief",
-      "browser_snapshot",
-      "browser_tabs",
-      "browser_act",
-      "browser_file_search",
-      "browser_inspect",
-      "browser_extract",
-      "browser_screenshot",
-      "browser_wait",
-      "browser_verify",
-      "screen_capture",
-      "screen_inspect",
-      "screen_act",
-      "device_files",
-      "device_latest_image",
-      "mesh_status",
-      "mesh_objects",
-      "mesh_pair_link",
-      "mesh_send_command",
-      "coop_symbiote_status",
-      "coop_symbiote_create_session",
-      "coop_symbiote_manifest",
-      "coop_symbiote_chat",
-      "coop_symbiote_patch",
-      "coop_symbiote_ghost_test",
-      "coop_symbiote_debate",
-      "coop_symbiote_memory",
-      "web_research_deep",
-      "url_read",
-      "compose_artifact",
-      "artifact_status",
-      "pc_graph_rebuild",
-      "pc_graph_search",
-      "pc_graph_timeline",
-      "pc_graph_explain",
-      "pc_graph_inspect",
-      "agent_deploy",
-      "skill_compile",
-      "skill_run",
-      "skill_list",
-      "skill_inspect",
-      "neural_vault_status",
-      "neural_vault_context",
-      "neural_vault_resolve",
-      "neural_vault_actions",
-      "neural_vault_integrations",
-      "neural_vault_api_key_metadata",
-      "neural_vault_maintenance",
-      "memory_os_v4_status",
-      "memory_os_v4_query",
-      "memory_os_v4_scan_files",
-      "memory_os_v4_run_agent",
-      "mesh_self_test",
-      "desktop_control",
-      "computer_use",
-    ]);
+
     // Prompt-injection guard, scoped to the leg that actually matters.
     //
     // The trifecta is: untrusted content + private data + an EXFILTRATION vector. Blocking any
@@ -4088,15 +4117,129 @@ function createCapabilityEngine({
     // on indirect tool outputs" while list_processes sat there exposed and unused.
     //
     // Anything that can act or leave the machine stays blocked exactly as before.
-    const indirectBlocked = context.indirect && !safeBrowserContinuation.has(tool)
-      && definition.risk !== "observe";
-    if (indirectBlocked) {
-      return { ok: false, status: "denied", capability: definition, error: "Indirect tool output cannot authorize this capability." };
+    // Blocked on WHAT THE TOOL TOUCHES, not on whether someone remembered to list its name.
+    //
+    // `safeBrowserContinuation` listed 59 names as safe to continue with after untrusted content,
+    // and 24 of them could act — `desktop_control`, `computer_use`, `screen_act`, `browser_act`,
+    // `mesh_send_command`, `skill_run` and `agent_deploy` among them — directly beneath a comment
+    // promising "anything that can act or leave the machine stays blocked exactly as before".
+    // Verified 2026-08-22: `screen_capture` tainted a turn and `computer_use` ran regardless.
+    //
+    // Measured before switching over: this stops exactly the seven previously-exempt tools that
+    // type, click, launch or talk to another device, and stops nothing that only reads or writes
+    // locally. Browsing, reading and drafting all continue.
+    // ...and the leg is cut by asking WHOSE REQUEST this is, not whether the turn is contaminated.
+    //
+    // `context.indirect` only ever meant "something from outside was read at some point this turn".
+    // That is turn-level taint tracking, which PAuth (arXiv 2603.17170) identifies as the
+    // known-inferior design: once the flag is up, the owner's own instruction and an injected one
+    // are indistinguishable, so both get refused. Measured here before the change: browser_click
+    // then browser_type denied, screen_act twice denied, read-notifications then reply denied, and
+    // a bare "how many tabs are open" refused. Ten tools both RAISED the flag and were BLOCKED by
+    // it, so every multi-step automation killed itself at step two.
+    //
+    // The trust anchor is the owner's request, captured before anything was read. Not a new
+    // mechanism: the turn's tool set is chosen from the owner's prompt and frozen before the model
+    // loop starts, and the model can only call what is in it — a pre-execution commitment in the
+    // plan-then-execute sense (arXiv 2509.08646). If the owner's words put this tool on the table,
+    // an injected instruction did not. The old check was never stopping "injection reaches for a
+    // new tool" — selection already made that impossible. It only blocked the owner's own tools.
+    //
+    // What still gets stopped is the case that matters: a tool that reaches out or acts on the
+    // machine, in a turn that has read untrusted content, that the owner never asked for.
+    //
+    // And it ASKS instead of refusing. A silent `denied` had no route back — it returned before the
+    // confirmation gate below, so the owner could not approve it even in principle, and the model
+    // reliably mistranslated the error into "restricted by local security policies", telling him a
+    // security story that was not true. A card names the tool, its arguments, and through
+    // `provenance` what dragged the untrusted content in. Keeping such gates rare is also what
+    // keeps them read at all (ATR-2026-00118, approval fatigue as an attack surface).
+    //
+    // Deliberately a set lookup, not a judgement. The adaptive-evaluation study (arXiv 2606.26479)
+    // found Progent survived defence-aware attack (4.2% -> 2.6% ASR) on the strength of its
+    // deterministic checks, while the adaptive attack aimed squarely at its one model-driven part.
+    //
+    // NOT fixed here, and worth naming: this governs WHICH TOOL may act, not what its ARGUMENTS
+    // say. An owner who asks for a link to be opened has authorised open_url, and the address can
+    // still come from the page. Argument-level provenance is the Progent/IPIGuard half of the
+    // problem and is separate work.
+    // Which tool may run is only half the question. The other half is who chose its TARGET.
+    //
+    // The tool-level test above cannot fire on its own: the model may only call tools the owner's
+    // own request already put on the table, so `ownerRequested` is true for every call that can
+    // reach here. Verified by reading the call path, not assumed — `indirect` is set in exactly one
+    // place, on the model's tool call, and the offered set and the owner-requested set are built
+    // from the same list. On its own, the check above is inert.
+    //
+    // The live exposure it leaves is concrete: "read this page and open what it recommends"
+    // legitimately puts open_app on the table, and then the PAGE picks the application. Progent
+    // (arXiv 2504.11703) and IPIGuard (arXiv 2508.15310) both make this the centre of the problem —
+    // rules over tool names AND arguments, and validating that values passed between tools match
+    // the original task rather than something an intermediate result introduced.
+    //
+    // So: compare the argument against the two sources it could have come from. If the owner typed
+    // it, it is his instruction. If he did not, and it appears in the untrusted text this turn
+    // pulled in, then the content chose it and the owner should see a card before it happens.
+    // Plain string comparison, no parsing and no vocabulary — a value either occurs in what he
+    // wrote or it does not.
+    const targetChosenByContent = () => {
+      const untrusted = String(context.untrustedText || "");
+      if (!untrusted) return null;
+      const flatten = (s) => String(s).toLowerCase().replace(/\s+/g, " ").trim();
+      const asked = flatten(context.userPrompt || "");
+      const content = flatten(untrusted);
+      for (const [name, value] of Object.entries(args || {})) {
+        if (typeof value !== "string") continue;
+        const candidate = flatten(value);
+        // Short values are the tool's own vocabulary ("click", "open", "left") and say nothing
+        // about provenance; they collide with ordinary page text constantly.
+        if (candidate.length < 8) continue;
+        if (asked.includes(candidate)) continue;      // the owner wrote it himself
+        if (content.includes(candidate)) return { name, value };
+      }
+      return null;
+    };
+    const fromContent = (context.indirect && reachesOutOrActsOnMachine(definition)) ? targetChosenByContent() : null;
+    const outsideTheOwnersRequest = context.indirect
+      && reachesOutOrActsOnMachine(definition)
+      && (!context.ownerRequested || Boolean(fromContent));
+    // Logged because the honest answer to "does this guard ever fire?" has to be measured, not
+    // assumed. Every acting call in a turn that has read untrusted content prints its verdict, so
+    // the split between "the owner asked for this" and "the content did" is visible in the log
+    // rather than argued about.
+    if (context.indirect && reachesOutOrActsOnMachine(definition)) {
+      console.warn(`[injection-guard] ${tool} in a turn carrying untrusted content (from ${context.indirectSource || "?"}) — ownerRequested=${Boolean(context.ownerRequested)}${fromContent ? ` targetFromContent=${fromContent.name}=${JSON.stringify(String(fromContent.value).slice(0, 60))}` : ""} -> ${outsideTheOwnersRequest ? "ASKING THE OWNER" : "allowed"}`);
+    }
+    if (outsideTheOwnersRequest) {
+      if (!context.sessionId) {
+        return {
+          ok: false,
+          status: "denied",
+          capability: definition,
+          error: "Untrusted content asked for this, the owner did not, and there is no active session to ask.",
+        };
+      }
+      return { ok: false, status: "confirmation_required", confirmation: requestConfirmation(tool, args, context), capability: definition };
     }
     if (context.source === "voice" && ["execute", "commit"].includes(definition.risk)) {
       return { ok: false, status: "denied", capability: definition, error: "Phone voice sessions cannot authorize computer-control or commit actions." };
     }
-    if ((definition.confirmationRequired || policy.requiresConfirmation) && !context.confirmed) {
+    // Already leased for this task? Then the owner has answered this question once and does not get
+    // asked again for the rest of it.
+    //
+    // The lease is over the EFFECT, so a second tool that causes the same thing is covered by the
+    // same answer — which is what removes the substitution route rather than papering over it. The
+    // ledger refuses to lease anything irreversible or outbound, so those keep asking every time,
+    // which is what keeps the rare prompts worth reading. A tool that has not declared its effects
+    // is never covered: silence is not consent.
+    const leaseCovers = isDeclared(definition)
+      && !isIrreversibleOrLeaves(definition)
+      && hasAnyEffect(definition)
+      && [...effectsFor(definition)].every((effect) => effectGrants.isGranted({ sessionId: context.sessionId, effect }));
+    if (leaseCovers) {
+      console.warn(`[grants] ${tool} ran under an existing lease [${[...effectsFor(definition)].join(",")}] — not asking again this task`);
+    }
+    if ((definition.confirmationRequired || policy.requiresConfirmation) && !context.confirmed && !leaseCovers) {
       if (!context.sessionId) {
         return {
           ok: false,
@@ -4282,7 +4425,7 @@ function createCapabilityEngine({
         id: item.id,
         tool: item.tool,
         risk: item.risk,
-        summary: confirmationSummary(item.args || {}),
+        summary: summaryFor(item.args || {}, item.provenance),
         // The pending-list card and the inline card must describe the action the same way; the UI
         // falls back to this list whenever the inline payload is missing.
         commit: commitCard(item.args || {}),

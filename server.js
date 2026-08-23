@@ -24,6 +24,11 @@ const { createAvatarCache } = require("./server/contact-avatars");
 const { createRequestTrust } = require("./server/request-trust");
 // Cortex v4 — single Gemini model registry (verified available on this key).
 const { MODELS: GEMINI_MODELS, strengthProfile: geminiStrengthProfile, noteModelFailure, noteModelSuccess, resolveCortexExecution } = require("./server/gemini-models");
+// Effect-scoped authority — server/tool-effects.js + server/effect-grants.js.
+// WIRED BUT NOT ENFORCING: the ledger is opened, filled and revoked so the wiring can be checked
+// against reality first. No gate consults it yet; every confirmation decision is unchanged.
+const effectGrants = require("./server/effect-grants");
+const { effectsFor, isDeclared } = require("./server/tool-effects");
 const { createCostMeter } = require("./server/cost-meter");
 const { createMemoryStore } = require("./server/memory-store");
 const { createMemoryExtractor } = require("./server/memory-extractor");
@@ -2800,7 +2805,7 @@ function summarizeVerifiedToolResults(toolResults) {
     lines.push(`${item.tool} failed: ${(cause || "the adapter returned an error").slice(0, 180)}.`);
   }
   if (!lines.length) return "The request did not produce a verified tool result.";
-  return `${summaryPrefix({ effective, confirmations, completed })}\n\n${lines.map((line) => `- ${line}`).join("\n")}`;
+  return `${summaryPrefix({ effective, confirmations, completed, failed })}\n\n${lines.map((line) => `- ${line}`).join("\n")}`;
 }
 
 // A completion claim has to survive the turn's own tool results.
@@ -2815,15 +2820,242 @@ function summarizeVerifiedToolResults(toolResults) {
 // have changed anything SUCCEEDED, and the reply nonetheless says the thing was done. Grounded
 // answers, read-only lookups and honest refusals are all untouched — they either have an effective
 // tool behind them or make no claim.
-const COMPLETION_CLAIM = /\b(?:i(?:'ve| have)\s+(?:successfully\s+)?(?:switched|opened|launched|gathered|read|captured|moved|resized|arranged|closed|sent|saved|written|exported|updated|set|added|scheduled|deleted|renamed)|已)\b/i;
+// Past AND present-progressive. "I am opening the Kalshi panel for you now" is every bit as much a
+// claim that something is happening as "I have opened" is — and it was the actual wording used when
+// nothing had been called at all. Deliberately does NOT match offers ("I can open…", "shall I open…"),
+// which promise nothing and are the honest reply when a tool has not run.
+const DID_VERBS = "switched|opened|launched|gathered|read|captured|moved|resized|arranged|closed|sent|saved|written|exported|updated|set|added|scheduled|deleted|renamed|rendered|plotted|graphed|displayed";
+const DOING_VERBS = "opening|switching|launching|moving|resizing|arranging|closing|sending|saving|writing|exporting|updating|adding|scheduling|deleting|renaming|rendering|plotting|graphing|displaying|pulling up|bringing up";
+const COMPLETION_CLAIM = new RegExp(
+  `\\b(?:i(?:'ve| have)\\s+(?:successfully\\s+)?(?:${DID_VERBS})`
+  + `|i(?:'m| am)\\s+(?:now\\s+)?(?:${DOING_VERBS})`
+  + `|(?:^|\\.\\s+)(?:${DOING_VERBS})\\s+(?:the|your|my)\\b)`,
+  "i",
+);
 
-function guardUnearnedClaim(text, toolResults = []) {
+// Does this reply tell the owner that something was DONE?
+//
+// This used to be answered by a list of verbs, and a list of verbs is only ever as good as the day
+// someone last edited it. Measured against real replies, five of ten ordinary phrasings were
+// invisible to it — "ChatGPT is now open", "Opened it.", "Done, ChatGPT is up.", "I went ahead and
+// opened it.", "That's now running for you." And on 2026-08-22 the plainest case yet slipped
+// through: asked to remember a number, Jarvis answered "Understood. I have recorded that your lucky
+// number is 47", called no tool at all, and saved nothing — "recorded" was simply not on the list.
+//
+// Adding the missing word is the trap: the surface is unbounded, and every miss is silent. The
+// question is a judgement about meaning, so it is asked as one. The STRUCTURAL half stays hard —
+// this is only ever consulted when nothing took effect — so the model is never deciding whether an
+// action happened, only whether the sentence claims one did.
+//
+// Falls back to the old verb list if the call fails, so a bad moment degrades to today's behaviour
+// rather than to no guard at all.
+async function replyClaimsAnAction(body) {
+  const settings = loadSettings();
+  if (!settings.geminiKey) return COMPLETION_CLAIM.test(body);
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 4000);
+  try {
+    const model = settings.geminiRouterModel || GEMINI_MODELS.router;
+    const response = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(settings.geminiKey)}`,
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        signal: controller.signal,
+        body: JSON.stringify({
+          contents: [{ role: "user", parts: [{ text: [
+            "Does this assistant reply tell the user that an action was carried out, or is being carried out, on their behalf?",
+            "",
+            "YES when it reports doing something: saving, remembering, opening, sending, moving, closing, scheduling, drawing, changing, running — in any wording, including casual ones like \"done\", \"that's up now\", \"noted\", \"all set\".",
+            "NO when it only answers a question, states a fact, offers to do something, asks for confirmation, or says it could not do something.",
+            "",
+            "Reply:",
+            body.slice(0, 2000),
+          ].join("\n") }] }],
+          generationConfig: {
+            temperature: 0,
+            // 20 was not enough for the model to finish even {"claimsAction":true} once it
+            // formatted the object, so every response came back truncated, every parse threw, and
+            // the guard fell back to the verb list on every single turn — silently, which is why it
+            // looked like the judge simply disagreed.
+            maxOutputTokens: 120,
+            responseMimeType: "application/json",
+            responseSchema: { type: "object", properties: { claimsAction: { type: "boolean" } }, required: ["claimsAction"] },
+          },
+        }),
+      },
+    );
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data?.error?.message || `Gemini ${response.status}`);
+    const raw = data.candidates?.[0]?.content?.parts?.map((part) => part.text || "").join("") || "";
+    const verdict = Boolean(JSON.parse(raw || "{}").claimsAction);
+    console.warn(`[honesty] judge says claimsAction=${verdict} for: ${JSON.stringify(body.slice(0, 70))}`);
+    return verdict;
+  } catch (err) {
+    console.warn(`[honesty] judge UNAVAILABLE (${String(err && err.message || err).slice(0, 90)}) — falling back to the verb list`);
+    return COMPLETION_CLAIM.test(body);   // degraded, never absent
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+// Does the reply claim more than the tool receipts actually support?
+//
+// The guard used to stop dead the moment ANY tool took effect, on the theory that a real action
+// means a real answer. It does not: a turn can draw a chart, fail to render a figure, and leave an
+// email sitting unapproved, and "something worked" says nothing about whether the sentence matches.
+// Measured 2026-08-22, "chart apple's last month and then email that chart to me" reported
+// "Done. Here's what I verified:" over a failed render and an unapproved email.
+//
+// This is the case the published work calls misstated tool output — an agent turning "not approved"
+// into something that reads as done — and the recommended detection is comparing the claim against
+// the tool receipts, which is exactly what is passed in here. The receipts are the authority; the
+// sentence is the thing on trial.
+//
+// Only consulted on MIXED turns (something worked AND something did not), because a turn where
+// everything worked has nothing to overclaim about and a turn where nothing worked is already
+// handled above. Fails OPEN: an unavailable judge leaves the reply alone rather than mangling it.
+async function replyOverclaims(body, receipts) {
+  const settings = loadSettings();
+  if (!settings.geminiKey) return false;
+  const ledger = receipts.slice(0, 12).map((item) => {
+    const state = item.status === "confirmation_required" ? "WAITING FOR THE OWNER'S APPROVAL — did not run"
+      : item.ok ? "succeeded"
+      : `FAILED: ${String(item.error || "no reason given").slice(0, 120)}`;
+    return `- ${item.tool}: ${state}`;
+  }).join("\n");
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 4000);
+  try {
+    const model = settings.geminiRouterModel || GEMINI_MODELS.router;
+    const response = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(settings.geminiKey)}`,
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        signal: controller.signal,
+        body: JSON.stringify({
+          contents: [{ role: "user", parts: [{ text: [
+            "Here is what actually happened this turn, from the system's own records:",
+            ledger,
+            "",
+            "Here is what the assistant told the user:",
+            String(body).slice(0, 2000),
+            "",
+            "Answer true if EITHER of these is the case:",
+            "(a) The reply tells the user something was done which the records show FAILED, is still WAITING FOR APPROVAL, or never ran at all.",
+            // (b) exists because the assistant invents REASONS as readily as it invents results, and
+            // the original question only asked about results. Measured 2026-08-22: asked to open an
+            // app that simply is not installed, it answered "it does not exist on this machine, and
+            // opening arbitrary simulated app names is restricted by system guards during
+            // stress-test conditions". No guard ran. There are no stress-test conditions. The tool
+            // had returned the plain truth — 'No installed app matches "zzqxwidget"' — and the
+            // assistant dressed it up as a security policy. Asked to read a web page it never
+            // fetched, it said "according to the provided sources" and recited the page from
+            // memory. A false explanation is as damaging as a false result: the owner starts
+            // believing his machine is locked down, or that a page was read, when neither is true.
+            "(b) The reply gives a REASON the records do not support — for example claiming a security policy, guard, permission rule or antivirus blocked something when no record shows anything blocked it, or claiming it read, verified or sourced something when no tool actually read it.",
+            "Answer true only if the reply would leave the user believing something happened, or was prevented, that the records do not show.",
+            "Answer false if the reply is accurate, including when it openly says what failed or what is waiting.",
+          ].join("\n") }] }],
+          generationConfig: {
+            temperature: 0,
+            maxOutputTokens: 120,
+            responseMimeType: "application/json",
+            // `kind` decides which correction gets appended. Without it, an invented REASON was
+            // about to be corrected with "it either failed or is still waiting for your approval",
+            // which is its own falsehood — the tool did run and did report honestly; it was the
+            // explanation that was made up.
+            responseSchema: {
+              type: "object",
+              properties: {
+                overclaims: { type: "boolean" },
+                kind: { type: "string", enum: ["result", "reason"] },
+              },
+              required: ["overclaims", "kind"],
+            },
+          },
+        }),
+      },
+    );
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data?.error?.message || `Gemini ${response.status}`);
+    const raw = data.candidates?.[0]?.content?.parts?.map((part) => part.text || "").join("") || "";
+    const parsed = JSON.parse(raw || "{}");
+    const verdict = { overclaims: Boolean(parsed.overclaims), kind: parsed.kind === "reason" ? "reason" : "result" };
+    console.warn(`[honesty] overclaim judge=${verdict.overclaims} (${verdict.kind}) for: ${JSON.stringify(String(body).slice(0, 70))}`);
+    return verdict;
+  } catch (err) {
+    console.warn(`[honesty] overclaim judge unavailable (${String(err && err.message || err).slice(0, 80)}) — leaving the reply alone`);
+    return { overclaims: false, kind: "result" };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function guardUnearnedClaim(text, toolResults = []) {
   const body = String(text || "");
-  if (!body.trim() || !COMPLETION_CLAIM.test(body)) return text;
+  if (!body.trim()) return text;
   const list = Array.isArray(toolResults) ? toolResults : [];
   const { failed, effective } = classifyToolResults(list, observeOnlyTools());
-  if (!failed.length || effective.length) return text;
+  // Something took effect. That is not a free pass: on a MIXED turn — something worked, something
+  // failed or is still waiting for approval — the sentence can still describe the whole request as
+  // done. Those are the turns worth checking; a turn where everything worked has nothing to
+  // overclaim, so it is left alone and costs nothing.
+  if (effective.length) {
+    // A tool that failed and then SUCCEEDED on a retry is not outstanding.
+    //
+    // stage_render routinely fails once — the faithfulness audit rejects a figure — and the model
+    // re-renders from the real payload and succeeds. Both attempts sit in the receipts. Counting
+    // the first one produced a correction that was itself false: measured 2026-08-22, a chart that
+    // was genuinely on screen got "Correction, sir: stage render did not actually complete"
+    // appended to a correct reply. A guard that invents its own falsehoods is worse than none.
+    const succeeded = new Set(effective.map((item) => String(item.tool)));
+    const outstanding = [...failed, ...list.filter((item) => item.status === "confirmation_required")]
+      .filter((item) => !succeeded.has(String(item.tool)));
+    if (!outstanding.length) return text;
+    const verdict = await replyOverclaims(body, list);
+    if (!verdict.overclaims) return text;
+    const names = [...new Set(outstanding.map((item) => String(item.tool || "a tool").replace(/_/g, " ")))].join(", ");
+    if (verdict.kind === "reason") {
+      console.warn(`[honesty] corrected an invented reason in: ${JSON.stringify(body.slice(0, 60))}`);
+      return `${body}\n\nCorrection, sir: I explained that with a restriction or a source that does not exist in this turn's records. Nothing blocked it and nothing was read beyond what ${names} actually returned — treat the reason I gave as unreliable.`;
+    }
+    console.warn(`[honesty] corrected an overclaim: ${names} did not complete`);
+    return `${body}\n\nCorrection, sir: ${names} did not actually complete — it either failed or is still waiting for your approval, so please do not treat that part as done.`;
+  }
+  if (!(await replyClaimsAnAction(body))) {
+    // Claiming a FINDING is as false as claiming an ACT, and only the act was ever checked here.
+    //
+    // Observed live 2026-08-22: asked to read a page, computer_use was cancelled, nothing read
+    // anything — and the reply was "Based on verified records, the exact text on example.com is…"
+    // followed by wording the page has not carried since 2024. It states a fact rather than an
+    // action, so the action check returned false and the sentence went out untouched. The owner had
+    // no way to tell that from a real reading.
+    //
+    // Only when something was actually attempted and failed. A turn with no tools at all is
+    // ordinary conversation, and running a judge over it would cost a call to say nothing.
+    if (!failed.length) return text;
+    const verdict = await replyOverclaims(body, list);
+    if (!verdict.overclaims) return text;
+    const attempted = [...new Set(failed.map((item) => String(item.tool || "a tool").replace(/_/g, " ")))].join(", ");
+    console.warn(`[honesty] corrected an invented finding after ${attempted} failed`);
+    return `${body}\n\nCorrection, sir: nothing actually read that — ${attempted} failed and no other tool returned anything, so what I just described came from memory, not from the source. Treat it as unverified.`;
+  }
+  // Nothing took effect — whether because every tool failed, or because none was called at all.
+  //
+  // The first version required a FAILED tool, which missed the commoner case: "yeah that one" came
+  // back "I am opening the Kalshi panel in focus mode for you now" having called nothing whatsoever.
+  // Grounded answers are not caught by widening this, because they report a fact ("Bitcoin is
+  // trading at…") rather than claiming an act ("I have opened…"), and COMPLETION_CLAIM only matches
+  // the latter.
 
+  if (!failed.length) {
+    // Claimed an act with nothing behind it at all — "I am opening the Kalshi panel in focus mode
+    // for you now" after calling no tool whatsoever.
+    console.warn("[honesty] withheld a completion claim: no tool was called at all");
+    return "I didn't actually do that — no tool ran, so I'd only be telling you it happened. Say specifically what you want opened or changed and I'll run it for real.";
+  }
   const names = [...new Set(failed.map((item) => String(item.tool || "a tool").replace(/_/g, " ")))].join(", ");
   const why = String(failed[0]?.error || "").split("\n")[0].slice(0, 160);
   console.warn(`[honesty] withheld a completion claim: ${names} failed and nothing else took effect`);
@@ -4337,6 +4569,27 @@ async function callGemini({ prompt, imageData, attachments = [], mode, sessionId
     finalText = summarizeVerifiedToolResults(toolResults);
     return wrapped;
   };
+    // Untrusted content marks the TURN, wherever it entered from.
+    //
+    // These lived below, beside the model's tool loop, and were only ever set by tools the model
+    // itself called. Jarvis also reads on its own before the loop starts: a prompt about the screen
+    // triggers a screen_capture preflight, and that content was never marked. Verified 2026-08-22 —
+    // "read example.com and then put my browser into full screen mode" captured the screen through
+    // the preflight and then ran computer_use, because as far as the guard was concerned nothing
+    // untrusted had happened. A guard that only watches one door is not a guard.
+    const UNTRUSTED_CONTENT_TOOL = /^(?:url_read|web_research|web_research_deep|research_v2|browser_|screen_|computer_use|read_clipboard|gmail_(?:read|list|search|thread|message|get)|instagram_|canvas_|news_headlines|device_files|device_latest_image)/i;
+    let untrustedContentInLoop = false;
+    // The untrusted words themselves, so a later action's arguments can be compared against them.
+    let untrustedTextSeen = "";
+    // Which tool brought it in, so an approval card can name it instead of saying only that
+    // something did.
+    let untrustedContentSource = "";
+    const noteUntrusted = (tool) => {
+      if (!UNTRUSTED_CONTENT_TOOL.test(String(tool))) return;
+      untrustedContentInLoop = true;
+      if (!untrustedContentSource) untrustedContentSource = String(tool).replace(/_/g, " ");
+    };
+
   const runPreflight = async (tool, args) => {
     const execution = await executeCapability(tool, args, {
       deviceId: deviceId || sessionId || "local-browser",
@@ -4344,6 +4597,23 @@ async function callGemini({ prompt, imageData, attachments = [], mode, sessionId
       source: source || mode || "chat",
     });
     toolResults.push({ tool, ...execution });
+    // A preflight of the owner's OWN SCREEN does not taint the turn.
+    //
+    // Jarvis screenshots the desktop before any screen-related request, to see what it is being
+    // asked about. Counting that as untrusted content marks every such turn, and then the very
+    // action the owner asked for is refused: measured 2026-08-22, a bare "put my browser into full
+    // screen" — no web page anywhere in it — came back "blocked due to an authorization
+    // restriction". That is the over-blocking this guard's own comment already warned about.
+    //
+    // The screen is the owner's surface, captured to serve an instruction he just typed. The
+    // internet is not. Anything a preflight fetches from OUTSIDE the machine still taints, and a
+    // screen read the MODEL chooses to make inside the loop still taints — only this one
+    // owner-initiated capture is exempt.
+    //
+    // The residual risk is real and worth naming: a malicious page open on screen during that
+    // capture is untrusted content that will not be marked. Closing that needs the instruction's
+    // own provenance tracked, not a wider block.
+    if (!/^screen_/i.test(String(tool))) noteUntrusted(tool);
     return execution;
   };
 
@@ -4637,7 +4907,7 @@ async function callGemini({ prompt, imageData, attachments = [], mode, sessionId
     if (stageSkeletonRaised && !collectUiOutput(toolResults).uiActions.some((a) => a?.type === "stage-render")) {
       onUiActions?.([{ type: "stage-dismiss" }]);
     }
-    finalText = guardUnearnedClaim(finalText, toolResults);
+    finalText = await guardUnearnedClaim(finalText, toolResults);
     const sources = collectSourcesFromEvidence(toolResults, groundingMetadata);
     const artifacts = collectArtifactsFromTools(toolResults);
     const uiOutput = collectUiOutput(toolResults);
@@ -4730,8 +5000,36 @@ async function callGemini({ prompt, imageData, attachments = [], mode, sessionId
     // commit). gmail_prepare_email / gmail_send_prepared are WRITE actions on the owner's own draft —
     // they ingest nothing untrusted — so they must NOT trip this, or the send in the same turn is
     // denied as "indirect" before an approval card can even appear. Only gmail READ tools belong here.
-    const UNTRUSTED_CONTENT_TOOL = /^(?:url_read|web_research|web_research_deep|research_v2|browser_|screen_|computer_use|read_clipboard|gmail_(?:read|list|search|thread|message|get)|instagram_|canvas_|news_headlines|device_files|device_latest_image)/i;
-    let untrustedContentInLoop = false;
+    // One owner turn = one grant epoch. Whatever was approved during the previous turn is gone
+    // before the first tool of this one is weighed, so authority cannot outlive the request that
+    // justified it — PORTICO's closure rule, narrowed to a turn. Opening only; nothing enforces yet.
+    effectGrants.openEpoch(sessionId);
+    // What the OWNER's words asked for — the trust anchor the injection guard was missing.
+    //
+    // The guard used to ask "has this turn read anything from outside?" and deny every acting tool
+    // if so. That is turn-level taint tracking, and PAuth (arXiv 2603.17170) names it as the
+    // known-inferior design precisely because it cannot tell the owner's instruction apart from an
+    // injected one — both look identical once the turn is marked. Measured cost on this machine:
+    // browser_click then browser_type = denied, screen_act twice = denied, read notifications then
+    // reply = denied. Every multi-step automation died at step two, and "how many tabs are open"
+    // came back refused.
+    //
+    // The literature's answer (PAuth; Progent arXiv 2504.11703; IPIGuard arXiv 2508.15310;
+    // plan-then-execute arXiv 2509.08646) is to anchor authority on the owner's own request and
+    // commit to it BEFORE any untrusted content is read. Jarvis already does the hard half of that
+    // without knowing it: `functionDeclarations` is chosen from the owner's prompt at line ~4378
+    // and is final before this loop starts, and the model can only call what is in it. So the set
+    // is already a pre-execution commitment; it was simply never consulted when deciding trust.
+    //
+    // Kept deterministic on purpose. The same adaptive-evaluation paper (arXiv 2606.26479) found
+    // Progent held up under attack (4.2% -> 2.6% ASR) specifically because its check is a lookup,
+    // while the one model-based component was where the adaptive attack aimed. A set membership
+    // test cannot be talked round; an LLM asked "is this allowed?" can.
+    //
+    // Residual risk, stated rather than papered over: the retrieval rewrite that feeds tool
+    // selection can see earlier turns, so content injected in a PREVIOUS turn could in principle
+    // widen this set. Narrower than what it replaces, and not closed here.
+    const ownerRequestedTools = new Set(functionDeclarations.map((tool) => String(tool?.name || "")).filter(Boolean));
     for (let turn = 0; turn < maxToolTurns; turn += 1) {
       let data = {};
       let response;
@@ -4763,7 +5061,25 @@ async function callGemini({ prompt, imageData, attachments = [], mode, sessionId
         // "near me" / "nearest" resolve to the owner's real location. Fixes the original
         // "when do I leave to beat traffic to Equinox in Chinatown" failure.
         const promptStr = String(prompt || "");
-        const useMaps = !useCompute && turn === 0 && (
+        // Grounding is a LAST RESORT, never an override of tools already chosen.
+        //
+        // Maps grounding and function declarations are mutually exclusive: switching to Maps throws
+        // away every tool the retriever picked for this turn. The word list below decided that on
+        // its own, and "how far" is in it. Measured 2026-08-21, the same question twice:
+        //
+        //   "how far off its month high is nvidia right now"        -> 0 tools, and the model told
+        //        the owner "the required market data systems and web search utilities are offline"
+        //   "what distance below its month high is nvidia right now" -> $215.85, $12.07 below the
+        //        $227.92 monthly high set on 17 August — correct, from real tools
+        //
+        // Same question. Two words different. Nothing was offline; the tools had been discarded
+        // before the model ever saw them, so it reported its own capabilities as broken.
+        //
+        // The fresh-info lane below already refuses to strip a turn that needs its tools. Maps now
+        // obeys the same rule: if retrieval found tools for this turn, they stand. Grounding only
+        // runs when there is nothing to lose — which is exactly when it is worth having.
+        const wouldDiscardTools = (prepared.selectedTools || []).length > 0;
+        const useMaps = !useCompute && !wouldDiscardTools && turn === 0 && (
           /\b(directions?|driving directions|drive to|traffic|commute|nearest|closest|near me|near here|route to|navigate to|how far|when should i leave|when do i leave|leave by|open now|business hours|hours today|restaurants? near|coffee (?:shop )?near|gas station|parking near|eta to|miles (?:from|to)|blocks? (?:from|away)|walking distance)\b/i.test(promptStr)
           || /\bhow long (?:to|does it take to|would it take to)\s+(?:drive|walk|get|bike|commute|travel)/i.test(promptStr)
           || /\bwhat time (?:should|do) i (?:leave|head out)/i.test(promptStr)
@@ -4948,6 +5264,10 @@ async function callGemini({ prompt, imageData, attachments = [], mode, sessionId
               sessionId,
               source: source || mode || "chat",
               indirect: untrustedContentInLoop,
+              indirectSource: untrustedContentSource,
+              // Was this tool part of what the owner asked for, decided before anything was read?
+              ownerRequested: ownerRequestedTools.has(functionCall.name),
+              untrustedText: untrustedTextSeen,
               // The owner's raw words this turn — lets time-taking tools (atlas/calendar) re-resolve
               // "tomorrow"/"next monday"/etc deterministically instead of trusting the model's date math.
               userPrompt: rawUserMessage(prompt),
@@ -4981,7 +5301,30 @@ async function callGemini({ prompt, imageData, attachments = [], mode, sessionId
         // Once external content has entered this turn, every later call is treated as
         // possibly-influenced by it. Raised on the call, not on its success — a partially
         // completed page read has still put untrusted text in front of the model.
-        if (UNTRUSTED_CONTENT_TOOL.test(functionCall.name)) untrustedContentInLoop = true;
+        if (UNTRUSTED_CONTENT_TOOL.test(functionCall.name)) {
+          noteUntrusted(functionCall.name);
+          // Keep the untrusted TEXT, not just the fact that some arrived.
+          //
+          // Knowing a page was read tells you nothing about whether the page chose what happened
+          // next. Comparing the actual words is what separates "the owner asked for this" from
+          // "the page did" — and it is the half of the problem the tool-level check cannot reach,
+          // because the model may only call tools the owner's request already put on the table.
+          // Bounded so a long page cannot grow the turn without limit.
+          try {
+            const text = JSON.stringify(execution?.result ?? "");
+            if (text && untrustedTextSeen.length < 200_000) untrustedTextSeen += " " + text;
+          } catch { /* an unserialisable result contributes nothing to compare against */ }
+          // Untrusted content just entered the turn. Drop every effect grant now: from here the
+          // turn may look, but it must not keep acting on authority the owner gave before a web
+          // page, a screen or an inbox was read. Rule of Two — never untrusted input together
+          // with state change. This is the replacement for an exemption list that named 24
+          // effectful tools as safe to continue with.
+          const grantsBefore = effectGrants.statusFor(sessionId);
+          const droppedGrants = effectGrants.revokeAll({ sessionId, reason: functionCall.name + " pulled external content into the turn" });
+          console.warn("[grants] " + functionCall.name + " brought untrusted content into the turn — revoked " + droppedGrants
+            + " (held: [" + grantsBefore.grants.map((g) => g.effect).join(",") + "] epoch=" + grantsBefore.epoch
+            + " session=" + String(sessionId).slice(0, 10) + ")");
+        }
         toolResults.push({ tool: functionCall.name, args: functionCall.args || {}, ...execution });
         onEvent?.({
           kind: "tool",
@@ -5059,7 +5402,7 @@ async function callGemini({ prompt, imageData, attachments = [], mode, sessionId
     if (stageSkeletonRaised && !collectUiOutput(toolResults).uiActions.some((a) => a?.type === "stage-render")) {
       onUiActions?.([{ type: "stage-dismiss" }]);
     }
-    finalText = guardUnearnedClaim(finalText, toolResults);
+    finalText = await guardUnearnedClaim(finalText, toolResults);
     const sources = collectSourcesFromEvidence(toolResults, groundingMetadata);
     const artifacts = collectArtifactsFromTools(toolResults);
     const uiOutput = collectUiOutput(toolResults);
@@ -5072,8 +5415,24 @@ async function callGemini({ prompt, imageData, attachments = [], mode, sessionId
           ? "The action is prepared and waiting for your confirmation."
           : toolResults.some((item) => !item.ok)
             ? `I could not complete the request: ${toolResults.find((item) => !item.ok)?.error || "a tool failed"}.`
-            : toolResults.length
-              ? "The requested operation completed."
+            // "a tool was attempted" is not "the operation completed".
+            //
+            // This said "The requested operation completed." whenever toolResults was non-empty,
+            // regardless of whether anything took effect — and it sits AFTER guardUnearnedClaim,
+            // which inspects finalText, so the guard never saw it. Measured 2026-08-22: a compound
+            // widget command that the resolver correctly declined, and that changed nothing on
+            // screen, still answered "The requested operation completed."
+            //
+            // It now reports what actually happened, using the same reading of the tool results
+            // that the honesty guard uses, so the two cannot disagree.
+            : classifyToolResults(toolResults, observeOnlyTools()).effective.length
+              // Name what actually took effect rather than saying "done". A bare "Done, that went
+              // through" after a compound request hides which half of it ran: measured 2026-08-22,
+              // "shrink kalshi and also make weather bigger" resized weather, silently skipped
+              // kalshi, and reported success for the whole thing.
+              ? summarizeVerifiedToolResults(toolResults)
+              : toolResults.length
+                ? "Nothing actually changed — the tools that ran only looked at things, so I have not done anything yet. Tell me the specific change you want."
               // Tier-2 fix: a fresh-info turn that produced no grounded text degrades HONESTLY —
               // never the old fake "staged in the operations queue" dead-end.
               : prepared.route.fresh
@@ -5961,19 +6320,24 @@ function meshAuthDevice(req) {
   return req.jarvisDevice;
 }
 
-function execFilePromise(file, args, options = {}) {
-  return new Promise((resolve, reject) => {
-    execFile(file, args, { windowsHide: true, ...options }, (error, stdout, stderr) => {
-      if (error) {
-        error.stderr = stderr;
-        reject(error);
-      } else {
-        resolve({ stdout, stderr });
-      }
-    });
-  });
-}
-
+// Screen capture goes through the operating system's own capture API, not a PowerShell script.
+//
+// The old version shelled out to PowerShell that compiled C# at runtime and called
+// Graphics.CopyFromScreen. That exact shape is published as a malware detection rule by Splunk,
+// Elastic and ManageEngine (MITRE ATT&CK T1113, "Screen Capture"), so Windows Defender refuses it
+// before the first line runs: "This script contains malicious content", reported as a ParserError.
+//
+// It was never intermittent, and never environmental. The owner's own tool log shows 23 of 23
+// captures succeeding up to 28 Jul, then 59 consecutive blocks from 8 Aug onward, once the
+// signature shipped — a 100% failure rate, not the "roughly one in four" the notes recorded by
+// averaging the working month against the broken one. Renaming the variables does make the block
+// go away, which is precisely why that is not the fix: it evades one signature string and breaks
+// again the next time the signature widens.
+//
+// node-screenshots is a compiled native module sitting on the platform's capture API. There is no
+// script text for a scanner to read, it reports true physical pixels (so DPI needs no
+// SetProcessDPIAware P/Invoke at all — the other half of what was being flagged), and it returns
+// in about 190ms rather than 1.2s.
 async function capturePrimaryScreen({ reason = "" } = {}) {
   const screenshotsDir = path.join(RUNTIME_DIR, "screen-captures");
   fs.mkdirSync(screenshotsDir, { recursive: true });
@@ -6004,34 +6368,66 @@ async function capturePrimaryScreen({ reason = "" } = {}) {
       capturedAt: isoNow(),
     };
   }
-  if (process.platform !== "win32") {
-    throw Object.assign(new Error("Laptop screen capture is currently implemented for Windows only."), { statusCode: 412 });
+
+  let Monitor;
+  try {
+    ({ Monitor } = require("node-screenshots"));
+  } catch (cause) {
+    throw Object.assign(
+      new Error("Screen capture needs the node-screenshots module, which is not installed for this platform. Run: npm install node-screenshots"),
+      { statusCode: 501, cause }
+    );
   }
-  const script = [
-    "Add-Type -TypeDefinition 'using System;using System.Runtime.InteropServices;public class JarvisCaptureDpi{[DllImport(\"user32.dll\")]public static extern bool SetProcessDPIAware();}';",
-    "[JarvisCaptureDpi]::SetProcessDPIAware() | Out-Null;",
-    "Add-Type -AssemblyName System.Windows.Forms;",
-    "Add-Type -AssemblyName System.Drawing;",
-    "$bounds = [System.Windows.Forms.SystemInformation]::VirtualScreen;",
-    "$bitmap = New-Object System.Drawing.Bitmap $bounds.Width, $bounds.Height;",
-    "$graphics = [System.Drawing.Graphics]::FromImage($bitmap);",
-    "$graphics.CopyFromScreen($bounds.Location, [System.Drawing.Point]::Empty, $bounds.Size);",
-    `$bitmap.Save(${JSON.stringify(outputPath)}, [System.Drawing.Imaging.ImageFormat]::Png);`,
-    "$graphics.Dispose();",
-    "$bitmap.Dispose();",
-    "$payload=[ordered]@{dimensions=($bounds.Width.ToString() + 'x' + $bounds.Height.ToString());x=[int]$bounds.X;y=[int]$bounds.Y;width=[int]$bounds.Width;height=[int]$bounds.Height};",
-    "$payload | ConvertTo-Json -Compress;",
-  ].join(" ");
-  const { stdout } = await execFilePromise("powershell.exe", ["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", script], { timeout: 15_000 });
-  const captureBounds = JSON.parse(stdout.trim());
+
+  const monitors = Monitor.all();
+  if (!monitors.length) {
+    throw Object.assign(new Error("No display was reported by the operating system, so there is nothing to capture."), { statusCode: 412 });
+  }
+
+  // The old script captured the whole virtual desktop, so this does too. Every monitor is captured
+  // and pasted back at its own desktop coordinates, because `bounds` below is what computer_use
+  // subtracts to turn a point in the image back into a point on the real screen — if the image and
+  // the bounds ever disagree, every click lands in the wrong place.
+  const left = Math.min(...monitors.map((m) => m.x()));
+  const top = Math.min(...monitors.map((m) => m.y()));
+  const width = Math.max(...monitors.map((m) => m.x() + m.width())) - left;
+  const height = Math.max(...monitors.map((m) => m.y() + m.height())) - top;
+
+  // Re-encode rather than writing the library's own PNG, because that PNG is barely compressed:
+  // 1919 KB for this desktop against 280 KB at the SAME 2880x1800 through sharp — and 280 KB is
+  // smaller than the 763 KB the old PowerShell path produced, so the capture that gets uploaded to
+  // the vision model is now lighter than it has ever been. Compression costs about 1.3s, which the
+  // upload gives back several times over. Resolution is never reduced: `bounds` has to keep
+  // describing the image exactly or computer_use clicks land in the wrong place.
+  const sharp = require("sharp");
+  const asLayer = (monitor) => {
+    const image = monitor.captureImageSync();
+    return {
+      input: image.toRawSync(),
+      raw: { width: image.width, height: image.height, channels: 4 },
+      left: monitor.x() - left,
+      top: monitor.y() - top,
+    };
+  };
+  const encoded = monitors.length === 1
+    ? await sharp(asLayer(monitors[0]).input, { raw: { width, height, channels: 4 } })
+      .png({ compressionLevel: 9, effort: 7 })
+      .toBuffer()
+    : await sharp({ create: { width, height, channels: 4, background: { r: 0, g: 0, b: 0, alpha: 1 } } })
+      .composite(monitors.map(asLayer))
+      .png({ compressionLevel: 9, effort: 7 })
+      .toBuffer();
+  fs.writeFileSync(outputPath, encoded, { mode: 0o600 });
+
   const stat = fs.statSync(outputPath);
+  const dimensions = `${width}x${height}`;
   const receipt = createReceipt({
     action: "screen.capture",
-    target: "Virtual desktop",
+    target: monitors.length === 1 ? "Primary display" : `Virtual desktop (${monitors.length} displays)`,
     risk: "Observe",
     input: reason,
     result: outputPath,
-    verification: [`Captured ${stat.size} bytes`, `${captureBounds.dimensions} virtual desktop at ${captureBounds.x},${captureBounds.y}`],
+    verification: [`Captured ${stat.size} bytes`, `${dimensions} virtual desktop at ${left},${top}`],
   });
   return {
     path: outputPath,
@@ -6039,8 +6435,8 @@ async function capturePrimaryScreen({ reason = "" } = {}) {
     url: `/api/device-mesh/screen/${encodeURIComponent(path.basename(outputPath))}`,
     bytes: stat.size,
     mimeType: "image/png",
-    dimensions: captureBounds.dimensions,
-    bounds: { x: captureBounds.x, y: captureBounds.y, width: captureBounds.width, height: captureBounds.height },
+    dimensions,
+    bounds: { x: left, y: top, width, height },
     reason,
     receipt,
     capturedAt: isoNow(),
@@ -7853,7 +8249,19 @@ async function handleApi(req, res, pathname, url) {
           return start.toISOString().slice(0, 10);
         };
         const cleanBars = (rows) => (Array.isArray(rows) ? rows : []).filter((b) => b && Number.isFinite(+b.c)).map((b) => ({ ...b, o: +b.o, h: +b.h, l: +b.l, c: +b.c, v: b.v == null ? null : +b.v }));
-        const putCache = (tfKey, rows) => { try { if (rows && rows.length) apexDb.insertBars(sym, tfKey, rows); } catch { /* cache optional */ } };
+        // Never cache a session that is still trading.
+        //
+        // The bar for an open session is today-so-far. Stored, it becomes that day's permanent
+        // record and is never corrected: the cached 2026-08-20 AAPL bar read 316.60 on 15.2M shares
+        // when the real close was 311.30 on 40.9M, because it was captured mid-session and nothing
+        // ever went back for the close. The partial bar is still RETURNED to the caller — a chart of
+        // today is a fair thing to draw — it just does not get written down as final.
+        const putCache = (tfKey, rows) => {
+          try {
+            const settled = (Array.isArray(rows) ? rows : []).filter((b) => b && !b.inProgress);
+            if (settled.length) apexDb.insertBars(sym, tfKey, settled);
+          } catch { /* cache optional */ }
+        };
         const getCache = (tfKey) => { try { return cleanBars(apexDb.getBars(sym, tfKey, limitForRange(requestedRange))); } catch { return []; } };
         let data, source = "none", actualTf = tf, warning = null, primaryError = null;
         if (/USDT?$/i.test(sym)) {
@@ -8629,6 +9037,28 @@ async function handleApi(req, res, pathname, url) {
         });
         sendJson(res, 409, { ok: false, status: "denied", error: "This approval belongs to a task that is no longer active. No external action was executed." });
         return;
+      }
+    }
+    // The owner just approved this action. Record the EFFECT it authorises — not the tool.
+    //
+    // Minted BEFORE approveConfirmation because that call re-executes the tool inline; recording
+    // afterwards would land the grant too late to cover the very execution it is meant to permit.
+    //
+    // Granting the effect rather than the name is the point: a second tool that causes the same
+    // thing is covered by the same approval, which closes the substitution route and stops the
+    // same effect asking twice in one turn. The ledger refuses egress/destructive outright, so
+    // those keep asking every single time.
+    if (pending?.tool) {
+      const approvedDefinition = capabilityEngine.definitions.find((item) => item.name === pending.tool);
+      if (isDeclared(approvedDefinition)) {
+        const grantedEffects = [];
+        for (const effect of effectsFor(approvedDefinition)) {
+          if (effectGrants.grant({ sessionId: req.jarvisSession.id, effect })) grantedEffects.push(effect);
+        }
+        console.warn("[grants] " + pending.tool + " approved — declared [" + [...effectsFor(approvedDefinition)].join(",") + "], leased [" + grantedEffects.join(",")
+          + "] session=" + String(req.jarvisSession.id).slice(0, 10));
+      } else {
+        console.warn("[grants] " + pending.tool + " approved — no declared effects, nothing granted");
       }
     }
     const result = await capabilityEngine.approveConfirmation(confirmationMatch[1], {
@@ -11567,7 +11997,16 @@ ${entryText}`;
       if (view) {
         sendEvent({ type: "event", event: { kind: "ui", status: "complete", label: "Widget view", detail: `${view.label} · ${view.view}` } });
         sendEvent({ type: "delta", text: view.say });
-        sendEvent({ type: "done", result: { response: view.say, model: "hud", sources: [], uiActions: [view.uiAction] } });
+        // "Showing positions in the Kalshi widget" has to be true even when Kalshi is not on
+        // screen. This lane emitted set-view ALONE, so with the widget closed it announced a view
+        // change on a window that was not there — measured 2026-08-22, kalshi closed, reply
+        // "Showing positions in the Kalshi widget, sir" with only a set-view action behind it.
+        //
+        // The lane already means to open it (its own comment says so), so it now opens it first and
+        // then switches the view. The sentence and the actions finally describe the same thing.
+        const viewIsOpen = (Array.isArray(data.openWidgets) ? data.openWidgets : []).some((w) => w && w.id === view.id);
+        const viewActions = viewIsOpen ? [view.uiAction] : [{ type: "open-widget", id: view.id, focus: false }, view.uiAction];
+        sendEvent({ type: "done", result: { response: view.say, model: "hud", sources: [], uiActions: viewActions } });
         res.end();
         return;
       }
@@ -14180,9 +14619,11 @@ capabilityEngine = createCapabilityEngine({
   getOwnerTz: () => { try { return userContext ? userContext.resolveLocation().ianaTz : null; } catch { return null; } },
   desktopTakeover,
 });
-// Semantic tool retrieval. Constructed always (so its index can warm and be inspected), but
-// selectTools only consults it when JARVIS_SEMANTIC_TOOLS=1 — otherwise the legacy lexical+regex
-// path runs byte-for-byte as before.
+// Semantic tool retrieval. Constructed always so its index can warm and be inspected, and now
+// consulted by default — see the note on `semanticOn` in server/tool-gateway.js for the measurement
+// that changed it. It is fused with the old word-matching ranking rather than replacing it, and any
+// cold or unreadable index falls straight back to word-matching. JARVIS_SEMANTIC_TOOLS=0 forces the
+// old path if it ever needs to be ruled out.
 try {
   toolRetrieval = createToolRetrieval({
     runtimeDir: RUNTIME_DIR,

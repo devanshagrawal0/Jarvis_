@@ -43,14 +43,47 @@ const TOOL_COMPANIONS = {
   atlas_reschedule_event: ["atlas_today"],
   atlas_cancel_item: ["atlas_today"],
   calendar_create_event: ["calendar_list_events"],
+  // Fetching a price series and drawing it are one job. Measured over twelve ways of asking for a
+  // chart, apex_price_history was retrieved 10 times and stage_render only 8 — and in three of the
+  // four misses the DATA tool came back without the RENDERER ("plot amd for the last 30 days",
+  // "amd. last month. visual.", "graph tesla's closes for the past three weeks"). The model then
+  // fetched real bars and printed them as a text table, because drawing them was not on the menu.
+  apex_price_history: ["stage_render"],
+  // ...and the same job asked for from the other end. This pairing was one-directional, which only
+  // covered the half where the DATA arrived first. Re-measured 2026-08-22 across twelve phrasings:
+  // the commoner failure is now the reverse — "show me msft as a graph", "i wanna SEE tesla numbers
+  // not read them", "whats apple looked like lately, not in words" and "stick nvidia on the panel
+  // for me" all retrieve the renderer and NO price data, so Jarvis has a panel and nothing true to
+  // put on it. "graph" is the worst of them: it pulls in life_graph, pc_graph_search,
+  // pc_graph_explain, pc_graph_rebuild and pc_graph_inspect — the knowledge-graph tools — because
+  // those descriptions contain the word, and the price tool never appears at all.
+  //
+  // No retriever can close this from the request alone: the ticker is the only market signal in
+  // "stick nvidia on the panel", and no tool description contains ticker names, nor should it.
+  //
+  // The cost, stated rather than hidden: a panel request with nothing to do with markets ("put my
+  // tasks on the panel") now carries apex_price_history as an extra offered tool. It is one unused
+  // declaration, and the model does not call it. Half a chart every time is the worse trade.
+  stage_render: ["apex_price_history"],
 };
 
 function createToolGateway({ capabilityEngine, moduleRegistry, codeKnowledge, toolRetrieval = null }) {
   const mcp = new McpServer({ name: "jarvis-local-tools", version: "1.0.0" });
-  // Off unless explicitly switched on, and only once the index is actually warm — a cold start
-  // must degrade to the legacy path rather than silently ship an empty tool list.
+  // ON by default now, and still only once the index is actually warm — a cold start must degrade
+  // to the word-matching path rather than silently ship an empty tool list.
+  //
+  // It was off, and word-matching alone cannot connect a request to a tool unless the words happen
+  // to appear in that tool's description. Measured 2026-08-22 over ten ways of asking for a chart:
+  // "visualise how amd did in august", "can i eyeball googles run this quarter" and "i need eyes on
+  // netflix this fortnight" retrieved NEITHER the price tool nor the renderer — the offered list was
+  // open_app, atlas_clear_window, search_projects. Ranked by meaning instead, the same request puts
+  // the price tool 2nd and the renderer 4th out of 159. The index covers all of them and is current.
+  //
+  // The cost is one embedding call per turn. That is the price of the owner not having to guess
+  // which nouns the author happened to write down. Set JARVIS_SEMANTIC_TOOLS=0 to force the old
+  // word-matching path back if it ever needs to be ruled out.
   const semanticOn = () => Boolean(toolRetrieval)
-    && process.env.JARVIS_SEMANTIC_TOOLS === "1"
+    && process.env.JARVIS_SEMANTIC_TOOLS !== "0"
     && (() => { try { return toolRetrieval.ready(); } catch { return false; } })();
 
   for (const definition of capabilityEngine.definitions) {
@@ -142,11 +175,26 @@ function createToolGateway({ capabilityEngine, moduleRegistry, codeKnowledge, to
 
     let ordered = [...fused.entries()].sort((a, b) => b[1] - a[1]).map(([name]) => name);
     // Pull in structural companions for whatever survived, just below their partner.
+    //
+    // The old guard was `!withCompanions.includes(mate) && !ordered.includes(mate)`, so a companion
+    // was placed beside its partner ONLY when it was missing from the ranking entirely. One that had
+    // been found but ranked low stayed low — and the single cap at the end then cut it off.
+    // Measured 2026-08-22 on "visualise how amd did in august": the price tool ranked 5th and the
+    // renderer 9th, so at a turn limit of 8 the data survived and the thing that draws it did not.
+    // That is the reported bug exactly — real figures arriving as a text table — and the pairing
+    // rule written to prevent it was disabled by its own guard.
+    //
+    // A companion belongs beside its partner wherever the partner landed, so the later duplicate is
+    // dropped instead of the promotion being skipped.
     const withCompanions = [];
+    const promoted = new Set();
     for (const name of ordered) {
-      withCompanions.push(name);
+      if (promoted.has(name)) continue;               // already pulled up beside its partner
+      if (!withCompanions.includes(name)) withCompanions.push(name);
       for (const mate of TOOL_COMPANIONS[name] || []) {
-        if (!withCompanions.includes(mate) && !ordered.includes(mate)) withCompanions.push(mate);
+        if (withCompanions.includes(mate)) continue;
+        withCompanions.push(mate);
+        promoted.add(mate);
       }
     }
     ordered = withCompanions;
@@ -466,7 +514,28 @@ function createToolGateway({ capabilityEngine, moduleRegistry, codeKnowledge, to
       .filter((name) => !requiredNames.has(name))
       .map(declarationFor)
       .filter(Boolean);
-    return [...required, ...suggested.slice(0, Math.max(0, limit - required.length))];
+    // Structural companions apply HERE too, not only on the semantic path. They were wired into
+    // `selectToolsSemantic` alone, and that path is off by default — so on the path this machine
+    // actually runs, half a pair stayed half a pair. Pulled in right after their partner and still
+    // subject to the same single cap below; nothing here looks at what the owner typed.
+    const chosen = [...required, ...suggested.slice(0, Math.max(0, limit - required.length))];
+    const have = new Set(chosen.map((item) => item.name));
+    const companions = [];
+    for (const item of chosen) {
+      for (const mate of TOOL_COMPANIONS[item.name] || []) {
+        if (have.has(mate)) continue;
+        const declaration = declarationFor(mate);
+        if (!declaration) continue;
+        companions.push(declaration);
+        have.add(mate);
+      }
+    }
+    // Companions are added ON TOP of the cap, not inside it. My first attempt appended them and then
+    // sliced back to `limit`, which cut off the very tool it had just gone to the trouble of pulling
+    // in — "graph tesla's closes for the past three weeks" still arrived with the price data and no
+    // renderer. A companion is a structural necessity of a tool already chosen, so it displaces
+    // nothing; there are at most one or two of them.
+    return [...chosen.slice(0, Math.max(limit, required.length)), ...companions];
   }
 
   // Production entry point. Tries the semantic path when the flag is on and the index is warm,
@@ -476,7 +545,19 @@ function createToolGateway({ capabilityEngine, moduleRegistry, codeKnowledge, to
       const limit = Math.max(1, Math.min(12, Number(options.limit || 5)));
       const route = options.route || {};
       const picked = await selectToolsSemantic(prompt, { limit, route, tokens: tokenize(prompt) });
-      if (picked) return picked; // [] is a real answer (no tool needed); null means "use legacy"
+      // An EMPTY result is not an answer — it is a retrieval failure wearing one.
+      //
+      // This used to return `picked` even when it was `[]`, on the theory that "no tool needed" is a
+      // real verdict. Measured 2026-08-21 on "how far off its month high is nvidia right now":
+      // zero tools reached the model, and it told the owner "the required market data systems and
+      // web search utilities are offline" — three times out of three. They were not offline; it had
+      // used them a minute earlier. Handed nothing, the model concludes the capability does not
+      // exist and says so, which is worse than a wrong tool because it sounds like a status report.
+      //
+      // Withholding every tool can only ever produce a guess or a false apology, so an empty pick
+      // falls through to the legacy selector instead of being trusted.
+      if (picked && picked.length) return picked;
+      if (picked) console.warn(`[tools] semantic retrieval returned 0 tools for ${JSON.stringify(String(prompt).slice(0, 80))} — falling back to lexical`);
     }
     return selectTools(prompt, options);
   }

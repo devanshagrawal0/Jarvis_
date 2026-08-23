@@ -184,8 +184,20 @@ function createJarvisActionSession(options = {}) {
         ...context,
         actionTaskId: task?.id,
         actionStepId: stepId,
+        // A lookup that throws is this system failing, not the owner cancelling.
+        //
+        // The bare `catch { return "cancelled" }` reported every internal error as a cancellation,
+        // and the browser agent then told the owner he had cancelled his own task. Stopping on an
+        // unreadable control record is still the right call — carrying on with no way to check
+        // whether a stop was requested would be worse — but the reason gets logged so the next
+        // outage is diagnosable instead of being blamed on him.
         controlState: () => {
-          try { return fabric.kernel.get(task.id).state; } catch { return "cancelled"; }
+          try {
+            return fabric.kernel.get(task.id).state;
+          } catch (error) {
+            console.warn(`[action-fabric] control state unreadable for task ${task?.id} (${String(error && error.message || error).slice(0, 120)}) — stopping the run; this is NOT an owner cancellation`);
+            return "cancelled";
+          }
         },
         onRuntimeActionStep: async (agentStep) => {
           const phase = agentStep.phase || "executed";

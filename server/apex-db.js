@@ -14,6 +14,27 @@ const Database = require("better-sqlite3");
 
 const isoNow = () => new Date().toISOString();
 
+// One calendar day is one daily bar — whatever clock the provider stamped it with.
+//
+// The primary key is (ticker, tf, t), so two providers describing the SAME day with different
+// timestamps both survive as separate rows. Measured 2026-08-21: 83 AAPL days sat in the table
+// twice, once at T13:30:00Z (Yahoo, market open) and once at T00:00:00Z (Tiingo, date-only), same
+// prices to the rounding. They came from the Tiingo HEALTH CHECK, which fetches AAPL daily bars to
+// see if the source answers and had its probe results written into the real price store. A chart
+// over that range drew every one of those days twice, and "the last 30 bars" was really 15 days.
+//
+// Daily and weekly bars are therefore keyed by DATE, at midnight UTC. Intraday frames keep their
+// full timestamp, because for them the time of day is the data. Every consumer parses this field
+// with Date.parse/new Date and sorts on it, so the change is invisible to them.
+const DATE_KEYED_TIMEFRAMES = new Set(["1d", "1wk", "1mo", "3mo"]);
+function canonicalBarTime(tf, t) {
+  const raw = String(t == null ? "" : t);
+  if (!DATE_KEYED_TIMEFRAMES.has(String(tf))) return raw;
+  const parsed = typeof t === "number" ? new Date(t) : new Date(raw);
+  if (Number.isNaN(parsed.getTime())) return raw;   // unparseable: store it untouched rather than lose it
+  return `${parsed.toISOString().slice(0, 10)}T00:00:00.000Z`;
+}
+
 // Prototype-pollution-safe JSON parse (same guard as helix-db.js).
 const PROTO_KEYS = new Set(["__proto__", "constructor", "prototype"]);
 function safeDbJson(raw, fallback) {
@@ -381,7 +402,7 @@ function createApexDb(runtimeDir) {
     countUniverse: () => stmts.countUniverse.get().n,
 
     // bars / quotes
-    insertBars: db.transaction((ticker, tf, rows) => { for (const b of rows) stmts.insertBar.run({ ticker, tf, t: b.t, o: b.o, h: b.h, l: b.l, c: b.c, v: b.v ?? null, vwap: b.vwap ?? null }); return rows.length; }),
+    insertBars: db.transaction((ticker, tf, rows) => { for (const b of rows) stmts.insertBar.run({ ticker, tf, t: canonicalBarTime(tf, b.t), o: b.o, h: b.h, l: b.l, c: b.c, v: b.v ?? null, vwap: b.vwap ?? null }); return rows.length; }),
     getBars: (ticker, tf, limit = 200) => stmts.getBars.all(ticker, tf, limit).reverse(),
     upsertQuote: (q) => stmts.upsertQuote.run({ ticker: q.ticker, bid: q.bid ?? null, ask: q.ask ?? null, bid_sz: q.bid_sz ?? null, ask_sz: q.ask_sz ?? null, last: q.last ?? null, day_o: q.day_o ?? null, day_h: q.day_h ?? null, day_l: q.day_l ?? null, prev_c: q.prev_c ?? null, vol: q.vol ?? null, ts: q.ts || isoNow() }),
     getQuote: (ticker) => stmts.getQuote.get(ticker) || null,

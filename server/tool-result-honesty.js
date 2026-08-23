@@ -45,7 +45,18 @@ function classifyToolResults(toolResults = [], observeOnlyNames = new Set()) {
 }
 
 // The exact sentence the owner reads. Only the first branch is a claim of completion.
-function summaryPrefix({ effective = [], confirmations = [], completed = [] } = {}) {
+function summaryPrefix({ effective = [], confirmations = [], completed = [], failed = [] } = {}) {
+  // "Done" is the strongest thing this can say, so it is only said when nothing is left outstanding.
+  //
+  // It used to be the FIRST test, so a single effective tool made the whole turn "Done" regardless
+  // of what else was in the list. Measured 2026-08-22: "chart apple's last month and then email that
+  // chart to me" answered "Done. Here's what I verified:" above a FAILED render and an email still
+  // sitting unapproved. Published work on agent hallucination names this exact shape — a summariser
+  // that turns "not approved" into something reading as done — and detects it by comparing the claim
+  // against the tool receipts. The receipts are already here, so the weakest outcome wins.
+  if (effective.length && (failed.length || confirmations.length)) {
+    return "Partly done — some of this went through and some of it still needs you:";
+  }
   if (effective.length) return "Done. Here's what I verified:";
   if (confirmations.length) return "Ready when you are.";
   // Something ran and it worked, but everything that worked only looked at the world. Naming that

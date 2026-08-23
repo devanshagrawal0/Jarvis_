@@ -28,15 +28,28 @@ function detectWidgetControl(text, ctx = {}) {
   const p = String(text || "").trim();
   if (!p || p.length > 90) return null; // real commands are short; skip prose
 
-  let action = null;
-  for (const [name, re] of ACTIONS) { if (re.test(p)) { action = name; break; } }
-  if (!action) return null;
+  // TWO commands in one sentence is not an unambiguous command.
+  //
+  // "first match wins" quietly turned a compound request into a single wrong action: measured
+  // 2026-08-22, "shrink kalshi and also make weather bigger" matched "shrink" for the verb and
+  // weather for the target, resized WEATHER TO SMALL — the opposite of what was asked for it —
+  // dropped the kalshi half entirely, and reported "Resized the Weather widget to small, sir".
+  // Taking the verb from one clause and the noun from another is how that happens.
+  //
+  // Two verbs, or two named widgets, means this resolver cannot know which pairing was meant, so
+  // it declines and the brain handles the turn — the same thing it does for anything else it
+  // cannot resolve.
+  const matchedActions = ACTIONS.filter(([, re]) => re.test(p));
+  if (matchedActions.length !== 1) return null;
+  const action = matchedActions[0][0];
 
   const focused = String(ctx.focusedWidget || "").trim().toLowerCase();
   const open = Array.isArray(ctx.openWidgets) ? ctx.openWidgets.filter((w) => w && w.id) : [];
   const widgets = Array.isArray(ctx.widgets) ? ctx.widgets : [];
 
-  const named = widgets.find((w) => w.re && w.re.test(p)) || null;
+  const namedMatches = widgets.filter((w) => w.re && w.re.test(p));
+  if (namedMatches.length > 1) return null;   // two targets named: which one did he mean?
+  const named = namedMatches[0] || null;
   const hasNoun = WIDGET_NOUN.test(p);
   const hasCoref = COREF.test(p);
 
@@ -62,8 +75,15 @@ function detectWidgetControl(text, ctx = {}) {
   if (!hasSignal || !targetId) return null;
   if (resizeClass && !named && !hasNoun) return null;
 
-  // The target must actually be open — you can't normalize/resize a window that isn't there.
-  if (open.length && !open.some((w) => w.id === targetId)) return null;
+  // The target must actually be open — you can not normalize/resize a window that is not there.
+  //
+  // This read `open.length && !open.some(...)`, so an EMPTY list skipped the check altogether and
+  // the fast path answered "Minimized the Kalshi widget, sir" for a widget nothing knew was open.
+  // Measured 2026-08-22 with no openWidgets field and with an empty array: both claimed success.
+  // An empty list is not evidence that the widget is open, it is the absence of evidence — so the
+  // fast path declines and the turn falls through to the model, which is what happens for any
+  // other unrecognised command.
+  if (!open.some((w) => w.id === targetId)) return null;
 
   const label = (widgets.find((w) => w.id === targetId) || {}).label || targetId;
   const size = action === "normalize" ? "medium" : action === "minimize" ? "minimize" : action;
@@ -118,7 +138,16 @@ function detectWidgetView(text, ctx = {}) {
   if (VALUE_Q.test(p)) return null; // a data/number question — the brain answers that, not a view switch
 
   const widgets = Array.isArray(ctx.widgets) ? ctx.widgets : [];
-  const named = widgets.find((w) => w.re && w.re.test(p)) || null;
+  // Two widgets named is two requests, and this lane can only carry out one.
+  //
+  // detectWidgetControl was taught this after "shrink kalshi and also make weather bigger" resized
+  // the wrong one; the view lane had the same hole and kept it. Measured 2026-08-22: "show positions
+  // in kalshi and the forecast in weather" switched Kalshi, dropped weather without a word, and
+  // reported "Showing positions in the Kalshi widget, sir" as though that were the whole request.
+  // Half a request answered as a whole one is a false claim by omission.
+  const namedMatches = widgets.filter((w) => w.re && w.re.test(p));
+  if (namedMatches.length > 1) return null;
+  const named = namedMatches[0] || null;
   const showVerb = SHOW_VERB.test(p);
 
   let owner = null;

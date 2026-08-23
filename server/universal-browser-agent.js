@@ -1022,8 +1022,16 @@ ${JSON.stringify(evidence).slice(0, 70_000)}`;
       state.status = "cancelled";
       const statePath = persist(state);
       await browserService.releaseTask({ taskId, close: true }).catch(() => null);
-      await onStep?.({ taskId, step: state.history.length + 1, phase: "cancelled", mode: "playwright", action: "cancel", reasoning: "Owner cancelled the Runtime task" });
-      return { success: false, cancelled: true, taskId, result: "Cancelled by the owner before any further browser action", history: state.history, evidence: state.evidence, outcome, world: world.toJSON(), statePath, finalUrl: state.url, finalTitle: state.title, mode: "playwright-universal-v2" };
+      // Do not name the owner as the one who stopped this unless he actually did.
+      //
+      // The old wording — "Cancelled by the owner before any further browser action" — was handed to
+      // him verbatim for every stop, including the ones he had no part in. Measured 2026-08-22: a
+      // stale phase left behind by an unrelated task that failed hours earlier stopped every browser
+      // run, and each time he was told he had cancelled it. That sends him looking for what he did
+      // wrong while the real cause stays hidden. This checkpoint knows a task should stop; it does
+      // not know who decided that, so the sentence must not claim to.
+      await onStep?.({ taskId, step: state.history.length + 1, phase: "cancelled", mode: "playwright", action: "cancel", reasoning: "The Runtime task's control state reported it should stop" });
+      return { success: false, cancelled: true, taskId, result: "Stopped before any further browser action — the task's control state reported it should stop. If you did not cancel it, something else set that state.", history: state.history, evidence: state.evidence, outcome, world: world.toJSON(), statePath, finalUrl: state.url, finalTitle: state.title, mode: "playwright-universal-v2" };
     }
 
     const cancelledBeforeStart = await controlCheckpoint();

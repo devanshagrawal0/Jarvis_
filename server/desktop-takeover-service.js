@@ -181,9 +181,28 @@ function createDesktopTakeoverService({ runtimeDir, emit, clock = () => new Date
     });
   }
 
-  function controlState() {
-    if (state.phase === "cancelled" || state.phase === "failed" || state.phase === "handed_back") return "cancelled";
+  // What this service knows about ONE task. It must never answer for a different one.
+  //
+  // This used to answer from whatever phase happened to be stored, with no notion of which task the
+  // phase belonged to — and the phase is written to disk, so it outlived the task, the session and
+  // the process. Found stuck at `phase: "failed"` on 2026-08-22, left there by a desktop task that
+  // failed because Windows Defender was blocking the screen capture. Every later browser task read
+  // that as "cancelled" and stopped before its first step, and the owner was told HE had cancelled
+  // it. Clearing that single field brought browser automation back immediately — verified by
+  // re-running the exact request that had been failing.
+  //
+  // `start()` does reset the phase, but it only runs for daily-surface tasks, so headless browser
+  // work inherited the corpse of a desktop task it had nothing to do with.
+  //
+  // Now the caller says which task it is asking about, and a phase belonging to some other task is
+  // not an answer about this one.
+  function controlState(taskId = null) {
+    if (taskId && state.taskId && String(taskId) !== String(state.taskId)) return "running";
+    if (state.phase === "cancelled") return "cancelled";
     if (state.phase === "paused" || state.phase === "waiting_approval") return "paused";
+    // `failed` and `handed_back` describe how a PAST run ended. They are not instructions to stop
+    // this one, and collapsing them into "cancelled" is what turned one failure into a permanent
+    // outage of every browser and desktop action.
     return "running";
   }
 
