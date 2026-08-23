@@ -250,6 +250,9 @@ function createCapabilityEngine({
   runtimeDir,
   workspaceRoot,
   getSettings,
+  // W3b — the owner's REAL day. The model declares a calendar block; it never supplies the
+  // events, and this is where they come from. See the handler in `stage_render`.
+  stageDayEvents,
   createReceipt,
   providers,
   scanProjects,
@@ -382,7 +385,27 @@ function createCapabilityEngine({
   // than defaulting to the process cwd.
   const computerUse = screenCapture ? createComputerUse({ screenCapture, getSettings, browserService: browser, runtimeDir }) : null;
   const universalHeadlessBrowser = createUniversalBrowserAgent({ browserService: managedBrowser, getSettings, runtimeDir });
-  const browserForContext = () => managedBrowser;
+  // THE BACKGROUND BROWSER. THE OWNER CANNOT SEE IT.
+  //
+  // This took a `context` argument and threw it away, so a call routed to the owner's visible
+  // surface still landed here, in an isolated off-screen session - and the reply then described it
+  // as though it had happened in front of him. "I switched to your active YouTube tab" was that:
+  // a tool that succeeded, on a screen he does not have.
+  //
+  // It still returns the one managed browser, because there is only one; what changed is that
+  // every result now says WHERE it came from, and the one call that has a visible equivalent
+  // (navigate -> open_url) no longer pretends. Nothing here can quietly claim his screen again.
+  const browserForContext = (context = {}) => managedBrowser;
+
+  // Stamp the surface onto whatever the background browser returns, so the truth travels with the
+  // result rather than living only in the routing table. A non-object result is wrapped rather
+  // than dropped.
+  const fromBackgroundBrowser = async (pending) => {
+    const result = await pending;
+    return (result && typeof result === "object" && !Array.isArray(result))
+      ? { ...result, surface: "background" }
+      : { result, surface: "background" };
+  };
   const siteAliases = {
     youtube: "https://www.youtube.com/",
     "you tube": "https://www.youtube.com/",
@@ -433,11 +456,11 @@ function createCapabilityEngine({
     ["system_status", "Read real local CPU, memory, uptime, network interfaces, and load information.", "observe", false],
     ["list_processes", "List running Windows processes, sorted by memory use.", "observe", false],
     ["open_app", "Launch a desktop application that is installed on this machine — 'open chatgpt', 'launch spotify', 'open my claude app', 'start vscode'. It looks the app up in what is ACTUALLY installed here, so any installed app can be opened by name; there is no fixed list and you should never tell the owner you cannot launch desktop applications. Use this rather than opening a website when they ask for the app.", "execute", false, ["launch"]],
-    ["open_url", "Open a validated HTTP/HTTPS URL or common site name such as YouTube, Gmail, Canvas, Instagram, GitHub, Reddit, Google, or Kalshi in the laptop default browser.", "execute", false, ["launch"]],
+    ["open_url", "OPEN A PAGE IN THE OWNER'S OWN BROWSER - the real one on his screen, the window he is looking at. This is the right tool for ANY request to open, pull up, launch, bring up, chuck on, or go to a site or a link: 'open youtube', 'open youtube on my browser', 'open youtube on my screen', 'pull up the arsenal wiki page', 'go to news.ycombinator.com', 'open this link'. Pass any URL or a bare domain (bare domains are opened with HTTPS); there is no list of allowed sites, ANY site works, so never say you cannot open something. It is ONE call and it is instant - do not screenshot the screen first, do not run a browser agent, do not plan steps. When the owner says OPEN, he means this browser, never a background one. If he also wants to know what is on the page afterwards, call url_read for the text, or screen_capture to look at his screen.", "execute", false, ["launch"]],
     ["screen_inspect", "Inspect the current visible laptop screen through Windows UI Automation and return visible controls, labels, roles, and screen-coordinate bounds.", "observe", false],
     ["screen_act", "Operate on the current visible laptop screen by first capturing and inspecting it, locating a visible target, performing a bounded click/type/hotkey/fullscreen action, then capturing again to verify.", "execute", false, ["input"]],
     ["youtube_open_video", "Fallback YouTube video opener. Prefer screen_act when the user is referring to the current visible screen.", "execute", false],
-    ["desktop_control", "Control the visible laptop desktop with bounded actions: open a site full-screen, toggle full-screen, switch browser tabs, send safe hotkeys, click visible text or screen coordinates, or type text into the active window.", "execute", false, ["input", "launch"]],
+    ["desktop_control", "ACT ON THE OWNER'S OWN SCREEN - his real desktop and the browser window in front of him. Pick the action that matches what he asked: `activate_site` SWITCHES TO A TAB HE ALREADY HAS OPEN ('switch to my youtube tab', 'go back to the gmail tab', 'bring up the tab with the doc') - it finds the existing tab by what the page is and brings it to the front, so use it whenever he refers to a tab as ALREADY his, and never open a second copy of a page he already has; `open_site` / `open_site_fullscreen` open a page (prefer open_url unless he wants it full-screen); `next_tab` / `previous_tab` / `tab_number` move between his tabs; `fullscreen` toggles full-screen; `click_text` clicks something by the words visible on it; `click` clicks a screen coordinate; `type_text` types into whatever is focused; `scroll_page` scrolls; `hotkey` sends one safe key. Everything here happens where he can see it.", "execute", false, ["input", "launch"]],
     ["close_app", "Close an allowlisted Windows application.", "commit", true, ["launch", "destructive"]],
     ["network_inventory", "Read passive local adapter, route, and neighbor information. It does not scan arbitrary hosts.", "observe", false],
     ["search_projects", "Search project names and package metadata in the approved workspace.", "observe", false],
@@ -455,7 +478,7 @@ function createCapabilityEngine({
     ["web_research", "Answer a current/live web question with Gemini Google Search grounding and return citations. Use when live web facts are needed, not for private account data.", "observe", false],
     ["research_v2", "JARVIS Research Engine v2: classify a public-info request, expand multiple search angles, run Gemini grounded search plus optional Tavily/Brave/Exa providers, read top URLs, verify evidence, and return progress, citations, confidence, and a grounded answer.", "observe", false],
     ["web_research_deep", "Cortex v2 deep public research: plan a live search, use grounded search, read top public source URLs, and return evidence objects with citations.", "observe", false],
-    ["url_read", "Read and extract clean text from a public HTTP/HTTPS URL with SSRF protections and metadata.", "observe", false],
+    ["url_read", "READ A PAGE'S TEXT so you can answer from what it actually says - 'read this link', 'what does this article say', 'summarise that page', 'what is on the arsenal wikipedia page', 'quote me the first paragraph'. Fetches the page and returns its clean text and title. It opens NOTHING on the owner's screen and takes about a second, so it is also how you check what is on a page you just opened for him. Public HTTP/HTTPS only. Use this rather than a browser agent whenever the goal is to KNOW what a page says.", "observe", false],
     // Described in the owner's words, and naming what each surface actually holds. The old text was
     // "Open a real current-shell JARVIS widget by id without navigating to an external website" —
     // accurate, and matching nothing a person says. Retrieval scored it against phrasings like "open
@@ -528,13 +551,13 @@ function createCapabilityEngine({
     ["gmail_send_prepared", "Send one previously prepared Gmail draft after re-reading it and proving its recipient, subject, and body hash are unchanged.", "commit", true, ["egress"]],
     ["send_email", "Legacy one-step Gmail sender. Prefer gmail_prepare_email followed by gmail_send_prepared so approval is bound to an exact provider draft.", "commit", true, ["egress"]],
     ["browser_search", "Open a web search in the default browser.", "execute", false],
-    ["browser_status", "Report the persistent JARVIS browser session, tabs, active page, saved profile, and snapshot readiness.", "observe", false],
+    ["browser_status", "Report the state of JARVIS'S OWN BACKGROUND BROWSER - its session, its tabs, its active page, its saved profile. THE OWNER CANNOT SEE THIS BROWSER, so this never answers a question about what is open on HIS screen; that is `screen_capture`.", "observe", false],
     ["browser_login_handoff", "Open a login-required website in the persistent JARVIS browser and pause for the user to authenticate manually.", "prepare", false],
     ["browser_login_complete", "Verify that manual authentication finished, save the dedicated browser profile, close its visible window, and return automation to headless background mode.", "prepare", false],
     ["browser_page_brief", "Summarize the active browser page into forms, buttons, links, upload controls, login signals, security signals, and likely next actions.", "observe", false],
-    ["browser_navigate", "Navigate the isolated persistent JARVIS browser to a validated HTTP or HTTPS URL.", "prepare", false],
+    ["browser_navigate", "Point JARVIS's OWN BACKGROUND BROWSER at a URL. THE OWNER CANNOT SEE THIS BROWSER - it is a separate, isolated, signed-in session that runs off-screen, so nothing you do here appears on his screen. NEVER use it when he asks to open, see, pull up or watch something: that is `open_url`, which uses his real browser. This one exists only to keep a signed-in session going across the browser_* steps of a task (checking a logged-in page, clicking through a flow he is not watching).", "prepare", false],
     ["browser_snapshot", "Observe the active browser page as compact semantic elements with stable short-lived references.", "observe", false],
-    ["browser_tabs", "List, open, switch, or close tabs in the persistent JARVIS browser.", "prepare", false],
+    ["browser_tabs", "List, open, switch or close tabs INSIDE JARVIS'S OWN BACKGROUND BROWSER - a separate off-screen session THE OWNER CANNOT SEE. These are not his tabs. When he says 'my tabs', 'switch to my X tab', or anything about the browser in front of him, this tool cannot see it and must not be used: that is `desktop_control` with `activate_site`.", "prepare", false],
     ["browser_act", "Perform a reversible browser action using a semantic element reference or CSS selector. Consequential controls are blocked.", "prepare", false, ["input"]],
     ["browser_commit", "Perform one user-approved consequential browser operation or bounded operation batch, such as submitting, sending, publishing, purchasing, or uploading.", "commit", true],
     ["browser_file_search", "Find recent files in approved workspace, Desktop, Documents, and Downloads locations for browser workflows.", "observe", false],
@@ -545,7 +568,7 @@ function createCapabilityEngine({
     ["browser_screenshot", "Capture a screenshot inside the JARVIS runtime artifact directory.", "observe", false],
     ["browser_wait", "Wait briefly or for a CSS-selected browser element state.", "observe", false],
     ["browser_verify", "Verify browser URL, title, text, or element visibility without changing the page.", "observe", false],
-    ["screen_capture", "Capture the laptop primary display for visual analysis. Use only when the user asks what is on the laptop screen or desktop.", "observe", false],
+    ["screen_capture", "TAKE A PICTURE OF THE OWNER'S SCREEN, so you can see what is already there - 'what am I looking at', 'what is on my screen right now', 'what video is playing', 'read the error on my screen', 'what is on my youtube tab'. It only LOOKS; it cannot open, click or change anything. Do NOT call it before opening a page - there is nothing to see yet, and photographing the screen is not a step towards opening something. Open first, then look if the answer needs what is on the page.", "observe", false],
     ["instagram_reply", "Reply through the official Instagram professional messaging API.", "commit", true],
     ["instagram_like_current", "Like the currently visible Instagram Reel only after verifying that a reel URL is open; returns proof that the control changed from Like to Unlike.", "commit", true],
     ["instagram_prepare_dm", "Open an exact visible Instagram Direct thread and place the requested text in its composer without sending it.", "prepare", false],
@@ -566,7 +589,7 @@ function createCapabilityEngine({
     ["write_clipboard", "Write text to the Windows clipboard.", "execute", false],
     ["toast_notification", "Show a Windows toast notification with a title and message.", "execute", false],
     ["screen_analyze", "Capture the current screen once and analyze it with Gemini Vision. Returns what is visible and answers a specific question about the screen.", "observe", false],
-    ["computer_use", "Run a task through the policy-selected browser lane: signed-in personal Chrome, isolated headless browser, or explicitly visible desktop. Navigation and preparation run first; Send, Like, Post, Submit, Delete, Purchase, and similar external commits pause at the exact final-action boundary for owner approval.", "execute", false, ["input", "launch"]],
+    ["computer_use", "A MULTI-STEP BROWSER AGENT for tasks that genuinely need several actions on a page: logging in, filling and submitting a form, clicking through a flow, searching a site and acting on a result, collecting something across pages. It is slow - many steps, each one a screenshot and a decision - so it is the WRONG tool for anything simpler. NEVER use it merely to open a page (`open_url`), to read one (`url_read`), or to see what is on the screen (`screen_capture`); reaching for it there costs the owner minutes for something that takes one call. Send, Like, Post, Submit, Delete, Purchase and similar external commits stop at the final-action boundary for the owner's approval.", "execute", false, ["input", "launch"]],
     ["screen_locate", "Find any visible UI element on the current screen using Gemini Vision and return its pixel coordinates. Works on web apps with no accessibility labels.", "observe", false],
     ["mouse_scroll", "Scroll the mouse wheel at a screen coordinate in a specified direction and amount. Use for scrolling feeds, lists, pages, or DM threads.", "execute", false],
     ["apex_catalog_search", "Search the APEX trading-room data catalog by keyword and get matching datasets, database tables, and local files with their columns, row counts, date coverage, source, and a plain-language summary. Use this first to discover what market/news/history data APEX holds before answering data questions.", "observe", false],
@@ -607,7 +630,7 @@ function createCapabilityEngine({
     // could only ever come back as a prose note. Merged, there is no wrong choice left to make — a
     // plain note is simply a single 'text' block. `stage_show` still EXECUTES (see the handler) so
     // older callers keep working, but it is no longer declared, so the model never sees it.
-    ["stage_render", "Put something on Jarvis's STAGE — the owner's own on-screen panel — instead of answering in chat. Use this whenever the owner wants a thing SHOWN rather than told: 'put it on the panel', 'show me', 'pull that up', 'throw it on the big screen', 'draw it', 'lay it out', 'add X to the panel', 'open a surface with …', or any request naming a panel / stage / surface / display / screen. Also use it when the answer is genuinely better seen than read — several numbers to compare, a ranked or grouped list, a schedule, a multi-part breakdown. Pass `blocks`: an ordered array that MIXES prose and structure freely — 'heading', 'text' (markdown), 'stat' (label + value + optional delta like '+2.1%'), 'list' (items[]), 'chart' (a real line/area/bar graph — give it `points` oldest-first and a `label`; use it whenever the answer is a series over time, like a price history or a trend), 'divider'. Consecutive 'stat' blocks lay out side by side. For a plain note, pass a single 'text' block. It appears instantly on the owner's screen; nothing is saved. Do NOT use it for greetings, yes/no answers, a single fact, or anything one sentence answers well.", "observe", false],
+    ["stage_render", "Put something on Jarvis's STAGE — the owner's own on-screen panel — instead of answering in chat. Use this whenever the owner wants a thing SHOWN rather than told: 'put it on the panel', 'show me', 'pull that up', 'throw it on the big screen', 'draw it', 'lay it out', 'add X to the panel', 'open a surface with …', or any request naming a panel / stage / surface / display / screen. Also use it when the answer is genuinely better seen than read — several numbers to compare, a ranked or grouped list, a schedule, a multi-part breakdown. Pass `blocks`: an ordered array that MIXES prose and structure freely — 'heading', 'text' (markdown), 'stat' (label + value + optional delta like '+2.1%'), 'list' (items[]), 'chart' (a real line/area/bar graph — give it `points` oldest-first and a `label`; use it whenever the answer is a series over time, like a price history or a trend), 'divider'. Consecutive 'stat' blocks lay out side by side. When a surface has SECTIONS, give each one a 'heading' block holding ONLY its title - a few words, no sentence, no bullet, no colon-and-explanation. The words that follow belong in the 'text' block after it. A section title written as ordinary prose renders as ordinary prose, and the owner ends up with one undivided slab he has to read end to end to navigate. Inside a 'text' block, use real markdown headings (## / ###) for sub-sections rather than a bold line or a numbered item. For a plain note with no sections, pass a single 'text' block. It appears instantly on the owner's screen; nothing is saved. Do NOT use it for greetings, yes/no answers, a single fact, or anything one sentence answers well.", "observe", false],
     ["atlas_log_past", "Retroactively LOG something that already happened, for time-tracking — 'I had lunch with John at 1pm', 'log that I met the client at 11', 'I finished the report at 3pm', 'just wrapped a call with Sam'. Pass `title` (what happened) and the time is taken from the owner's words. It records a past event at that time TODAY (the tool pulls the clock time back so it lands in the past, not the future). Use ONLY for things the owner says already happened (past tense: had/met/finished/did/wrapped). Saves immediately, undoable.", "execute", false],
     ["calendar_list_events", "Read the owner's REAL Google Calendar over a time window. Call this whenever the owner asks what's on their (Google) calendar, whether something is on it, their meetings/events, or to confirm an event exists. timeMin/timeMax are ISO 8601 (default: now to +7 days). This is your ONLY way to see the real Google Calendar — never claim you can't check it.", "observe", false],
     ["calendar_create_event", "Create a real event on the owner's Google Calendar (the actual calendar, not the local Today list). Use when the owner says 'add to my calendar', 'put X on my calendar', 'schedule X', or 'add an event'. YOU extract title, and startAt as an ISO 8601 timestamp in the owner's local time WITH offset; optional endAt (default +1h) and location. This is a real external write — it is confirmed with the owner before it goes through, so do NOT say it's done until the confirmation completes.", "commit", true],
@@ -817,7 +840,7 @@ function createCapabilityEngine({
       plan: { type: "STRING", description: "FILL THIS IN FIRST, before the blocks. One line, for your own working out: what does this surface need to show, in what order, and which figures come from which tool result? e.g. 'three price cards from apex_price_history, then the daily close chart, then one line on the move'. The owner never sees it." },
       title: { type: "STRING", description: "Short title for the Stage panel." },
       blocks: { type: "ARRAY", description: "Ordered blocks to render top-to-bottom.", items: { type: "OBJECT", properties: {
-        type: { type: "STRING", description: "One of: heading, text, stat, list, chart, divider." },
+        type: { type: "STRING", description: "One of: heading, text, stat, list, chart, calendar, divider. Use 'calendar' when the owner wants to SEE his day, schedule or agenda — you supply no data for it, JARVIS fills in his real events." },
         text: { type: "STRING", description: "For 'heading' or 'text' blocks." },
         label: { type: "STRING", description: "For a 'stat' block: the metric name (e.g. 'Open tasks'). For a 'chart' block: what the series is (e.g. 'BTC/USD')." },
         value: { type: "STRING", description: "For a 'stat' block: the value (e.g. '12', '$4,320', '68%')." },
@@ -1768,16 +1791,26 @@ function createCapabilityEngine({
         "$selectedTab=''",
         "$selectedVia=''",
         "$p=$null",
-        "$browserProcesses=Get-Process | Where-Object { $_.MainWindowHandle -ne 0 -and ($_.ProcessName -eq 'chrome' -or $_.ProcessName -eq 'msedge') }",
-        "foreach($candidate in $browserProcesses){",
+        // EVERY browser window, not just one.
+        // `Get-Process` reports a SINGLE MainWindowHandle per process, and Chrome puts every window
+        // in one process - so this saw the tabs of exactly one window and was blind to the rest. Ask
+        // the desktop for its top-level windows instead and the owner's whole browser is visible.
+        // Measured on this machine: 347ms for the full enumeration.
+        "$seenTabs=@()",
+        "$desktop=[System.Windows.Automation.AutomationElement]::RootElement",
+        "$winCondition=New-Object System.Windows.Automation.PropertyCondition([System.Windows.Automation.AutomationElement]::ControlTypeProperty,[System.Windows.Automation.ControlType]::Window)",
+        "$allWindows=$desktop.FindAll([System.Windows.Automation.TreeScope]::Children,$winCondition)",
+        "$browserWindows=@()",
+        "foreach($w in $allWindows){ try { $pn=(Get-Process -Id $w.Current.ProcessId -ErrorAction SilentlyContinue).ProcessName; if($pn -eq 'chrome' -or $pn -eq 'msedge'){ $browserWindows += $w } } catch {} }",
+        "foreach($root in $browserWindows){",
         "  try {",
-        "    $root=[System.Windows.Automation.AutomationElement]::FromHandle($candidate.MainWindowHandle)",
         "    if($null -eq $root){ continue }",
         "    $tabCondition=New-Object System.Windows.Automation.PropertyCondition([System.Windows.Automation.AutomationElement]::ControlTypeProperty,[System.Windows.Automation.ControlType]::TabItem)",
         "    $tabs=$root.FindAll([System.Windows.Automation.TreeScope]::Descendants,$tabCondition)",
         "    foreach($tab in $tabs){",
         "      try {",
         "        $name=([string]$tab.Current.Name).Trim()",
+        "        if($name){ $seenTabs += $name }",
         "        if($name -notlike ('*'+$siteTitle+'*') -or $tab.Current.IsOffscreen){ continue }",
         "        if($tab.GetCurrentPropertyValue([System.Windows.Automation.AutomationElement]::IsSelectionItemPatternAvailableProperty) -eq $true){",
         "          $tab.GetCurrentPattern([System.Windows.Automation.SelectionItemPattern]::Pattern).Select()",
@@ -1787,7 +1820,8 @@ function createCapabilityEngine({
         "          $selectedVia='invoke_pattern'",
         "        } else { continue }",
         "        $selectedTab=$name",
-        "        $p=$candidate",
+        "        try { $root.SetFocus() } catch {}",
+        "        $p=Get-Process -Id $root.Current.ProcessId -ErrorAction SilentlyContinue",
         "        break",
         "      } catch {}",
         "    }",
@@ -1802,10 +1836,22 @@ function createCapabilityEngine({
         "  Start-Sleep -Milliseconds 300",
         "}",
         "$foreground=if($null -ne $p){[string](Get-Process -Id $p.Id -ErrorAction SilentlyContinue).MainWindowTitle}else{''}",
-        "[pscustomobject]@{action='activate_site';hostname=" + psSingleQuoted(hostname) + ";expectedTitle=$siteTitle;activated=$activated;visible=[bool]($activated -and ($selectedTab -or $foreground -like ('*'+$siteTitle+'*')));selectedTab=$selectedTab;selectedVia=$selectedVia;foregroundTitle=$foreground} | ConvertTo-Json -Compress",
+        "[pscustomobject]@{action='activate_site';hostname=" + psSingleQuoted(hostname) + ";expectedTitle=$siteTitle;activated=$activated;visible=[bool]($activated -and ($selectedTab -or $foreground -like ('*'+$siteTitle+'*')));selectedTab=$selectedTab;selectedVia=$selectedVia;foregroundTitle=$foreground;openTabs=$seenTabs} | ConvertTo-Json -Compress",
       ].join("\n");
       const activated = parsePowerShellJson(await powershell(script, 6500), "Desktop activation");
-      if (!activated.visible) throw errorWithStatus(`Could not reactivate the visible ${siteTitle} browser surface.`, 502);
+      if (!activated.visible) {
+        // SAY WHAT IS ACTUALLY OPEN. The old message named no cause, so the model treated a missing
+        // tab as a glitch and started cycling tabs and screenshotting to find one that was never
+        // there - six tools, a minute, and a reply claiming a switch that could not have happened.
+        // A tab that does not exist is not an error to retry; it is an answer.
+        const open = Array.isArray(activated.openTabs) ? activated.openTabs.filter(Boolean) : (activated.openTabs ? [activated.openTabs] : []);
+        throw errorWithStatus(
+          open.length
+            ? `The owner has no ${siteTitle} tab open. His open tabs are: ${open.slice(0, 12).join(" | ")}. Do not hunt for it - tell him it is not open, and offer to open it with open_url.`
+            : `No browser window with tabs could be read, so there is no ${siteTitle} tab to switch to. Tell him that rather than searching for one.`,
+          502,
+        );
+      }
       return activated;
     }
 
@@ -2782,6 +2828,20 @@ function createCapabilityEngine({
     stage_render: async (args, context) => {
       const title = cleanString(args.title, 120) || "Jarvis";
       const raw = Array.isArray(args.blocks) ? args.blocks : [];
+      // W3b — a calendar block is DECLARED by the model and FILLED by us.
+      //
+      // The block carries no event data from the model, and the schema gives it nowhere to put
+      // any. That is deliberate and it is the whole fabrication guard for this block type: the
+      // model cannot invent a meeting because it is never holding the pen. It matches A2UI v0.9,
+      // where the component tree and the data model are separate messages — the agent says WHAT
+      // to show, the client owns the values.
+      //
+      // Fetched once for the whole surface even if several calendar blocks are asked for.
+      const wantsCalendar = raw.some((b) => cleanString(b && b.type, 20).toLowerCase() === "calendar");
+      let dayEvents = null;
+      if (wantsCalendar && typeof stageDayEvents === "function") {
+        try { dayEvents = await stageDayEvents(); } catch (error) { console.warn("[stage] calendar block: real events unavailable — " + (error && error.message)); }
+      }
       const blocks = raw.map((b) => {
         const type = cleanString(b && b.type, 20).toLowerCase();
         // A stat card is read at a glance, so it shows a price, not a float.
@@ -2798,8 +2858,30 @@ function createCapabilityEngine({
           return { type: "stat", label: cleanString(b.label, 60), value, delta: cleanString(b.delta, 24) };
         }
         if (type === "list") return { type: "list", items: Array.isArray(b.items) ? b.items.map((i) => cleanString(i, 400)).filter(Boolean).slice(0, 24) : [] };
-        if (type === "heading") return { type: "heading", text: cleanString(b.text, 160) };
+        if (type === "heading") {
+          // A TITLE THAT IS NOT A TITLE GETS RENDERED AS WHAT IT ACTUALLY IS.
+          //
+          // This truncated at 160 characters, silently and mid-word: the owner saw headings ending
+          // "...Introduced the Exchange Ra" and "...11 founding nations (Austria, Belg", with a raw
+          // "**" left dangling where the cut landed inside markup. Truncation was the wrong response
+          // to the real problem, which is that a whole paragraph or bulleted list had been handed to
+          // a slot meant for a few words.
+          //
+          // The test is structural, not a word list: real titles are short and carry no list markers
+          // or line breaks. Anything else is body content in the wrong place, and body content
+          // renders perfectly well as body content.
+          const raw = cleanString(b.text, 900);
+          const isTitle = raw.length <= 90 && !/(^|\s)[-*]\s/.test(raw) && raw.indexOf(String.fromCharCode(10)) === -1;
+          return isTitle ? { type: "heading", text: raw } : { type: "text", text: raw };
+        }
         if (type === "divider") return { type: "divider" };
+        // No real events reachable — degrade to a sentence rather than draw an empty week and let
+        // the owner read it as "nothing on".
+        if (type === "calendar") {
+          return dayEvents
+            ? { type: "calendar", events: dayEvents.events || [], upcoming: dayEvents.upcoming || [], dateLabel: dayEvents.dateLabel }
+            : { type: "text", text: "I could not reach your calendar just now, so there is nothing real to show here." };
+        }
         // W3c — chart. Points are coerced here so a malformed series can never reach the renderer:
         // t is a date/ISO string, v is a finite number, anything else is dropped.
         if (type === "chart") {
@@ -2811,7 +2893,13 @@ function createCapabilityEngine({
           return { type: "chart", kind, label: cleanString(b.label, 60), points };
         }
         return { type: "text", text: cleanString(b.text, 4000) };
-      }).filter((b) => b.type === "divider" || b.text || b.value || b.label || (b.items && b.items.length) || (b.points && b.points.length));
+      // A block survives if it carries something to draw. `calendar` is listed explicitly because
+      // its payload is `events`, and an EMPTY events array is still a real answer — "nothing on
+      // today" is information, and dropping it left the surface with no blocks at all and threw
+      // "The Stage needs some blocks to render". Measured 2026-08-23: the model correctly emitted
+      // {"type":"calendar"}, this filter deleted it, and the model fell back to a text list — so the
+      // calendar component could never appear no matter how well it was offered.
+      }).filter((b) => b.type === "divider" || b.type === "calendar" || b.text || b.value || b.label || (b.items && b.items.length) || (b.points && b.points.length));
       if (!blocks.length) throw errorWithStatus("The Stage needs some blocks to render, sir.", 400);
       // Anti-fabrication. When this turn actually fetched something, every FIGURE drawn has to trace
       // back to it — a surface that shows "$219.88" for a price no tool ever returned is a lie with a
@@ -3478,23 +3566,34 @@ function createCapabilityEngine({
       return { ok: true, saved: true, name: saved.name, email, message: `Saved — ${saved.name}: ${email}. I'll use it next time.` };
     },
     browser_search: browserSearch,
-    browser_status: (args, context) => browserForContext(context).status(args),
-    browser_login_handoff: (args, context) => browserForContext(context).loginHandoff(args),
-    browser_login_complete: (args, context) => browserForContext(context).completeLoginHandoff(args),
-    browser_page_brief: (args, context) => browserForContext(context).pageBrief(args),
-    browser_navigate: (args, context) => browserForContext(context).navigate(args),
-    browser_snapshot: (args, context) => browserForContext(context).snapshot(args),
-    browser_tabs: (args, context) => browserForContext(context).tabs(args),
-    browser_act: (args, context) => browserForContext(context).act(args),
-    browser_commit: (args, context) => browserForContext(context).commit(args),
-    browser_file_search: (args, context) => browserForContext(context).findFiles(args),
-    browser_inspect: (args, context) => browserForContext(context).inspect(args),
-    browser_click: (args, context) => browserForContext(context).click(args),
-    browser_type: (args, context) => browserForContext(context).type(args),
-    browser_extract: (args, context) => browserForContext(context).extract(args),
-    browser_screenshot: (args, context) => browserForContext(context).screenshot(args),
-    browser_wait: (args, context) => browserForContext(context).wait(args),
-    browser_verify: (args, context) => browserForContext(context).verify(args),
+    browser_status: (args, context) => fromBackgroundBrowser(browserForContext(context).status(args)),
+    browser_login_handoff: (args, context) => fromBackgroundBrowser(browserForContext(context).loginHandoff(args)),
+    browser_login_complete: (args, context) => fromBackgroundBrowser(browserForContext(context).completeLoginHandoff(args)),
+    browser_page_brief: (args, context) => fromBackgroundBrowser(browserForContext(context).pageBrief(args)),
+    // Navigating the surface the owner is LOOKING AT is `open_url`'s job, so when the routing says
+    // visible, do that - do not send it to a browser he cannot see and report success. The result
+    // names the surface either way, so a later sentence about "your screen" can be checked.
+    browser_navigate: async (args, context = {}) => {
+      if (context.placement === "visible") {
+        const url = normalizeOpenUrl(args.url);
+        const desktop = await desktopControl({ action: "open_site", target: url });
+        if (!desktop.visible) throw errorWithStatus(`Opened ${url}, but could not verify it on the visible desktop.`, 502);
+        return { navigated: true, visible: true, url, surface: "owner-screen", desktop };
+      }
+      return fromBackgroundBrowser(browserForContext(context).navigate(args));
+    },
+    browser_snapshot: (args, context) => fromBackgroundBrowser(browserForContext(context).snapshot(args)),
+    browser_tabs: (args, context) => fromBackgroundBrowser(browserForContext(context).tabs(args)),
+    browser_act: (args, context) => fromBackgroundBrowser(browserForContext(context).act(args)),
+    browser_commit: (args, context) => fromBackgroundBrowser(browserForContext(context).commit(args)),
+    browser_file_search: (args, context) => fromBackgroundBrowser(browserForContext(context).findFiles(args)),
+    browser_inspect: (args, context) => fromBackgroundBrowser(browserForContext(context).inspect(args)),
+    browser_click: (args, context) => fromBackgroundBrowser(browserForContext(context).click(args)),
+    browser_type: (args, context) => fromBackgroundBrowser(browserForContext(context).type(args)),
+    browser_extract: (args, context) => fromBackgroundBrowser(browserForContext(context).extract(args)),
+    browser_screenshot: (args, context) => fromBackgroundBrowser(browserForContext(context).screenshot(args)),
+    browser_wait: (args, context) => fromBackgroundBrowser(browserForContext(context).wait(args)),
+    browser_verify: (args, context) => fromBackgroundBrowser(browserForContext(context).verify(args)),
     screen_capture: async (args) => {
       if (!screenCapture) throw errorWithStatus("Screen capture is not available in this runtime", 412);
       return screenCapture({ reason: cleanString(args.reason, 240) });
@@ -4065,7 +4164,26 @@ function createCapabilityEngine({
     },
   };
 
-  async function execute(tool, args = {}, context = {}) {
+  async function execute(rawTool, args = {}, context = {}) {
+    // THE MODEL SOMETIMES NAMESPACES ITS OWN TOOL CALL.
+    //
+    // Gemini emits `google:stage_render` / `google:open_url` when built-in Google tooling is in play
+    // alongside our declarations. Nothing here has ever had a colon in its name, so the lookup
+    // missed and the call 404'd as "Unknown capability" - and the model, given no usable reason,
+    // simply tried again. Measured on the owner's machine: nine consecutive failed `google:open_url`
+    // calls burning 26 seconds and ending in a refusal, and an entire dossier reduced to a single
+    // divider because every `google:stage_render` was rejected.
+    //
+    // A prefix is not an intent to parse; it is a namespace to drop. Strip it ONLY when what is left
+    // is an exact capability we own, so a genuinely unknown name still fails as one.
+    let tool = rawTool;
+    if (typeof tool === "string" && tool.includes(":")) {
+      const bare = tool.slice(tool.lastIndexOf(":") + 1);
+      if (handlers[bare] && definitionFor(bare)) {
+        console.warn(`[capability] "${tool}" -> "${bare}" (dropped the model's namespace prefix)`);
+        tool = bare;
+      }
+    }
     const definition = definitionFor(tool);
     const handler = handlers[tool];
     if (!definition || !handler) throw errorWithStatus(`Unknown capability: ${tool}`, 404);
@@ -4441,4 +4559,8 @@ function createCapabilityEngine({
   };
 }
 
-module.exports = { createCapabilityEngine };
+// WIDGET_LIST_TEXT is exported so the presentation router can be TOLD which widgets exist.
+// Without it the router cannot sensibly choose `widget` — it was calling "open the calendar"
+// a `surface` because it had no idea a calendar widget was available. The standard shape for
+// this is the agent being handed the client's catalog and picking from it by name (A2UI v0.9).
+module.exports = { createCapabilityEngine, WIDGET_LIST_TEXT };

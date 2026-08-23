@@ -23,7 +23,13 @@ const MD_CSS = `
   background: rgba(8,12,20,.72); border: 1px solid rgba(120,160,220,.18); overflow-x: auto; }
 .jr-md pre code { background: none; border: none; padding: 0; font-size: 12.5px; line-height: 1.5; display: block; color: #cfe6ff; }
 .jr-md h1, .jr-md h2, .jr-md h3, .jr-md h4 { margin: 13px 0 6px; font-weight: 650; line-height: 1.3; color: rgba(255,255,255,.96); }
-.jr-md h1 { font-size: 1.16em; } .jr-md h2 { font-size: 1.09em; } .jr-md h3 { font-size: 1.02em; } .jr-md h4 { font-size: .98em; }
+.jr-md h1 { font-size: 1.34em; letter-spacing: -.01em; } .jr-md h2 { font-size: 1.18em; } .jr-md h3 { font-size: 1.06em; } .jr-md h4 { font-size: 1em; }
+/* A section heading needs to be findable when you are skimming a long surface. At 1.16em against
+   1em body it was almost the same size as the text around it, so a dossier read as one undivided
+   slab. Spacing does as much of that work as size: room above a heading is what makes the section
+   below it read as a unit. */
+.jr-md h1 { margin: 4px 0 8px; } .jr-md h2 { margin: 20px 0 7px; } .jr-md h3 { margin: 16px 0 5px; }
+.jr-md h2 + p, .jr-md h3 + p { margin-top: 0; }
 .jr-md blockquote { margin: 8px 0; padding: 2px 0 2px 12px; border-left: 2px solid rgba(140,190,255,.32); color: rgba(220,230,245,.82); }
 .jr-md table { border-collapse: collapse; margin: 8px 0; font-size: .92em; display: block; overflow-x: auto; }
 .jr-md th, .jr-md td { border: 1px solid rgba(140,170,220,.2); padding: 5px 9px; text-align: left; }
@@ -43,6 +49,21 @@ function repairStreamingMarkdown(text: string): string {
   } else {
     const ticks = (t.replace(/```/g, "").match(/`/g) || []).length;
     if (ticks % 2 === 1) t += "`";
+  }
+  // A MODEL THAT ESCAPED ITS OWN NEWLINES.
+  //
+  // Observed on the owner's screen: a whole dossier arrived as ONE line reading
+  // "The Genesis: Low Rates and the Housing Boom\\nFollowing the dot-com bust..." - the two
+  // characters backslash and n, not a line break. Markdown then sees a single enormous paragraph:
+  // every heading marker sits mid-line so no heading renders, "###" shows up as literal text, and
+  // an odd bold marker somewhere in all that runs to the end of the document, which is why the
+  // whole panel came out heavy white and unreadable.
+  //
+  // Repaired only in the case that cannot be anything else: text with NO real line breaks at all
+  // and several escaped ones. Prose that genuinely contains a backslash-n keeps it, because prose
+  // that long always has real newlines too.
+  if (!/\n/.test(t) && (t.match(/\\n/g) || []).length >= 2) {
+    t = t.replace(/\\n/g, "\n").replace(/\\t/g, "  ");
   }
   const bolds = (t.match(/\*\*/g) || []).length;
   if (bolds % 2 === 1) t += "**";

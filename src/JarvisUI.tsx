@@ -941,7 +941,7 @@ export function JarvisUI() {
               ? <ContactChoiceCard key={`contact-${index}`} card={card} onChoose={chooseContact} />
               : <div className="jr-card" key={`${card.title}-${index}`}><div className="jr-card-title">{card.title}{card.value ? ` · ${card.value}` : ""}</div>{card.body ? <div className="jr-card-body">{card.body}</div> : null}{card.items?.length ? <div className="jr-card-body">{card.items.map((item) => <div key={item}>• {item}</div>)}</div> : null}</div>
           ))}</div> : null}
-          {meta.receipt || meta.timing ? <details className="jr-trace"><summary>Technical trace</summary><pre className="jr-card-body">{JSON.stringify({ receipt: meta.receipt, timing: meta.timing, usage: meta.usage }, null, 2)}</pre></details> : null}
+          {meta.receipt || meta.timing || meta.presentation ? <details className="jr-trace"><summary>Technical trace</summary><pre className="jr-card-body">{JSON.stringify({ presentation: meta.presentation, receipt: meta.receipt, timing: meta.timing, usage: meta.usage }, null, 2)}</pre></details> : null}
           {/* Approvals no longer render buried at the bottom of this scrolling panel — they are a
               fixed, un-missable floating dock rendered below (see jr-approval-dock). */}
         </div>

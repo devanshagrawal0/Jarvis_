@@ -77,6 +77,8 @@ export type BrainResponse = {
   receipt?: { id?: string; status?: string; action?: string; verification?: string[] };
   usage?: { calls?: number; inputTokens?: number; outputTokens?: number; totalTokens?: number; costUsd?: number };
   timing?: { totalMs?: number; modelMs?: number; totalModelCalls?: number; fallbackAttempts?: number };
+  // W4a — the presentation router's decision for this turn. Read-only for the owner.
+  presentation?: { form?: string; container?: string; confidence?: number; why?: string; source?: string } | null;
   pendingConfirmations?: Array<{
     id: string;
     tool: string;

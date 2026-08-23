@@ -6,7 +6,7 @@ function tokenize(value) {
   return [...new Set(String(value || "").toLowerCase().match(/[a-z0-9][a-z0-9_-]{1,}/g) || [])];
 }
 
-function createAgentRuntime({ getSettings, toolGateway, codeKnowledge, memoryStore }) {
+function createAgentRuntime({ getSettings, toolGateway, codeKnowledge, memoryStore, widgetCatalogText = "", getPresentationCorrections = null }) {
   function classify(prompt, history = [], mode = "chat") {
     const text = String(prompt || "");
     const lower = text.toLowerCase();
@@ -388,6 +388,121 @@ function createAgentRuntime({ getSettings, toolGateway, codeKnowledge, memorySto
     return remember(text);
   }
 
+  // ── W4a — the Presentation Router (master plan §3) ──────────────────────────────────────────
+  //
+  // ONE decision per turn: what FORM the answer should take. Talk, open a pre-made widget, draw a
+  // generative surface, or take over the screen — and panel or full-screen.
+  //
+  // IT DECIDES FORM ONLY, AND IS KEPT OUT OF `route` ON PURPOSE.
+  // `route` drives whether facts get fetched. The last model router that touched that seam regressed
+  // general knowledge: its flags are merged upward (`if (baseline.fresh) guarded.fresh = true`), so
+  // an over-classification could never be pulled back down, and "who wrote hamlet" became "I can't
+  // confirm that current information". Returning a SEPARATE object makes that failure structurally
+  // impossible here — nothing downstream can read a form decision as a reason to go and ground.
+  //
+  // WHY THERE IS NO CONFIDENCE THRESHOLD.
+  // The obvious design is "act when confidence > 0.8". Verbalized confidence is systematically
+  // overconfident — models sit in the 0.7-1.0 band above the reliability diagonal, because the number
+  // is a generated token and RLHF rewards the confident-sounding one. arXiv 2509.25532 finds a
+  // discrete reject option calibrates better than a numeric threshold precisely because it "reduces
+  // the pressure to express false precision". So `unsure` is a real choice the model can make, and
+  // callers gate on the discrete value. `confidence` is returned for MEASUREMENT and shown in the
+  // trace; nothing is allowed to gate on it.
+  //
+  // WHY `why` COMES FIRST.
+  // propertyOrdering puts the reasoning before the label. A format instruction suppresses the
+  // reasoning a model would otherwise do (the "format tax"), and this codebase already banks that
+  // elsewhere — `stage_render`'s `plan` field is the same trick, measured at 77.9% vs 48.9%
+  // (arXiv 2601.07525).
+  //
+  // Everything fails soft to `unsure`, and `unsure` means: behave exactly as JARVIS does today.
+  const PRESENTATION_FALLBACK = { form: "unsure", container: "panel", confidence: 0, why: "", source: "fallback" };
+
+  async function decidePresentation(prompt, history = [], mode = "chat") {
+    const settings = getSettings();
+    if (!settings.geminiKey) return { ...PRESENTATION_FALLBACK, why: "no key" };
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 3500);
+    try {
+      const ai = new GoogleGenAI({ apiKey: settings.geminiKey });
+      const recent = history.slice(-4).map((item) => `${item.role || "user"}: ${item.text}`).join("\n");
+      const past = typeof getPresentationCorrections === "function" ? getPresentationCorrections() : [];
+      const corrections = past.length
+        ? ["", "THE OWNER HAS CORRECTED YOU BEFORE:",
+            ...past.map((item) => `- he asked "${item.request}", you chose ${item.chose}, he wanted ${item.wanted}`),
+            "Scope: a correction applies ONLY when what he just asked is essentially the SAME KIND OF THING he corrected - the same sort of information, the same sort of ask. When it is, it outranks every rule above, including the tie-break. When the new request is a DIFFERENT kind of thing, ignore the correction entirely and decide on the rubric alone: he corrected one kind of answer, not your judgement in general.",
+          ].join("\n")
+        : "";
+      const response = await ai.models.generateContent({
+        model: settings.geminiRouterModel || "gemini-3.1-flash-lite",
+        contents: [
+          "You choose the FORM of JARVIS's answer for this turn. Not the content — the form.",
+          "",
+          "text     — speak it. Right for anything social, for a single precise value, and for a lookup the owner reads once. A surface here costs him attention and gives nothing back.",
+          widgetCatalogText
+            ? `widget   — he is asking for one of these existing windows BY NAME. Only choose this when he names one of them; if he is asking to be SHOWN information rather than to open a particular window, that is a surface. The windows: ${widgetCatalogText}`
+            : "widget   — he is asking for one of JARVIS's existing windows by name.",
+          "surface  — DRAW it on the Stage. The Stage is the owner's own panel: when he says 'the panel', 'the stage', 'on screen' or 'where i can see it', he means this, not one of the widgets below. Right whenever the answer is a trend, a comparison across several points, a schedule, or a grouped list — things read faster drawn than described. A question can still want a surface: 'how did X move this month' is asking to SEE the month, not to be read a list of numbers.",
+          "takeover — it needs the whole screen: a long dossier, or an agent run worth watching.",
+          "unsure   — say this whenever it is genuinely a toss-up. It is not a failure; it means JARVIS keeps its normal behaviour.",
+          "",
+          "TIE-BREAK, and it matters. If both a widget and a surface could work, choose SURFACE. A drawn surface answers the question he actually asked; a widget is a fixed window that merely sits near it.",
+          "And if he says 'panel' or 'stage' anywhere in the request, he means the Stage — answer `surface`, even when another word in the sentence happens to match one of the window names above. Asking for the panel is the one thing that must never open a widget instead.",
+          "",
+          "A surface must earn its pixels. If the owner would not look at it twice, choose text.",
+          "",
+          "CONTAINER. The answer is `panel` unless the owner ASKED for the whole screen. Taking his screen is his call, not yours - he has said so plainly - so `fullscreen` is correct only when he actually asked for it in some way (full screen, whole screen, take over the screen, make it big, and so on, however he words it). Everything else is `panel`, no matter how long or important the answer is; a panel he can expand himself in one click. If you are weighing whether it deserves the screen, that weighing is the answer: panel.",
+          "",
+          `Mode: ${mode}`,
+          recent ? `Recent conversation:\n${recent}` : "",
+          `The owner just said:\n${String(prompt || "")}`,
+          // The corrections come LAST, after his request, and that position is the fix.
+          //
+          // Placed inside the rubric they made no measurable difference: a correction on
+          // "plot me intel's closes" left an identically-shaped qualcomm request still choosing
+          // `surface`, with a reason that never mentioned it. Among the rules it reads as one
+          // more rule. Read last, immediately after what he just asked, it is the thing being
+          // applied to that request.
+          corrections,
+        ].filter(Boolean).join("\n"),
+        config: {
+          abortSignal: controller.signal,
+          temperature: 0,
+          responseMimeType: "application/json",
+          responseSchema: {
+            type: "object",
+            propertyOrdering: ["why", "form", "container", "confidence"],
+            properties: {
+              why: { type: "string", description: "One short line, in plain words, for the owner to read. Fill this in FIRST." },
+              form: { type: "string", enum: ["text", "widget", "surface", "takeover", "unsure"] },
+              container: { type: "string", enum: ["panel", "fullscreen"] },
+              confidence: { type: "number", description: "0-1. Reported for measurement only; nothing acts on it." },
+            },
+            required: ["why", "form", "container", "confidence"],
+          },
+        },
+      });
+      const parsed = JSON.parse(response.text || "{}");
+      const form = ["text", "widget", "surface", "takeover", "unsure"].includes(parsed.form) ? parsed.form : "unsure";
+      return {
+        form,
+        container: parsed.container === "fullscreen" ? "fullscreen" : "panel",
+        confidence: Number.isFinite(Number(parsed.confidence)) ? Math.min(1, Math.max(0, Number(parsed.confidence))) : 0,
+        why: String(parsed.why || "").slice(0, 240),
+        // W4f - the request this decision was about, so a correction can name it later. Kept short
+        // and kept HERE rather than re-derived at the UI, because the UI must never guess which
+        // sentence a surface belongs to.
+        request: String(prompt || "").slice(0, 200),
+        source: "model",
+      };
+    } catch (error) {
+      console.warn(`[presentation] router unavailable (${String(error && error.message || error).slice(0, 80)}) — keeping today's behaviour`);
+      return { ...PRESENTATION_FALLBACK, why: "router unavailable" };
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
   async function prepare({ prompt, history = [], mode = "chat", source = "" }) {
     // THE FORGE generative calls (compose / improve / adversary / genesis / agent)
     // are pure text generation — they must NEVER select a tool (research_v2 etc.).
@@ -395,6 +510,11 @@ function createAgentRuntime({ getSettings, toolGateway, codeKnowledge, memorySto
     const route = forgeGenerative
       ? { intent: "conversation", complexity: "fast", thinkingLevel: "low", fresh: false, action: false, code: false, personal: false, agentSwarm: false, screenFollowUp: false, deviceMesh: false, classifier: "forge-generative", routerModelCalls: 0 }
       : await classifyWithModel(prompt, history, mode);
+    // Started here and awaited at the return, so it overlaps tool selection and the memory search
+    // instead of adding its own wall-clock. Dev's decision 2026-08-23: it runs on EVERY turn — a
+    // social turn is exactly the one W4b needs a decision for. Optimising the call away is deferred
+    // to the end of the panel build.
+    const presentationPromise = decidePresentation(prompt, history, mode);
     const settings = getSettings();
     const screenTask = route.screenFollowUp || /\b(screen|desktop|laptop screen|visible screen|current screen|what'?s on my laptop|what is on my laptop|look at my laptop|what'?s on my screen|what is on my screen)\b/i.test(String(prompt || ""));
     const browserTask = /\b(browser|website|web page|chrome|canvas|instagram|gmail|youtube|you tube|github|reddit|google|kalshi|amazon|form|upload|download|submit|click|open .*site|open .*on (?:my )?(?:laptop|computer)|go to|log in|full ?screen|switch tabs?|change tabs?|next tab|previous tab|click on|click the|type on screen|press|do this on my screen|visible screen|current screen)\b/i.test(String(prompt || ""));
@@ -500,8 +620,29 @@ function createAgentRuntime({ getSettings, toolGateway, codeKnowledge, memorySto
         ? toolGateway.declarationsFor(execution.tools || [])
         : declarationsForLane(selectedTools, execution);
       const laneFallback = declarationsForLane(selectedTools, execution);
-      selectedTools = laneDeclarations.length ? laneDeclarations
-        : (laneFallback.length ? laneFallback : selectedTools);
+      // THE LANE ADDS FOCUS. IT MUST NEVER REPLACE THE MENU.
+      //
+      // This line used to be an assignment, and that assignment is why "open youtube on my browser"
+      // took three tools and minutes while the same request with no browser word took one call and
+      // was instant. The visible-desktop lane's tool list is
+      // ["computer_use","screen_capture","screen_inspect","screen_act","desktop_control"] and the
+      // headless lane's is ["computer_use","browser_status",...]. Neither has ever contained
+      // `open_url` or `url_read` (`git log -S open_url` on the lane router: no hits). So the moment
+      // the owner named his browser or his screen, the ONE-CALL tools that actually open and read a
+      // page were deleted from the model's menu, and all that was left was a screenshotter and a
+      // multi-step agent. It screenshotted, ran computer_use, failed, and stumbled into
+      // desktop_control. The owner's phrasing did not get worse; naming his own browser stripped the
+      // tool that does the job.
+      //
+      // A lane is a hint about WHERE the work happens. It is not a claim to know every tool the turn
+      // will need. Union: the lane's tools go first, so they still lead, and everything retrieval
+      // chose stays reachable behind them. Costs a few hundred tokens of declarations; the
+      // alternative costs the feature.
+      const laneChosen = laneDeclarations.length ? laneDeclarations : laneFallback;
+      const laneNames = new Set(laneChosen.map((tool) => tool?.name).filter(Boolean));
+      selectedTools = laneChosen.length
+        ? [...laneChosen, ...selectedTools.filter((tool) => tool && !laneNames.has(tool.name))]
+        : selectedTools;
       // A lane that names tools nothing can resolve is a misconfiguration, not a quiet no-op.
       const resolved = new Set(selectedTools.map((tool) => tool?.name).filter(Boolean));
       const unresolved = (execution.tools || []).filter((name) => !resolved.has(name));
@@ -519,8 +660,23 @@ function createAgentRuntime({ getSettings, toolGateway, codeKnowledge, memorySto
     });
     const codeContext = route.code ? await codeKnowledge.search(prompt, { limit: 4 }) : [];
     const selfSnapshot = route.code ? codeKnowledge.inspect() : null;
+    // Awaited here, and NOT conditionally.
+    //
+    // It was briefly skipped when no surface tool was on the menu, to save the wait on action turns.
+    // That optimisation was wrong and the W4e test caught it: W4c's whole job is to ADD `stage_render`
+    // when the decision is `surface`, so the turns where retrieval missed the renderer are precisely
+    // the turns that need a decision most. Skipping there made the decision unreachable exactly when
+    // it mattered - "give me a proper deep rundown..." came back `unsure`, reason "no surface tool on
+    // this turn", and drew nothing.
+    //
+    // The cost is bounded and mostly hidden: the call starts before tool selection and the memory
+    // search, so only its excess over those is wall-clock, and it aborts at 3.5s into today's
+    // behaviour. Correctness at that price is the right trade; the real latency work is one model
+    // call per turn, not skipping decisions.
+    const presentation = await presentationPromise;
     return {
       route,
+      presentation,
       model: selectModel(route),
       // Failover ladder for the chosen model, from the registry (verified-live rungs,
       // grounding-capable first, self-healing *-latest aliases). The brain walks this on

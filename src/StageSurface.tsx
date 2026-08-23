@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { JarvisMarkdown } from "./JarvisMarkdown";
-import { SurfaceRenderer, blocksToSurface } from "./StageRegistry";
+import { SurfaceRenderer, blocksToSurface, applySurfaceEvent, type Surface, type SurfaceEvent, type CalEvent, type ChartKind } from "./StageRegistry";
 
 // ── The Stage ────────────────────────────────────────────────────────────────
 // Jarvis's own on-screen surface, styled as a JARVIS HUD panel: cyan glow border,
@@ -14,11 +14,14 @@ type Block =
   | { type: "text"; text: string }
   | { type: "stat"; label?: string; value?: string; delta?: string }
   | { type: "list"; items: string[] }
-  | { type: "calendar"; events?: unknown[]; upcoming?: unknown[]; dateLabel?: string }
-  | { type: "chart"; points?: { t: string; v: number }[]; kind?: string; label?: string }
+  | { type: "calendar"; events?: CalEvent[]; upcoming?: CalEvent[]; dateLabel?: string }
+  | { type: "chart"; points?: { t: string; v: number }[]; kind?: ChartKind; label?: string }
   | { type: "divider" };
 type Provenance = { tools?: string[]; sources?: { title: string; url: string }[] };
-type StageState = { title: string; content?: string; blocks?: Block[]; loading?: string; provenance?: Provenance; key: number } | null;
+// W4e/W4f - `container` is the router's size decision and `why` is its reason, both stamped onto
+// the surface by the server. They live on the stage state rather than in a separate store, so a
+// surface can never end up shown next to the explanation for a different one.
+type StageState = { title: string; content?: string; blocks?: Block[]; surface?: Surface; loading?: string; provenance?: Provenance; container?: "panel" | "fullscreen"; why?: string; request?: string; form?: string; key: number } | null;
 type Rect = { x: number; y: number; w: number; h: number };
 
 const MIN_W = 380, MIN_H = 240;
@@ -30,7 +33,7 @@ let stageSeq = 0;
 // What KIND of box a surface needs. Height fits itself to content afterwards; width cannot, so it
 // has to be right from the start — a chart squeezed into the 414px note column had 292px of drawing
 // room, and a month of daily closes is unreadable in that.
-type SurfaceKind = "note" | "wide" | "calendar";
+type SurfaceKind = "note" | "read" | "wide" | "calendar";
 
 function defaultRect(kind: SurfaceKind = "note"): Rect {
   const vw = window.innerWidth, vh = window.innerHeight;
@@ -44,19 +47,38 @@ function defaultRect(kind: SurfaceKind = "note"): Rect {
   }
   // A charted surface gets a landscape box — still docked right, still out of the way, but wide
   // enough that a time series reads as a series rather than a squiggle.
+  // A reading surface gets a comfortable measure and the height to go with it; a note stays a note.
   const w = kind === "wide"
     ? Math.min(720, Math.max(460, Math.round(vw * 0.44)))
-    : Math.min(414, Math.max(300, Math.round(vw * 0.27)));
-  const h = Math.min(kind === "wide" ? 520 : 400, Math.max(230, Math.round(vh * 0.4)));
+    : kind === "read"
+      ? Math.min(680, Math.max(520, Math.round(vw * 0.42)))
+      : Math.min(414, Math.max(300, Math.round(vw * 0.27)));
+  // A dossier needs vertical room too - auto-fit shrinks it back if the content is shorter, so this
+  // is a starting box, not a claim about the content.
+  const h = Math.min(kind === "wide" ? 520 : kind === "read" ? 680 : 400, Math.max(230, Math.round(vh * (kind === "read" ? 0.68 : 0.4))));
   const x = Math.max(20, vw - w - 32);
   const y = Math.max(20, Math.round(vh * 0.11));
   return { x, y, w, h };
 }
 const isCalendar = (blocks?: Block[]) => Array.isArray(blocks) && blocks.some((b) => b.type === "calendar");
+// HOW MUCH THERE IS TO READ IS PART OF WHAT KIND OF SURFACE THIS IS.
+//
+// This asked two questions - is there a calendar, is there a chart - and everything else fell to
+// "note", a 27%-wide column. A six-thousand-word narrative therefore arrived in a 400px slot, which
+// is roughly 35 characters a line: the width of a phone, for something that takes ten minutes to
+// read. Nothing about the block TYPES distinguishes a one-line note from a dossier, because they
+// are the same type; the difference is how much of it there is.
+//
+// The threshold is a length, not a word list. Typography's comfortable measure is 45-90 characters
+// per line, and at this font that is a little over 600px - hence the reading width below.
+const textVolume = (blocks?: Block[]) => (Array.isArray(blocks) ? blocks : [])
+  .reduce((n, b) => n + String((b as { text?: string }).text || "").length, 0);
+
 const surfaceKind = (blocks?: Block[]): SurfaceKind =>
   isCalendar(blocks) ? "calendar"
     : Array.isArray(blocks) && blocks.some((b) => b.type === "chart") ? "wide"
-      : "note";
+      : textVolume(blocks) > 900 ? "read"
+        : "note";
 const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v));
 const two = (n: number) => String(n).padStart(2, "0");
 
@@ -146,6 +168,17 @@ const STYLE = `
 .jr-stage-act:hover { color: #eef6ff; background: rgba(110,185,235,.07); }
 .jr-stage-act[data-on="true"] svg, .jr-stage-act[data-on="true"] { color: #62c4e6; }
 .jr-stage-asep { width: 1px; height: 12px; background: rgba(110,185,235,.16); flex: none; }
+/* W4f - the reason, in the owner's words, above the action row. Reads as a quiet aside rather than
+   a dialog: it explains a choice already made, and must never look like it needs answering. */
+.jr-stage-why { flex: none; margin: 0 12px 6px 22px; padding: 9px 11px; border-radius: 8px;
+  background: rgba(28,50,82,.34); border: 1px solid rgba(110,185,235,.14); }
+.jr-stage-why-txt { color: #cfe0f0; font-size: 11.5px; line-height: 1.45; }
+.jr-stage-why-acts { display: flex; margin-top: 7px; }
+.jr-stage-why-btn { padding: 0 9px; height: 21px; border-radius: 6px; cursor: pointer;
+  background: rgba(110,185,235,.08); border: 1px solid rgba(110,185,235,.16); color: #9fb6cc;
+  font-size: 9px; letter-spacing: .1em; text-transform: uppercase; transition: color .15s, background .15s; }
+.jr-stage-why-btn:hover:not(:disabled) { color: #eef6ff; background: rgba(110,185,235,.14); }
+.jr-stage-why-btn:disabled { cursor: default; color: #62c4e6; }
 .jr-stage-more { margin-left: auto; width: 24px; height: 24px; border-radius: 7px; flex: none;
   border: 1px solid rgba(110,185,235,.16); background: rgba(110,185,235,.04); color: #a7c4dc; cursor: pointer;
   font-size: 11px; display: grid; place-items: center; }
@@ -159,13 +192,29 @@ const STYLE = `
 .jr-stage-x-float { position: absolute; top: 20px; right: 22px; z-index: 12; }
 /* W3 — generative blocks */
 .jr-blocks { display: flex; flex-direction: column; gap: 12px; }
-.jr-blk-heading { font-size: 14px; font-weight: 600; color: #dbe8f6; margin: 2px 0 -3px; }
+/* A SECTION HEADING MUST OUTRANK BOLD TEXT INSIDE A PARAGRAPH.
+   At 14px/600 in #dbe8f6 it was quieter than the bold run-in labels in the body below it
+   (650 weight, near-white), so on a long surface the hierarchy read upside down: the sections
+   receded and the bullet labels looked like the structure. Brighter, heavier, and given room
+   above - space is what separates one section from the last one. */
+.jr-blk-heading { font-size: 15px; font-weight: 680; color: #f2f7ff; letter-spacing: -.005em; margin: 14px 0 -2px; }
+.jr-blocks > *:first-child .jr-blk-heading, .jr-blocks > .jr-blk-heading:first-child { margin-top: 0; }
 .jr-blk-text { margin: 0; font-size: 13.5px; line-height: 1.5; color: #c2d0e0; }
 .jr-blk-list { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 7px; }
 .jr-blk-list li { position: relative; padding-left: 16px; font-size: 13px; line-height: 1.45; color: #c6d4e4; }
 .jr-blk-list li::before { content: ""; position: absolute; left: 3px; top: 7px; width: 4px; height: 4px; border-radius: 50%;
   background: #4a9fc4; box-shadow: 0 0 6px rgba(74,159,196,.55); }
 .jr-blk-stats { display: flex; flex-wrap: wrap; gap: 9px; }
+/* The grid container (§W3a). Column count comes from the block and is clamped in the registry, so
+   this only owns the gap and the collapse: below the narrow-panel breakpoint every grid becomes one
+   column, because two 380px-panel columns are 170px each and nothing reads at that width. */
+.jr-blk-grid { display: grid; gap: 12px; align-items: start; }
+/* The calendar block fills the panel rather than sizing to content — it is a scaled design canvas
+   and a content-sized parent measures as zero height, which silently blanks it. The :has rule scopes this
+   to a surface that actually contains one, so every other surface keeps auto-sizing as before. */
+.jr-blk-cal { flex: 1 1 auto; min-height: 0; height: 100%; }
+.jr-blocks:has(> .jr-blk-cal) { height: 100%; min-height: 0; }
+@media (max-width: 520px) { .jr-blk-grid { grid-template-columns: 1fr !important; } }
 .jr-blk-stat { flex: 1 1 120px; min-width: 108px; display: flex; flex-direction: column; gap: 2px; padding: 10px 12px; border-radius: 10px;
   border: 1px solid rgba(96,170,214,.16); background: linear-gradient(180deg, rgba(30,54,86,.26), rgba(16,28,46,.16)); }
 /* A LONE stat must not stretch. The flex-grow above is right for a row of cards and wrong for one:
@@ -242,6 +291,8 @@ const IconPin = () => (<svg viewBox="0 0 24 24" fill="none" stroke="currentColor
 
 export function StageSurface() {
   const [stage, setStage] = useState<StageState>(null);
+  const [whyOpen, setWhyOpen] = useState(false);
+  const [whySaved, setWhySaved] = useState("");
   const [rect, setRect] = useState<Rect | null>(null);
   const [pinned, setPinned] = useState(false);
   const drag = useRef<{ mode: "move" | "resize"; sx: number; sy: number; r: Rect } | null>(null);
@@ -269,7 +320,7 @@ export function StageSurface() {
       };
       if (d?.type === "stage-show" && d.data?.content) {
         userSized.current = false;
-        const title = d.data.title || "Jarvis";
+        const title = d.data?.title || "Jarvis";
         stamp(title);
         setStage({ title, content: d.data.content, key: Date.now() });
         // Read the PREVIOUS kind before overwriting it: a functional setState runs during render,
@@ -288,19 +339,50 @@ export function StageSurface() {
         setStage((prev) => (prev && prev.loading && !prev.blocks?.length ? null : prev));
         return;
       }
+      // ── Typed surface events (master plan §2.4) ──────────────────────────────────────────────
+      //
+      // One reducer, applied to a live surface tree, instead of shipping a whole spec each time.
+      // `surface.block` with an id already present UPDATES that block in place (A2UI v0.9's rule);
+      // `surface.data` replaces one prop of one block. Because the renderer is now keyed by block id
+      // rather than array position, a patch re-renders that block and leaves every other element
+      // mounted — which is the property W5's shared-element morph is built on.
+      //
+      // `stage-render` below is NOT deprecated by this. A surface that is ready all at once has
+      // nothing to gain from being dribbled in, and translating it through the same reducer would
+      // add a frame of empty panel for no benefit. Both paths write the same shape.
+      if (d?.type === "surface-event") {
+        const ev = d.data as SurfaceEvent | undefined;
+        if (!ev || typeof ev.kind !== "string") return;
+        const evTitle = (d.data as { title?: string } | undefined)?.title;
+        if (ev.kind === "surface.start") { userSized.current = false; stamp(evTitle || "Jarvis"); }
+        setStage((prev) => {
+          const nextSurface = applySurfaceEvent(prev?.surface ?? null, ev);
+          if (!nextSurface) return prev;
+          const key = prev && (prev.loading || prev.surface) ? prev.key : Date.now();
+          return { title: prev?.title || evTitle || "Jarvis", surface: nextSurface, provenance: prev?.provenance, key };
+        });
+        return;
+      }
       if (d?.type === "stage-render") {
         const blocks = Array.isArray(d.data?.blocks) ? d.data.blocks : [];
         const provenance = (d.data as { provenance?: Provenance } | undefined)?.provenance;
         const loading = typeof d.data?.loading === "string" ? d.data.loading : "";
         if (!blocks.length && !loading) return; // nothing to show
         userSized.current = false;
-        const title = d.data.title || "Jarvis";
+        const title = d.data?.title || "Jarvis";
         stamp(title);
+        // W4e - the router's size decision, and W4f's reason, ride along with the render.
+        const container = (d.data as { container?: string } | undefined)?.container === "fullscreen" ? "fullscreen" : "panel";
+        const why = String((d.data as { why?: string } | undefined)?.why || "");
+        const request = String((d.data as { request?: string } | undefined)?.request || "");
+        setWhyOpen(false);
+        setWhySaved("");
+        const form = String((d.data as { form?: string } | undefined)?.form || "");
         // Keep the SAME key from the loading skeleton through to the final blocks, so the panel
         // morphs in place instead of remounting/flickering between phases.
         setStage((prev) => {
           const key = prev && prev.loading ? prev.key : Date.now();
-          return blocks.length ? { title, blocks, provenance, key } : { title, loading, key };
+          return blocks.length ? { title, blocks, provenance, container, why, request, form, key } : { title, loading, container, why, request, form, key };
         });
         // A calendar surface and a stat surface want completely different boxes. `prev ?? …` kept
         // whichever box the FIRST surface of the session happened to need and handed it to every
@@ -309,7 +391,17 @@ export function StageSurface() {
         const kind = surfaceKind(blocks);
         const prevKind = rectKind.current;   // see the note above — must be read before the mutation
         rectKind.current = kind;
-        setRect((prev) => (prev && prevKind === kind ? prev : defaultRect(kind)));
+        // W4e - a takeover decision opens at the same geometry the Expand button uses, so there is
+        // one definition of "big", and the owner can still drag or resize it afterwards.
+        // `userSized` is set for the reason Expand sets it: auto-fit must not shrink a surface that
+        // was deliberately opened large. Every other decision falls through to today's sizing
+        // untouched, which is what keeps W3's calendar and chart boxes intact.
+        if (container === "fullscreen") {
+          userSized.current = true;
+          setRect(bigRect());
+        } else {
+          setRect((prev) => (prev && prevKind === kind ? prev : defaultRect(kind)));
+        }
       }
     };
     const onClose = () => setStage(null);
@@ -402,11 +494,26 @@ export function StageSurface() {
     document.body.style.userSelect = "none";
   }, [rect]);
 
+  // THE BIG BOX, AND IT STOPS ABOVE THE COMMAND BAR.
+  //
+  // It used to be a flat 86% of the viewport height starting at 6%, which puts its bottom edge at
+  // 92% - underneath the composer. The owner saw the last lines of a dossier and its whole action
+  // row disappear behind the input. Auto-fit already avoids the command bar, but expanding sets
+  // `userSized`, which is exactly the flag that turns auto-fit off, so nothing was left to catch it.
+  // Measure the bar and stop short of it. One function so the Expand button and a full-screen
+  // request cannot drift apart.
+  const bigRect = useCallback((): Rect => {
+    const vw = window.innerWidth, vh = window.innerHeight;
+    const bar = document.querySelector(".jcb-root");
+    const barTop = bar ? bar.getBoundingClientRect().top : Math.round(vh * 0.86);
+    const y = Math.round(vh * 0.05);
+    return { x: Math.round(vw * 0.08), y, w: Math.round(vw * 0.84), h: Math.max(240, Math.round(barTop - y - 16)) };
+  }, []);
+
   const expand = useCallback(() => {
     userSized.current = true;
-    const vw = window.innerWidth, vh = window.innerHeight;
-    setRect({ x: Math.round(vw * 0.08), y: Math.round(vh * 0.06), w: Math.round(vw * 0.84), h: Math.round(vh * 0.86) });
-  }, []);
+    setRect(bigRect());
+  }, [bigRect]);
 
   if (!stage || !rect) return null;
 
@@ -437,7 +544,7 @@ export function StageSurface() {
         <button className="jr-stage-x jr-stage-x-float" onPointerDown={stop} onClick={() => setStage(null)} title="Close (Esc)">✕</button>
         <div className="jr-stage-body jr-stage-body-bare">
           <div ref={contentRef} style={{ height: "100%" }}>
-            <SurfaceRenderer surface={blocksToSurface(stage.blocks!)} />
+            <SurfaceRenderer surface={stage.surface ?? blocksToSurface(stage.blocks!)} />
           </div>
         </div>
         <div className="jr-stage-grip" onPointerDown={startDrag("resize")} title="Resize" />
@@ -462,6 +569,7 @@ export function StageSurface() {
         <div ref={contentRef}>
           {stage.loading
             ? <div className="jr-stage-loading"><span className="jr-stage-spin" aria-hidden /><span>{stage.loading}</span></div>
+            : stage.surface ? <SurfaceRenderer surface={stage.surface} />
             : stage.blocks ? <SurfaceRenderer surface={blocksToSurface(stage.blocks)} /> : <JarvisMarkdown text={stage.content || ""} />}
         </div>
       </div>
@@ -481,10 +589,51 @@ export function StageSurface() {
 
       <div className="jr-stage-div" />
 
+      {whyOpen && stage.why ? (
+        <div className="jr-stage-why" onPointerDown={stop}>
+          <div className="jr-stage-why-txt">{stage.why}</div>
+          <div className="jr-stage-why-acts">
+            <button
+              className="jr-stage-why-btn"
+              disabled={whySaved !== ""}
+              onClick={() => {
+                const request = stage.request || "";
+                setWhySaved("saving");
+                fetch("/api/presentation/feedback", {
+                  method: "POST",
+                  headers: { "content-type": "application/json" },
+                  body: JSON.stringify({ request, chose: stage.form || "surface", wanted: "text" }),
+                })
+                  .then((r) => r.json())
+                  .then((r) => setWhySaved(r && r.ok ? "Noted - I'll lean to text for these." : "Could not save that."))
+                  .catch(() => setWhySaved("Could not save that."));
+              }}
+            >{whySaved || "this should have been text"}</button>
+          </div>
+        </div>
+      ) : null}
+
       <div className="jr-stage-acts">
         <button className="jr-stage-act" onPointerDown={stop} onClick={() => document.dispatchEvent(new CustomEvent("jarvis:command", { detail: { text: `Edit this: ${stage.title}`, files: [] } }))}><IconEdit /> Edit</button>
         <span className="jr-stage-asep" />
         <button className="jr-stage-act" onPointerDown={stop} onClick={expand}><IconExpand /> Expand</button>
+        <span className="jr-stage-asep" />
+        {stage.why ? (
+          <>
+            <span className="jr-stage-asep" />
+            {/* W4f - the router's reason, in the owner's own words, and the one-tap disagreement.
+                Shown only when there IS a reason: an empty chip would imply a decision was made
+                and explained when nothing explained it. Saying it should have been text is not a
+                complaint into the void - it is stored and read back to the router next time. */}
+            <button
+              className="jr-stage-act"
+              data-on={whyOpen}
+              onPointerDown={stop}
+              onClick={() => setWhyOpen((v) => !v)}
+              title="Why this form?"
+            >why this?</button>
+          </>
+        ) : null}
         <span className="jr-stage-asep" />
         <button className="jr-stage-act" data-on={pinned} onPointerDown={stop} onClick={() => setPinned((p) => !p)}><IconPin /> {pinned ? "Pinned" : "Pin"}</button>
         <button className="jr-stage-more" onPointerDown={stop} title="More" aria-label="More">⋯</button>

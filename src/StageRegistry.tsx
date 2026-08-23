@@ -2,6 +2,7 @@ import { Fragment, type ReactNode } from "react";
 import { JarvisMarkdown } from "./JarvisMarkdown";
 import { CalendarWidget } from "./StageCalendar";
 import { StageChart, type ChartPoint, type ChartKind } from "./StageChart";
+export type { ChartPoint, ChartKind };
 
 // ── Stage block registry (W3a) ────────────────────────────────────────────────────────────────
 // The Stage's core bet (master plan §2.1): the model never emits UI code — it references blocks
@@ -14,6 +15,7 @@ export type CalEvent = { title: string; startAt?: string; endAt?: string; allDay
 
 export type RBlock =
   | { id: string; type: "stack"; children: string[] }
+  | { id: string; type: "grid"; props?: { cols?: number }; children: string[] }
   | { id: string; type: "stat_row"; children: string[] }
   | { id: string; type: "heading"; props: { text: string } }
   | { id: string; type: "text"; props: { md: string } }
@@ -44,6 +46,18 @@ type Entry = { validate: (b: any) => boolean; render: (b: any, kids: ReactNode) 
 // The catalog. `kids` is the already-rendered children array for container blocks (null for leaves).
 export const REGISTRY: Record<string, Entry> = {
   stack: { validate: () => true, render: (_b, kids) => <div className="jr-blocks">{kids}</div> },
+  // The plan's §W3a container pair is stack/grid. `grid` lays its children in columns — the thing a
+  // stack cannot express: two charts side by side, a 2x2 of stats, a label column beside a value
+  // column. Column count is clamped rather than trusted; a model asking for 9 columns in a 380px
+  // panel produces slivers, and a bad number must degrade to a sane layout, never to a broken one.
+  grid: {
+    validate: () => true,
+    render: (b, kids) => {
+      const asked = Number(b?.props?.cols);
+      const cols = Number.isFinite(asked) ? Math.min(4, Math.max(2, Math.round(asked))) : 2;
+      return <div className="jr-blk-grid" style={{ gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))` }}>{kids}</div>;
+    },
+  },
   stat_row: { validate: () => true, render: (_b, kids) => <div className="jr-blk-stats">{kids}</div> },
   // The heading renders as PLAIN TEXT, so any markdown the model puts in it would be shown as
   // characters — a surface went out titled "## NVDA 1-Month Trend (Daily)", hashes and all. The
@@ -73,7 +87,15 @@ export const REGISTRY: Record<string, Entry> = {
   // by the model). Full HUD day view: header + tabs, time-grid, mini-month, today's schedule, upcoming.
   calendar: {
     validate: (b) => Array.isArray(b?.props?.events),
-    render: (b) => <CalendarWidget events={b.props.events} upcoming={b.props.upcoming} />,
+    // The one block that FILLS its parent instead of sizing to its content.
+    //
+    // CalendarWidget is a fixed 1180x740 design canvas that measures its own root and scales to fit
+    // it. Every other block sizes to content, so the registry's `stack` container has no height —
+    // and the calendar measured its root as 1260x0, hit its own `if (!W || !H) return;` guard, never
+    // applied the scale transform, and painted NOTHING. Verified 2026-08-23: the DOM was complete
+    // and every element reported visible with opacity 1, while the panel was blank on screen.
+    // A wrapper that claims the remaining height is what makes the measurement real.
+    render: (b) => <div className="jr-blk-cal"><CalendarWidget events={b.props.events} upcoming={b.props.upcoming} /></div>,
   },
   // W3c — the chart block. Hand-built once (lightweight-charts), fed a plain series the server has
   // already checked against real fetched data. `validate` demands at least two finite points: a
@@ -95,16 +117,83 @@ function degrade(b: any): ReactNode {
 
 export function SurfaceRenderer({ surface }: { surface: Surface }) {
   const seen = new Set<string>();
-  const renderId = (id: string, key: number | string): ReactNode => {
+  // KEYED BY BLOCK ID, never by array position.
+  //
+  // This walked children with `.map((c, k) => renderId(c, k))` and keyed the Fragment on `k`, the
+  // index. React's own rule (react.dev, "Preserving and Resetting State") is that state follows
+  // position when the key is an index, so patching one block by id, or inserting a block ahead of
+  // others, re-associates every later block with the wrong element — a chart remounts and redraws
+  // from scratch instead of updating in place. Harmless while a surface was only ever replaced
+  // whole; not harmless now that `applySurfaceEvent` below patches a single block by id, and fatal
+  // for the shared-element morph in W5, which needs an element to persist across the change.
+  const renderId = (id: string): ReactNode => {
     const b: any = surface.blocks[id];
     if (!b || seen.has(id)) return null; // missing or cycle guard
     seen.add(id);
     const entry = REGISTRY[b.type];
-    const kids = Array.isArray(b.children) ? b.children.map((c: string, k: number) => renderId(c, k)) : null;
+    const kids = Array.isArray(b.children) ? b.children.map((c: string) => renderId(c)) : null;
     const el = entry && entry.validate(b) ? entry.render(b, kids) : degrade(b);
-    return el ? <Fragment key={key}>{el}</Fragment> : null;
+    return el ? <Fragment key={id}>{el}</Fragment> : null;
   };
-  return renderId(surface.root, "root");
+  return renderId(surface.root);
+}
+
+// ── The surface event reducer (master plan §2.4) ──────────────────────────────────────────────
+//
+// The plan calls for typed events applied by ONE client reducer to a live surface tree, rather than
+// shipping a whole spec each time. The event names follow A2UI v0.9 (a2ui.org), which is the closest
+// published standard and whose model this registry already matches: a flat, id-referenced component
+// list whose root is the block called `root`, with "sending a component with an existing id updates
+// that component". That is exactly `surface.block` below.
+//
+// `surface.data` is the RFC 6902 shape narrowed to what a block patch actually needs — a replace at
+// one prop of one block. The full RFC allows add/remove/move/copy/test over arbitrary pointers; a
+// surface never needs move or copy, and honouring only `replace` keeps a malformed patch from being
+// able to restructure the tree. RFC 6902's atomicity rule is kept: a patch that does not apply
+// cleanly leaves the surface untouched rather than half-applied.
+//
+// Deliberately NOT here: binding blocks to a separate DataBag by JSON Pointer (§2.10). Blocks carry
+// their own data today, and splitting that is a change to every block and the server with it. Not
+// on W3's checklist; it belongs with the wave that needs it.
+export type SurfaceEvent =
+  | { kind: "surface.start"; root?: string }
+  | { kind: "surface.block"; block: RBlock; parent?: string }
+  | { kind: "surface.data"; id: string; prop: string; value: unknown }
+  | { kind: "surface.done" };
+
+export function emptySurface(): Surface {
+  return { root: "root", blocks: { root: { id: "root", type: "stack", children: [] } } };
+}
+
+export function applySurfaceEvent(surface: Surface | null, event: SurfaceEvent): Surface | null {
+  switch (event.kind) {
+    case "surface.start":
+      return { root: event.root || "root", blocks: { root: { id: event.root || "root", type: "stack", children: [] } as RBlock } };
+    case "surface.block": {
+      const base = surface || emptySurface();
+      const b = event.block;
+      if (!b || typeof b.id !== "string" || !b.id) return base;      // an id-less block cannot be addressed
+      const parentId = event.parent || base.root;
+      const parent: any = base.blocks[parentId];
+      const known = Boolean(base.blocks[b.id]);
+      const blocks = { ...base.blocks, [b.id]: b };
+      // Appended once. Re-sending the same id UPDATES it in place (A2UI) and must not push a second
+      // reference into the parent, or the block renders twice and the cycle guard hides the second.
+      if (!known && parent && Array.isArray(parent.children) && !parent.children.includes(b.id)) {
+        blocks[parentId] = { ...parent, children: [...parent.children, b.id] };
+      }
+      return { ...base, blocks };
+    }
+    case "surface.data": {
+      if (!surface) return surface;
+      const target: any = surface.blocks[event.id];
+      if (!target) return surface;                                   // replace on a missing target: no-op, per RFC 6902
+      return { ...surface, blocks: { ...surface.blocks, [event.id]: { ...target, props: { ...(target.props || {}), [event.prop]: event.value } } } };
+    }
+    case "surface.done":
+    default:
+      return surface;
+  }
 }
 
 // Adapter: the current flat Block[] the pipeline emits → a Surface. Consecutive stats group into a
