@@ -47,6 +47,7 @@ export default defineConfig({
       "/assets": "http://localhost:8799",
       "/mesh": { target: "http://localhost:8799", ws: true },
       "/phone": "http://localhost:8799",
+      "^/app/?$": "http://localhost:8799",
     }
   },
   build: {
@@ -56,6 +57,7 @@ export default defineConfig({
       input: {
         main: path.resolve("index.html"),
         phone: path.resolve("phone.html"),
+        app: path.resolve("app.html"),
         widgetLab: path.resolve("widget-lab.html"),
         globe: path.resolve("globe.html"),
         globeRoom: path.resolve("globe-room.html")

@@ -1,15 +1,13 @@
-// Run the whole process in the owner's real timezone. The host machine here is US-Eastern, and
-// several subsystems format time with the MACHINE-local clock (no explicit zone) — which is how the
-// assistant kept insisting it was "3 PM EDT / America/New_York" and computed "tomorrow" a day off no
-// matter how the prompt was fixed. Anchoring process.env.TZ makes every machine-local Date resolve to
-// the owner's zone. Set before any Date is constructed. (Can be overridden via a real TZ env var.)
-if (!process.env.TZ || process.env.TZ === "America/New_York") process.env.TZ = "Asia/Kolkata";
+// The process clock is the MACHINE clock. A hardcoded zone pinned here in July 2026 ("Asia/Kolkata",
+// because the owner was in India that month) outlived the trip and made every machine-local Date lie —
+// "You're up late" at 5 PM Eastern. Where the owner is comes from user-context (auto-detected, or
+// stated), never from a constant; the machine's own zone is the only sane default for this process.
 const crypto = require("crypto");
 const fs = require("fs");
 const http = require("http");
 const os = require("os");
 const path = require("path");
-const { execFile, spawn } = require("child_process");
+const { execFile, execFileSync, spawn } = require("child_process");
 const { URL, URLSearchParams } = require("url");
 const QRCode = require("qrcode");
 const { createCapabilityEngine, WIDGET_LIST_TEXT } = require("./server/capability-engine");
@@ -124,6 +122,25 @@ const PORT = Number(process.env.PORT || 8799);
 // Era I: local is the safe default. LAN/public exposure must be an explicit
 // JARVIS_HOST override and still passes the authenticated request policy.
 const HOST = process.env.JARVIS_HOST || "127.0.0.1";
+// Hosting for the owner's own devices goes through Tailscale (2026-09-13): `tailscale serve` terminates
+// HTTPS on this machine and proxies to 127.0.0.1:8799, so JARVIS stays loopback-only and the phone
+// reaches https://<machine>.<tailnet>.ts.net. The request then carries THAT hostname, which the host
+// check below must recognise. It is read from the local Tailscale daemon once at boot — never typed
+// in — so it follows whatever the tailnet is called. JARVIS_TRUSTED_HOSTS (comma list) is the manual
+// override for anything else.
+const TAILSCALE_HOSTS = (() => {
+  const hosts = new Set();
+  try {
+    const exe = process.platform === "win32" ? "C:\\Program Files\\Tailscale\\tailscale.exe" : "tailscale";
+    if (process.platform === "win32" && !fs.existsSync(exe)) return hosts;
+    const status = JSON.parse(execFileSync(exe, ["status", "--json"], { encoding: "utf8", timeout: 4000, windowsHide: true }));
+    const dns = String(status?.Self?.DNSName || "").replace(/\.$/, "").toLowerCase();
+    if (dns) { hosts.add(dns); hosts.add(dns.split(".")[0]); }
+    for (const ip of status?.Self?.TailscaleIPs || []) hosts.add(String(ip).toLowerCase());
+  } catch { /* no Tailscale, or daemon down — nothing to trust */ }
+  for (const extra of String(process.env.JARVIS_TRUSTED_HOSTS || "").split(",")) { const h = extra.trim().toLowerCase(); if (h) hosts.add(h); }
+  return hosts;
+})();
 const ROOT = __dirname;
 const WORKSPACE_ROOT = path.resolve(ROOT, "..");
 const CONFIG_DIR = path.join(ROOT, "config");
@@ -151,7 +168,9 @@ async function getOwnerEmail() {
   } catch { /* not connected / offline */ }
   return "";
 }
-function ownerDisplayName() { try { return (userContext && userContext.getIdentity && (userContext.getIdentity().name || userContext.getIdentity().preferredName)) || ""; } catch { return ""; } }
+// Read the real identity columns (`preferred_name`, `legal_name`); the old `.name || .preferredName`
+// matched nothing in the table and silently returned "" forever.
+function ownerDisplayName() { try { const id = userContext && userContext.getIdentity ? userContext.getIdentity() : null; return (id && (id.preferred_name || id.legal_name)) || ""; } catch { return ""; } }
 
 // Jarvis's real, current self-knowledge — assembled from live sources, never hardcoded:
 //  • which services are actually connected (provider health),
@@ -1102,7 +1121,7 @@ function validateHost(req) {
     webhookHostname = "";
   }
   const quickTunnelHost = hostname.endsWith(".trycloudflare.com");
-  if (!loopback && hostname !== HOST.toLowerCase() && hostname !== webhookHostname && !quickTunnelHost && !localInterfaceHosts.has(hostname)) {
+  if (!loopback && hostname !== HOST.toLowerCase() && hostname !== webhookHostname && !quickTunnelHost && !localInterfaceHosts.has(hostname) && !TAILSCALE_HOSTS.has(hostname)) {
     throw Object.assign(new Error("Request host rejected"), { statusCode: 403 });
   }
   return host;
@@ -1208,7 +1227,7 @@ function safePathForUrl(urlPath) {
   }
 
   // DM-9: /sandbox is a server-rendered page, not an SPA route — skip fallback
-  const serverRenderedPaths = new Set(["/sandbox", "/mesh/pair", "/phone.html"]);
+  const serverRenderedPaths = new Set(["/sandbox", "/mesh/pair", "/phone.html", "/app"]);
   if (hasBuiltClient && !path.extname(requested) && !serverRenderedPaths.has(urlPath.split("?")[0])) {
     return path.join(distRoot, "index.html");
   }
@@ -2238,7 +2257,7 @@ function defaultPersonalBrain() {
   }
 
   return {
-    owner: "Devansh Agrawal",
+    owner: "", // learned from the profile (user-context), never a constant — see ownerDisplayName()
     product: "JARVIS local command center",
     source: fs.existsSync(MASTER_BRAIN_EXTRACT_PATH)
       ? "JARVIS_Master_Brain_150_Page_Specification.docx"
@@ -2341,10 +2360,13 @@ function brainSystemInstruction(mode, recalledMemories = [], runtimeContext = ""
     : "none";
 
   return [
-    `You are JARVIS inside ${profile.owner}'s local command center.`,
+    `You are JARVIS inside ${ownerDisplayName() || "the owner"}'s local command center.`,
     profileBlock,
     personalityInstruction(),
-    "Address the owner as 'sir' — naturally, in greetings, acknowledgements, briefings, and status, not mechanically in every single sentence. You are JARVIS; his name is Dev, but you address him as sir, in the calm, dry, quietly competent register of Tony Stark's JARVIS.",
+    // Who the owner is and how to address them come ONLY from the profile block above (name, address
+    // style, stated preferences). Nothing about the person is hardcoded here any more — a "sir" and a
+    // "Dev" used to be, which is why "call me X from now on" never stuck. Only the register is fixed.
+    "Speak in the calm, dry, quietly competent register of Tony Stark's JARVIS. Use the owner's name or honorific exactly as the profile says — naturally in greetings, acknowledgements and briefings, not in every sentence — and use none at all if the profile has none yet.",
     "Greetings: match them to the ACTUAL local date/time given below — never guess morning/afternoon/evening. Only greet when the owner is ONLY greeting (e.g. 'hi'). If his message already contains a request, skip the greeting entirely and answer it. Never append boilerplate like 'How can I assist you?'.",
     "Never open with status filler such as 'Systems are ready', 'System resources are ready', or 'Core systems are online' unless he actually asked for system status. Respond to what he actually said.",
     "Talk like a real, sharp person who knows him, not an AI and not a textbook. Use contractions (you're, it's, don't, I'd, that's). Vary your sentence length so it reads with natural rhythm. Answer him directly and conversationally, never in an encyclopedic 'X is a state in which...' register. Warm but not gushy; have a point of view. Not a command router, not a butler reciting lines.",
@@ -2583,7 +2605,7 @@ function commandResponse(rawCommand) {
     lastIntent = "greeting";
     return {
       intent: "greeting",
-      response: "Hello, sir. What do you need?",
+      response: "Hello. What do you need?",
       tone: "positive",
       actions: ["conversation:ready"],
     };
@@ -3055,7 +3077,7 @@ async function guardUnearnedClaim(text, toolResults = []) {
     if (await replyClaimsTheOwnersScreen(body)) {
       const where = [...new Set(effective.map((item) => String(item.tool || "a tool").replace(/_/g, " ")))].join(", ");
       console.warn(`[honesty] corrected a surface claim: ${where} ran off-screen`);
-      return `${body}\n\nCorrection, sir: none of that happened on your screen. ${where} ran in JARVIS's own background browser, which you cannot see, so nothing opened, switched or played in front of you. Ask me again and I will do it in your own browser.`;
+      return `${body}\n\nCorrection: none of that happened on your screen. ${where} ran in JARVIS's own background browser, which you cannot see, so nothing opened, switched or played in front of you. Ask me again and I will do it in your own browser.`;
     }
   }
   if (effective.length) {
@@ -3064,7 +3086,7 @@ async function guardUnearnedClaim(text, toolResults = []) {
     // stage_render routinely fails once — the faithfulness audit rejects a figure — and the model
     // re-renders from the real payload and succeeds. Both attempts sit in the receipts. Counting
     // the first one produced a correction that was itself false: measured 2026-08-22, a chart that
-    // was genuinely on screen got "Correction, sir: stage render did not actually complete"
+    // was genuinely on screen got "Correction: stage render did not actually complete"
     // appended to a correct reply. A guard that invents its own falsehoods is worse than none.
     const succeeded = new Set(effective.map((item) => String(item.tool)));
     const outstanding = [...failed, ...list.filter((item) => item.status === "confirmation_required")]
@@ -3075,10 +3097,10 @@ async function guardUnearnedClaim(text, toolResults = []) {
     const names = [...new Set(outstanding.map((item) => String(item.tool || "a tool").replace(/_/g, " ")))].join(", ");
     if (verdict.kind === "reason") {
       console.warn(`[honesty] corrected an invented reason in: ${JSON.stringify(body.slice(0, 60))}`);
-      return `${body}\n\nCorrection, sir: I explained that with a restriction or a source that does not exist in this turn's records. Nothing blocked it and nothing was read beyond what ${names} actually returned — treat the reason I gave as unreliable.`;
+      return `${body}\n\nCorrection: I explained that with a restriction or a source that does not exist in this turn's records. Nothing blocked it and nothing was read beyond what ${names} actually returned — treat the reason I gave as unreliable.`;
     }
     console.warn(`[honesty] corrected an overclaim: ${names} did not complete`);
-    return `${body}\n\nCorrection, sir: ${names} did not actually complete — it either failed or is still waiting for your approval, so please do not treat that part as done.`;
+    return `${body}\n\nCorrection: ${names} did not actually complete — it either failed or is still waiting for your approval, so please do not treat that part as done.`;
   }
   if (!(await replyClaimsAnAction(body))) {
     // Claiming a FINDING is as false as claiming an ACT, and only the act was ever checked here.
@@ -3096,7 +3118,7 @@ async function guardUnearnedClaim(text, toolResults = []) {
     if (!verdict.overclaims) return text;
     const attempted = [...new Set(failed.map((item) => String(item.tool || "a tool").replace(/_/g, " ")))].join(", ");
     console.warn(`[honesty] corrected an invented finding after ${attempted} failed`);
-    return `${body}\n\nCorrection, sir: nothing actually read that — ${attempted} failed and no other tool returned anything, so what I just described came from memory, not from the source. Treat it as unverified.`;
+    return `${body}\n\nCorrection: nothing actually read that — ${attempted} failed and no other tool returned anything, so what I just described came from memory, not from the source. Treat it as unverified.`;
   }
   // Nothing took effect — whether because every tool failed, or because none was called at all.
   //
@@ -3666,31 +3688,12 @@ function instantConversationResponse(prompt) {
   if (/^(forget this memory|forget that preference|update my preference)$/i.test(text)) {
     return "I can update or forget a memory, but I need the exact memory or preference text. Ask `what do you remember about me?` first, then tell me which item to update or forget.";
   }
-  if (/^(hi|hello|hey|yo|sup|good morning|good afternoon|good evening)( jarvis)?$/.test(lower)) {
-    const hour = new Date().getHours();
-    const period = hour < 5 ? "You're up late" : hour < 12 ? "Morning" : hour < 18 ? "Afternoon" : "Evening";
-    return `${period}, sir. What do you need?`;
-  }
-  if (/^(what(?:'s| is)|tell me|give me|show me)?\s*(today'?s\s*)?(date|time|date and time|time and date|current date|current time)\s*(now|today)?$/i.test(text)
-    || /\b(what(?:'s| is).*(today'?s|current).*(date|time)|what time is it|what day is it)\b/i.test(text)) {
-    const now = new Date();
-    return `It is ${now.toLocaleString("en-US", {
-      timeZone: "America/New_York",
-      weekday: "long",
-      year: "numeric",
-      month: "long",
-      day: "numeric",
-      hour: "numeric",
-      minute: "2-digit",
-      timeZoneName: "short",
-    })}.`;
-  }
-  if (/^(thanks|thank you|cheers)$/.test(lower)) return "Anytime, sir.";
-  if (/^(how are you|how are things)$/.test(lower)) return "All good here, sir. What are we working on?";
-  if (/^(what can you do(?: now)?|what are your capabilities(?: now)?|help)$/.test(lower)) {
-    const ready = loadModuleRegistry().filter((module) => module.ready).slice(0, 8).map((module) => module.title);
-    return `I can operate your approved apps and browser, inspect this computer, work with your projects, manage agents, use connected services, analyze images, and retain useful context. Ready modules include ${ready.join(", ")}. Ask naturally; I will select the required capability.`;
-  }
+  // Removed 2026-09-13 (LAW 0): the canned greeting / date-time / thanks / how-are-you / what-can-you-do
+  // replies that used to live here. They answered from the process clock with a hardcoded "sir" and a
+  // hardcoded America/New_York, bypassing the profile and memory entirely — the exact turns where an
+  // assistant shows it knows you were the ones that never reached the brain. Those go to the model
+  // now, with the profile block and the real local time in its instruction. The operational commands
+  // above (mesh stop, memory debug, carryover…) are commands, not conversation, and stay.
   return "";
 }
 
@@ -5387,7 +5390,7 @@ One of JARVIS's existing on-screen widgets already covers this (${presentedWhy})
         // dedupe key never matched a retry, and `surfaceRouting(...)` did not recognise it as a tool
         // that acts on his screen. Measured consequences on the owner's machine: a dossier reduced
         // to a single divider, and a page that really did open on his screen followed by
-        // "Correction, sir: none of that happened on your screen."
+        // "Correction: none of that happened on your screen."
         //
         // Fixing it in one place is the point. A name normalised in five places drifts in four.
         if (typeof functionCall.name === "string" && functionCall.name.includes(":")) {
@@ -7694,6 +7697,32 @@ async function handleApi(req, res, pathname, url) {
     } catch (error) { sendJson(res, 409, { error: error.message }); }
     return;
   }
+  // Closes out comparisons recorded while owner-fact extraction was eight regexes. Names the
+  // severities and a reason; every resolution is written through the coordinator with an
+  // encrypted explanation. `{"dryRun":true}` reports what it would close without closing it.
+  if (req.method === "POST" && pathname === "/api/memory-vnext/shadow/resolve-comparisons") {
+    if (!requestTrust.isDirectOwnerRequest(req)) { sendJson(res, 403, { error: "Direct owner access is required." }); return; }
+    try {
+      const body = await parseRequestData(req);
+      const report = await memoryVNextShadow?.resolveOpenComparisons?.(body || {});
+      if (!report) { sendJson(res, 503, { error: "Shadow runtime is not open or still starting." }); return; }
+      sendJson(res, 200, report);
+    } catch (error) { sendJson(res, 500, { error: error.message }); }
+    return;
+  }
+  // Replays stored owner turns through the model-backed extractor and applies the durable facts
+  // the regexes missed. One model call per turn, so `limit` is real spend — send
+  // `{"dryRun":true}` first to see how many turns are eligible before paying for any of them.
+  if (req.method === "POST" && pathname === "/api/memory-vnext/shadow/backfill") {
+    if (!requestTrust.isDirectOwnerRequest(req)) { sendJson(res, 403, { error: "Direct owner access is required." }); return; }
+    try {
+      const body = await parseRequestData(req);
+      const report = await memoryVNextShadow?.backfill?.(body || {});
+      if (!report) { sendJson(res, 503, { error: "Shadow runtime is not open or still starting." }); return; }
+      sendJson(res, 200, report);
+    } catch (error) { sendJson(res, 500, { error: error.message }); }
+    return;
+  }
   // ── Cutover control surface (Wave 32 runtime half) ──────────────────────
   // The coordinator enforces every gate itself — owner authority, domain order, fresh gate
   // snapshot, 90-day retention, rollback window. These routes only carry the request to it;
@@ -8607,6 +8636,17 @@ async function handleApi(req, res, pathname, url) {
     const html = fs.readFileSync(phonePath, "utf8");
     res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
     res.end(html);
+    return;
+  }
+
+  // ── JARVIS phone app (docs/PHONE_APP_PLAN.md) — the built app.html, or the source entry in dev.
+  if (req.method === "GET" && (pathname === "/app" || pathname === "/app/")) {
+    const distApp = path.join(ROOT, "dist", "app.html");
+    const rootApp = path.join(ROOT, "app.html");
+    const appPath = fs.existsSync(distApp) ? distApp : fs.existsSync(rootApp) ? rootApp : null;
+    if (!appPath) { sendText(res, 404, "app.html not found"); return; }
+    res.writeHead(200, { "Content-Type": "text/html; charset=utf-8", "cache-control": "no-store" });
+    res.end(fs.readFileSync(appPath, "utf8"));
     return;
   }
 
@@ -12342,7 +12382,7 @@ ${entryText}`;
     };
     const prompt = [
       "Give me today's concise JARVIS briefing.",
-      "Start with a greeting that matches the actual local time, and address me as sir.",
+      "Start with a greeting that matches the actual local time, addressing me exactly as the profile says (no honorific if it has none).",
       "Use the supplied local state, mention active agents or important connection blockers, and add only the most useful current external developments.",
       "End with one concrete recommended next action. Do not ask how you can assist or add any sign-off.",
       `Local state: ${JSON.stringify(localContext)}`,
@@ -14671,11 +14711,21 @@ try {
   console.log("[init] Memory vNext Wave 2 boundary ready (authority resolved from the cutover ledger)");
 } catch (e) { console.error("[init] Memory vNext boundary failed:", e.message); memoryVNextBoundary = null; }
 try {
+  const memoryVNextRoot = process.env.JARVIS_MEMORY_VNEXT_CANDIDATE_ROOT || path.join(process.env.LOCALAPPDATA || RUNTIME_DIR, "Jarvis", "memory-vNext", "candidate-localhost");
+  // The import run this store was built from is written by the candidate trial into the store's own
+  // folder; a run id hardcoded here (the July 2026 laptop import) meant any rebuilt store reported
+  // "requires a fully reconciled import" forever. Env still wins for a deliberate override.
+  const memoryVNextImportRunId = process.env.JARVIS_MEMORY_VNEXT_IMPORT_RUN_ID || (() => {
+    try { return JSON.parse(fs.readFileSync(path.join(memoryVNextRoot, "candidate-trial-summary.json"), "utf8")).importRunId || ""; } catch { return ""; }
+  })();
   memoryVNextShadow = createMemoryVNextShadowRuntime({
-    runtimeDir: process.env.JARVIS_MEMORY_VNEXT_CANDIDATE_ROOT || path.join(process.env.LOCALAPPDATA || RUNTIME_DIR, "Jarvis", "memory-vNext", "candidate-localhost"),
-    importRunId: process.env.JARVIS_MEMORY_VNEXT_IMPORT_RUN_ID || "candidate-import:2026-07-26T08:48:45.797Z",
+    runtimeDir: memoryVNextRoot,
+    importRunId: memoryVNextImportRunId || undefined,
     enabled: process.env.JARVIS_MEMORY_VNEXT_SHADOW !== "0",
     canaryEnabled: process.env.JARVIS_MEMORY_VNEXT_CANARY !== "0",
+    // Lets the background queue read durable owner facts with a model instead of eight regexes.
+    // See server/memory-vnext/fact-extractor.js. Off entirely without a key.
+    getSettings: loadSettings,
   });
   void memoryVNextShadow.start();
 } catch (e) { console.error("[init] Memory vNext shadow failed:", e.message); memoryVNextShadow = null; }
@@ -14760,6 +14810,7 @@ missionEngine = createMissionEngine(RUNTIME_DIR);
 
 capabilityEngine = createCapabilityEngine({
   stageDayEvents: getStageDayEvents,   // W3b — the calendar block's real events
+  userContext,                          // profile_update writes the owner's stated facts here
   runtimeDir: RUNTIME_DIR,
   workspaceRoot: WORKSPACE_ROOT,
   getSettings: loadSettings,
@@ -14993,6 +15044,8 @@ const server = http.createServer(async (req, res) => {
       || url.pathname === "/phone"
       || url.pathname === "/phone.html"
       || url.pathname === "/phone/"
+      || url.pathname === "/app"
+      || url.pathname === "/app/"
       || url.pathname === "/sandbox"
       || url.pathname.startsWith("/debug/")
       || url.pathname === "/artifacts"

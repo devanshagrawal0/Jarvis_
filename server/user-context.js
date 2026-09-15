@@ -115,40 +115,20 @@ function createUserContext({ runtimeDir, owner = "Dev" }) {
 
   const nowIso = () => new Date().toISOString();
 
-  // ── One-time seed from known owner facts ───────────────────────────────
+  // ── No seed. ─────────────────────────────────────────────────────────────
+  // Until 2026-09-13 this seeded the owner's name, email, bio, a home city and a timezone as
+  // constants, and a later "migration" re-pinned the home to India with source 'owner' so nothing
+  // could outrank it — which is how JARVIS greeted a 5 PM Eastern "hi" with "you're up late". A
+  // fresh profile now starts EMPTY: the identity row exists so updates have somewhere to land, and
+  // everything about the owner (name, address style, home) is learned — stated by the owner, or
+  // auto-detected and confirmed — never written by code. `owner` is only the fallback display name.
   if (!db.prepare("SELECT 1 FROM identity WHERE id=1").get()) {
     db.prepare(`INSERT INTO identity (id,legal_name,preferred_name,primary_email,home_timezone,locale,bio,updated_at)
-                VALUES (1,?,?,?,?,?,?,?)`)
-      .run("Devansh Agrawal", owner, "devanshhagrawal@gmail.com", "Asia/Kolkata", "en-US",
-           "Northeastern University student; builds Jarvis Command OS + APEX/Arbiter trading tools. Currently based in India (Asia/Kolkata).", nowIso());
-    db.prepare("INSERT INTO locations (label,address,lat,lng,timezone,is_current,source,valid_from,confidence) VALUES ('home',?,?,?,?,1,'owner',?,1.0)")
-      .run("Nagpur, India", 21.1458, 79.0882, "Asia/Kolkata", nowIso());
-    const pref = db.prepare("INSERT INTO preferences (category,subject,value,strength,source,updated_at) VALUES (?,?,?,?,?,?)");
-    pref.run("comms", "reply_tone", "concise, direct, no filler", 1.0, "seed", nowIso());
-    pref.run("comms", "address_style", "call me Dev", 1.0, "seed", nowIso());
+                VALUES (1,NULL,NULL,NULL,NULL,?,NULL,?)`)
+      .run(Intl.DateTimeFormat().resolvedOptions().locale || "en-US", nowIso());
     db.prepare("INSERT INTO core_memory_blocks (label,value,char_limit,updated_at,updated_by) VALUES (?,?,?,?,?)")
       .run("assistant_persona", "You are JARVIS — the owner's calm, sharp, capable operating intelligence. You act, not just answer.", 800, nowIso(), "seed");
   }
-
-  // Migration — the original seed hardcoded Boston / America/New_York, but the owner operates in
-  // Asia/Kolkata (IST): the SAME zone the ATLAS day-model already uses. A New_York home made the brain
-  // think "now" was Eastern, so it believed today was the UTC date and every relative date ("tomorrow",
-  // "next Monday") landed a full day off. Realign the still-untouched seed rows to the owner's real zone
-  // (only rows whose source is the seed and still carry the old zone — never a user-set location).
-  try {
-    const home = db.prepare("SELECT * FROM locations WHERE label='home' ORDER BY id LIMIT 1").get();
-    // Any still-seed home is realigned to the owner's real India zone AND promoted to source 'owner' so
-    // it is AUTHORITATIVE: unreliable IP geolocation (this machine's IP geolocates to the US via a
-    // datacenter/VPN) must NOT override where the owner actually is. Real browser GPS still can.
-    if (home && home.source === "seed") {
-      db.prepare("UPDATE locations SET address=?, lat=?, lng=?, timezone=?, source='owner' WHERE id=?")
-        .run("Nagpur, India", 21.1458, 79.0882, "Asia/Kolkata", home.id);
-    }
-    const ident = db.prepare("SELECT home_timezone FROM identity WHERE id=1").get();
-    if (ident && ident.home_timezone === "America/New_York") {
-      db.prepare("UPDATE identity SET home_timezone='Asia/Kolkata', updated_at=? WHERE id=1").run(nowIso());
-    }
-  } catch { /* non-fatal — resolveLocation still falls back to a valid zone */ }
 
   // ── Identity / facts ───────────────────────────────────────────────────
   function getIdentity() { return db.prepare("SELECT * FROM identity WHERE id=1").get() || {}; }
@@ -359,11 +339,13 @@ function createUserContext({ runtimeDir, owner = "Dev" }) {
   // browser tz → home → default. A stated location ("I'm in Tokyo") outranks the device signal,
   // since the owner's words beat a VPN or an un-updated clock; but the live device beats the
   // seeded home, because a stale seed should never win over where the device actually is.
+  // The machine's own zone is the only honest last resort: this process runs on the owner's computer.
+  const machineTz = () => { try { return Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC"; } catch { return "UTC"; } };
   function resolveLocation({ sessionMention = null, browserTz = null } = {}) {
     const live = liveClientSignal();
     const liveTz = browserTz || live?.timezone || null;
     if (sessionMention?.place_name) {
-      return { placeName: sessionMention.place_name, ianaTz: sessionMention.iana_tz || liveTz || homeLocation()?.timezone || "America/New_York", lat: sessionMention.lat ?? null, lon: sessionMention.lng ?? null, source: "session" };
+      return { placeName: sessionMention.place_name, ianaTz: sessionMention.iana_tz || liveTz || homeLocation()?.timezone || machineTz(), lat: sessionMention.lat ?? null, lon: sessionMention.lng ?? null, source: "session" };
     }
     const home = homeLocation();
     // Recency decides between the two things the owner said. A transient "I'm in X right now"
@@ -371,25 +353,27 @@ function createUserContext({ runtimeDir, owner = "Dev" }) {
     // mention — otherwise the move is permanently shadowed by a stale passing remark.
     const stated = latestMention();
     if (stated && !(home && home.source !== "seed" && Date.parse(home.valid_from || 0) > Date.parse(stated.valid_from || 0))) {
-      return { placeName: stated.address, ianaTz: stated.timezone || liveTz || home?.timezone || "America/New_York", lat: stated.lat ?? null, lon: stated.lng ?? null, source: "stated" };
+      return { placeName: stated.address, ianaTz: stated.timezone || liveTz || home?.timezone || machineTz(), lat: stated.lat ?? null, lon: stated.lng ?? null, source: "stated" };
     }
     // Live device signal — the owner's real location this session (browser GPS/timezone).
     if (live && (live.placeName || live.lat != null)) {
       const sameTzAsHome = liveTz && home && home.timezone === liveTz;
       const placeName = live.placeName || (sameTzAsHome ? home.address : "your current location");
-      return { placeName, ianaTz: liveTz || home?.timezone || "America/New_York", lat: live.lat ?? (sameTzAsHome ? home?.lat : null) ?? null, lon: live.lon ?? (sameTzAsHome ? home?.lng : null) ?? null, source: "device" };
+      return { placeName, ianaTz: liveTz || home?.timezone || machineTz(), lat: live.lat ?? (sameTzAsHome ? home?.lat : null) ?? null, lon: live.lon ?? (sameTzAsHome ? home?.lng : null) ?? null, source: "device" };
     }
-    // Automatic IP geolocation — Jarvis knows where the machine is without asking. Outranks the
-    // seeded Boston, but not a home the owner explicitly set.
+    // Automatic IP geolocation — where the machine actually is right now. This is the owner's
+    // CURRENT location and it outranks a stored home on purpose (owner's design, 2026-09-13): home
+    // is where they live, current is where they are, and the two differing is how JARVIS knows
+    // they are travelling. Only the owner's own words (above) beat it.
     const ip = ipLocationFresh();
-    if (ip && (!home || home.source === "seed")) {
-      return { placeName: ip.placeName, ianaTz: liveTz || ip.ianaTz || home?.timezone || "America/New_York", lat: ip.lat, lon: ip.lon, source: "ip" };
+    if (ip) {
+      return { placeName: ip.placeName, ianaTz: liveTz || ip.ianaTz || home?.timezone || machineTz(), lat: ip.lat, lon: ip.lon, source: "ip", travelling: Boolean(home && home.timezone && ip.ianaTz && home.timezone !== ip.ianaTz) };
     }
     if (liveTz && (!home || home.timezone !== liveTz)) {
       return { placeName: home?.address || "(unknown)", ianaTz: liveTz, lat: home?.lat ?? null, lon: home?.lng ?? null, source: "browser" };
     }
     if (home) return { placeName: home.address, ianaTz: home.timezone, lat: home.lat, lon: home.lng, source: "home" };
-    return { placeName: "(unknown)", ianaTz: "Asia/Kolkata", lat: null, lon: null, source: "default" };
+    return { placeName: "(unknown)", ianaTz: machineTz(), lat: null, lon: null, source: "default" };
   }
 
   // ── The always-in-context block ("Model Set Context", authoritative) ───
@@ -398,14 +382,33 @@ function createUserContext({ runtimeDir, owner = "Dev" }) {
     const loc = resolved || resolveLocation();
     const prefs = getPreferences({ limit: 6 });
     const goals = activeGoals(4);
+    const home = homeLocation();
     const lines = [`<user_profile authoritative="true">`];
-    lines.push(`You are assisting ${id.preferred_name || owner}${id.legal_name && id.legal_name !== id.preferred_name ? ` (${id.legal_name})` : ""}${id.primary_email ? `, ${id.primary_email}` : ""}.`);
+    // A fresh profile knows nothing about the owner. Say so plainly instead of inventing a name:
+    // the model must ask ("what should I call you?") and remember the answer, never guess.
+    if (id.preferred_name || id.legal_name) {
+      lines.push(`You are assisting ${id.preferred_name || id.legal_name}${id.legal_name && id.legal_name !== id.preferred_name ? ` (${id.legal_name})` : ""}${id.primary_email ? `, ${id.primary_email}` : ""}.`);
+    } else {
+      lines.push(`The owner has not told you their name yet. Do not invent one or use a placeholder like "sir" or "Dev"; ask once, naturally, when it fits, and remember the answer.`);
+    }
     if (id.bio) lines.push(id.bio);
-    lines.push(`Home base: ${homeLocation()?.address || "(unknown)"} (timezone ${loc.ianaTz}). Unless the owner names another place or a live location signal says otherwise, treat the owner as currently at their home base, ${loc.placeName}. Answer "where am I", "what city", and "what time is it" DIRECTLY with ${loc.placeName} / ${loc.ianaTz} — this is known context, so do not demand GPS or IP, and never substitute the city embedded in the timezone id (e.g. never say "New York" for America/New_York).`);
-    if (prefs.length) lines.push(`Preferences: ${prefs.map((p) => `${p.subject}=${p.value}`).join("; ")}.`);
+    const addressPref = prefs.find((p) => p.subject === "address_style");
+    lines.push(addressPref ? `How to address the owner: ${addressPref.value}.` : `The owner has not said how they want to be addressed; use no honorific and no name until they tell you.`);
+    // Home vs current are two different facts. Home is where they live (stated, or confirmed after
+    // auto-detection); current is where the machine is right now. Both differing = travelling.
+    if (home) {
+      lines.push(`Home: ${home.address} (${home.timezone}).`);
+      if (loc.source !== "home" && loc.ianaTz !== home.timezone) lines.push(`Currently NOT at home: the owner is in ${loc.placeName} (${loc.ianaTz}, source: ${loc.source}) — treat them as travelling; local time and local queries use ${loc.placeName}, "back home" means ${home.address}.`);
+      else lines.push(`Currently at home base, ${loc.placeName} (${loc.ianaTz}).`);
+    } else {
+      lines.push(`No home location is stored. Current location (auto-detected, source: ${loc.source}): ${loc.placeName} (${loc.ianaTz}). Use it for time/weather/local questions. If it looks like a settled place, ask once whether this is home and record the answer; never write a home yourself.`);
+    }
+    lines.push(`Answer "where am I", "what city", and "what time is it" DIRECTLY with ${loc.placeName} / ${loc.ianaTz} — do not demand GPS or IP, and never substitute the city embedded in a timezone id (e.g. never say "New York" for America/New_York).`);
+    const otherPrefs = prefs.filter((p) => p.subject !== "address_style");
+    if (otherPrefs.length) lines.push(`Preferences the owner stated (these override any default style rule you were given): ${otherPrefs.map((p) => `${p.subject}=${p.value}`).join("; ")}.`);
     if (goals.length) lines.push(`Active goals/projects: ${goals.map((g) => g.title).join("; ")}.`);
     if (situational) lines.push(`Situational context: ${situational}`);
-    lines.push(`These are verified facts about the owner — treat them as ground truth unless the owner corrects them.`);
+    lines.push(`Everything above is what the owner has actually established — treat it as ground truth, and treat anything NOT listed as unknown rather than assumed.`);
     lines.push(`</user_profile>`);
     return lines.join("\n");
   }

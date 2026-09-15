@@ -87,9 +87,9 @@ function detectWidgetControl(text, ctx = {}) {
 
   const label = (widgets.find((w) => w.id === targetId) || {}).label || targetId;
   const size = action === "normalize" ? "medium" : action === "minimize" ? "minimize" : action;
-  const say = action === "normalize" ? `Back to normal view, sir.`
-    : action === "minimize" ? `Minimized the ${label} widget, sir.`
-    : `Resized the ${label} widget to ${size === "small" ? "small" : "large"}, sir.`;
+  const say = action === "normalize" ? `Back to normal view.`
+    : action === "minimize" ? `Minimized the ${label} widget.`
+    : `Resized the ${label} widget to ${size === "small" ? "small" : "large"}.`;
 
   return { id: targetId, label, action, size, say, uiAction: { type: "resize-widget", id: targetId, size } };
 }
@@ -160,7 +160,7 @@ function detectWidgetView(text, ctx = {}) {
 
   const view = owner.pick(p);
   const label = (widgets.find((w) => w.id === owner.id) || {}).label || owner.id;
-  return { id: owner.id, view, label, say: `Showing ${view} in the ${label} widget, sir.`, uiAction: { type: "set-view", id: owner.id, view } };
+  return { id: owner.id, view, label, say: `Showing ${view} in the ${label} widget.`, uiAction: { type: "set-view", id: owner.id, view } };
 }
 
 // ── Move + arrange ────────────────────────────────────────────────────────────────────────────
@@ -205,7 +205,7 @@ function detectWidgetMove(text, ctx = {}) {
   if (open.length && !open.some((w) => w.id === targetId) && !named) return null;
 
   const label = (widgets.find((w) => w.id === targetId) || {}).label || targetId;
-  return { id: targetId, position, label, say: `Moved the ${label} widget to the ${position.replace("-", " ")}, sir.`, uiAction: { type: "move-widget", id: targetId, position } };
+  return { id: targetId, position, label, say: `Moved the ${label} widget to the ${position.replace("-", " ")}.`, uiAction: { type: "move-widget", id: targetId, position } };
 }
 
 function detectWidgetArrange(text, ctx = {}) {
@@ -214,7 +214,7 @@ function detectWidgetArrange(text, ctx = {}) {
   // Must be about the widget surface, or "stack the boxes" / "arrange a meeting" would fire.
   if (!WIDGET_SURFACE.test(p)) return null;
   const layout = /\b(cascade|stack)\b/i.test(p) ? "cascade" : "tile";
-  return { layout, say: `Tidied your widgets into a ${layout} layout, sir.`, uiAction: { type: "arrange-widgets", layout } };
+  return { layout, say: `Tidied your widgets into a ${layout} layout.`, uiAction: { type: "arrange-widgets", layout } };
 }
 
 module.exports = { detectWidgetControl, detectWidgetView, detectWidgetMove, detectWidgetArrange };

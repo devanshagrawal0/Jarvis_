@@ -272,6 +272,8 @@ function createCapabilityEngine({
   meshSelfTest,
   coopSymbioteMesh,
   neuralVault,
+  // The owner's typed profile (identity, address style, preferences, home) — see profile_update.
+  userContext = null,
   missionEngine,
   apexIngest,
   getAtlas,
@@ -638,6 +640,7 @@ function createCapabilityEngine({
     ["calendar_cancel_event", "Cancel/delete an event from the owner's Google Calendar. First call calendar_list_events to find the event id, then call this with eventId. Confirmed before it goes through.", "commit", true],
     ["resolve_contact", "Resolve a person's NAME to their email BEFORE sending, when you're not certain there's exactly one saved contact. Returns status 'resolved' (with the single email), 'ambiguous' (with the list of matching contacts — then ASK the owner which one), or 'unknown' (no email on file — then ASK for the address). Runs instantly, sends nothing. Use this first for 'email <name>' whenever a name could match more than one person, so a message never goes to the wrong person.", "observe", false],
     ["email_smart", "PREFERRED one-step email sender. Send an email to a saved contact BY NAME (or to a raw email address) in a single step — no separate draft, no extra approval prompt. Use for casual requests like 'email AJ that I'm running late' or 'send TG a note saying dinner at 8'. If an email is on file for that name it sends immediately and returns sent:true. If NO email is on file it does NOT send and returns status:recipient_unknown — then ask the owner for the address. If the owner supplies a new address (pass it as `email`), it sends and returns a saveSuggestion so you can offer to remember it. Prefer this over gmail_prepare_email/gmail_send_prepared for everyday sends to people.", "execute", false, ["egress"]],
+    ["profile_update", "Record something the OWNER states about THEMSELVES so it is remembered and used from now on: their name ('my name is…', 'call me…'), how they want to be addressed ('call me sir' / 'just use my name'), their email, where they live ('I live in…', 'I moved to…', 'yes, this is home'), a standing preference about how you should answer ('keep it short', 'no bullet points', 'always give a recommendation'), or a short bio fact. Call it whenever the owner tells you something about themselves that should still be true next week — one call per fact — then confirm back in one short sentence. Never call it for things about other people or about the world.", "execute", false],
     ["contact_add_email", "Save or update a person's email address so future 'email <name>' sends resolve on their own. Use right after email_smart returns a saveSuggestion and the owner agrees, or when the owner says 'save X's email as …'.", "execute", false],
   ].map(([name, description, risk, confirmationRequired, effects]) => ({
     name,
@@ -1027,6 +1030,12 @@ function createCapabilityEngine({
       subject: { type: "STRING", description: "Optional subject; defaults to a short placeholder if omitted." },
       body: { type: "STRING", description: "The message body." },
     }, required: ["recipient", "body"] } },
+    { name: "profile_update", description: description("profile_update"), parameters: { type: "OBJECT", properties: {
+      kind: { type: "STRING", description: "What is being recorded: 'name' (what to call the owner), 'full_name', 'email', 'address_style' (honorific/how to address them, e.g. 'sir', 'by first name', 'no honorific'), 'home' (the city/place they live), 'preference' (a standing rule about how you should respond), or 'bio' (a durable fact about who they are)." },
+      value: { type: "STRING", description: "The value exactly as the owner stated it, e.g. 'Alex', 'sir', 'Boston, MA', 'keep answers short', 'no bullet points'." },
+      subject: { type: "STRING", description: "For kind='preference' only: a short key naming what the preference is about, e.g. 'reply_length', 'formatting', 'tone', 'recommendations'." },
+      timezone: { type: "STRING", description: "For kind='home' only, if known: the IANA timezone of that place, e.g. 'America/New_York'. Omit if unsure." },
+    }, required: ["kind", "value"] } },
     { name: "contact_add_email", description: description("contact_add_email"), parameters: { type: "OBJECT", properties: {
       name: { type: "STRING", description: "The person's name to save this email under." },
       email: { type: "STRING", description: "Their email address." },
@@ -2822,7 +2831,7 @@ function createCapabilityEngine({
       const content = cleanString(args.content, 8000);
       if (!content) throw errorWithStatus("The Stage needs some content to show.", 400);
       const title = cleanString(args.title, 120) || "Jarvis";
-      return { ok: true, shown: true, uiAction: { type: "stage-show", data: { title, content } }, message: "On your screen, sir." };
+      return { ok: true, shown: true, uiAction: { type: "stage-show", data: { title, content } }, message: "On your screen." };
     },
     // W3 — the generative Stage. Render typed blocks (heading/text/stat/list/divider) instead of prose.
     stage_render: async (args, context) => {
@@ -2900,7 +2909,7 @@ function createCapabilityEngine({
       // {"type":"calendar"}, this filter deleted it, and the model fell back to a text list — so the
       // calendar component could never appear no matter how well it was offered.
       }).filter((b) => b.type === "divider" || b.type === "calendar" || b.text || b.value || b.label || (b.items && b.items.length) || (b.points && b.points.length));
-      if (!blocks.length) throw errorWithStatus("The Stage needs some blocks to render, sir.", 400);
+      if (!blocks.length) throw errorWithStatus("The Stage needs some blocks to render.", 400);
       // Anti-fabrication. When this turn actually fetched something, every FIGURE drawn has to trace
       // back to it — a surface that shows "$219.88" for a price no tool ever returned is a lie with a
       // chart around it, and it is worse than prose because it looks measured. Rejecting sends the
@@ -2947,7 +2956,7 @@ function createCapabilityEngine({
           .slice(0, 4),
         at: new Date().toISOString(),
       };
-      return { ok: true, shown: true, uiAction: { type: "stage-render", data: { title, blocks, provenance } }, message: `Rendered a ${blocks.length}-block surface on your screen, sir.` };
+      return { ok: true, shown: true, uiAction: { type: "stage-render", data: { title, blocks, provenance } }, message: `Rendered a ${blocks.length}-block surface on your screen.` };
     },
     calendar_list_events: async (args) => {
       if (!providers?.google?.listCalendarEvents) throw errorWithStatus("Google Calendar isn't connected.", 412);
@@ -3262,17 +3271,17 @@ function createCapabilityEngine({
       const id = resolveWidgetTarget(args.id, context, { mustBeOpen: true });
       if (!id) throw errorWithStatus("Which widget should I move, sir?", 400);
       const position = (cleanString(args.position, 24) || "center").toLowerCase();
-      return { ok: true, uiAction: { type: "move-widget", id, position }, message: `Moved the ${id} widget to the ${position}, sir.` };
+      return { ok: true, uiAction: { type: "move-widget", id, position }, message: `Moved the ${id} widget to the ${position}.` };
     },
     ui_resize_widget: async (args, context) => {
       const id = resolveWidgetTarget(args.id, context, { mustBeOpen: true });
       if (!id) throw errorWithStatus("Which widget should I resize, sir?", 400);
       const size = (cleanString(args.size, 24) || "medium").toLowerCase();
-      return { ok: true, uiAction: { type: "resize-widget", id, size }, message: `Resized the ${id} widget to ${size}, sir.` };
+      return { ok: true, uiAction: { type: "resize-widget", id, size }, message: `Resized the ${id} widget to ${size}.` };
     },
     ui_arrange_widgets: async (args) => {
       const layout = (cleanString(args.layout, 24) || "tile").toLowerCase();
-      return { ok: true, uiAction: { type: "arrange-widgets", layout }, message: `Tidied your open widgets into a ${layout} layout, sir.` };
+      return { ok: true, uiAction: { type: "arrange-widgets", layout }, message: `Tidied your open widgets into a ${layout} layout.` };
     },
     ui_set_widget_view: async (args, context) => {
       const id = resolveWidgetTarget(args.id, context, { mustBeOpen: true });
@@ -3282,7 +3291,7 @@ function createCapabilityEngine({
       const select = cleanString(args.select, 80);
       if (!view && !filter && !select) throw errorWithStatus("What view should I switch it to, sir?", 400);
       const label = [view, filter, select].filter(Boolean).join(" · ");
-      return { ok: true, uiAction: { type: "set-view", id, view, filter, select }, message: `Showing ${label} in the ${id} widget, sir.` };
+      return { ok: true, uiAction: { type: "set-view", id, view, filter, select }, message: `Showing ${label} in the ${id} widget.` };
     },
     ui_render_card: async (args) => ({ card: {
       kind: cleanString(args.kind || "info", 30), title: cleanString(args.title, 160),
@@ -3552,6 +3561,57 @@ function createCapabilityEngine({
           : `Sent to ${email}. Want me to save this address to a contact?`;
       }
       return out;
+    },
+    // The ONLY writer of the owner's profile from conversation. Until 2026-09-13 nothing in the brain
+    // could write here — name, address style and home were seeded constants — so "call me X from now
+    // on" was acknowledged and forgotten. The model decides when to call this (no phrase matching);
+    // the profile block reads it back on the next turn.
+    profile_update: async (args) => {
+      if (!userContext) throw errorWithStatus("The profile store is not available right now.", 503);
+      const kind = cleanString(args.kind, 40).toLowerCase();
+      const value = cleanString(args.value, 400);
+      if (!value) throw errorWithStatus("Nothing to record — the value is empty.", 400);
+      const recorded = { kind, value };
+      switch (kind) {
+        case "name":
+          userContext.updateIdentity({ preferred_name: value });
+          recorded.message = `Noted — I'll call you ${value} from now on.`;
+          break;
+        case "full_name":
+          userContext.updateIdentity({ legal_name: value });
+          recorded.message = `Noted — your full name is ${value}.`;
+          break;
+        case "email":
+          if (!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(value)) throw errorWithStatus(`"${value}" doesn't look like an email address.`, 400);
+          userContext.updateIdentity({ primary_email: value });
+          recorded.message = `Noted — your email is ${value}.`;
+          break;
+        case "address_style":
+          userContext.setPreference("comms", "address_style", value, { source: "user_stated" });
+          recorded.message = `Understood — ${value}, from now on.`;
+          break;
+        case "home": {
+          const tz = cleanString(args.timezone, 64);
+          userContext.setHome({ place_name: value, iana_tz: /^[A-Za-z]+\/[A-Za-z0-9_+\-]+$/.test(tz) ? tz : null, source: "user_stated" });
+          if (/^[A-Za-z]+\/[A-Za-z0-9_+\-]+$/.test(tz)) userContext.updateIdentity({ home_timezone: tz });
+          recorded.message = `Noted — home is ${value}.`;
+          break;
+        }
+        case "preference": {
+          const subject = cleanString(args.subject, 60).toLowerCase().replace(/[^a-z0-9_]+/g, "_").replace(/^_+|_+$/g, "") || "general";
+          userContext.setPreference("comms", subject, value, { source: "user_stated" });
+          recorded.subject = subject;
+          recorded.message = `Noted — ${value}.`;
+          break;
+        }
+        case "bio":
+          userContext.updateIdentity({ bio: value });
+          recorded.message = `Noted.`;
+          break;
+        default:
+          throw errorWithStatus(`Unknown profile field "${kind}". Use name, full_name, email, address_style, home, preference, or bio.`, 400);
+      }
+      return { ok: true, recorded, profile: userContext.renderProfileBlock() };
     },
     contact_add_email: async (args) => {
       const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
@@ -3987,7 +4047,7 @@ function createCapabilityEngine({
       // verifying the requested outcome.", which is the sentence the owner actually saw. Same
       // defect class as B-13 in run_command: the reason existed and was dropped at the boundary.
       // A run the planner demoted to a draft did not do what the owner asked, however cleanly it
-      // finished. `completed: false` routes it away from the "Done, sir." sentence and the reason
+      // finished. `completed: false` routes it away from the "Done." sentence and the reason
       // travels with it, so the owner learns their send became a draft instead of being told it
       // succeeded.
       // Only when the restraint survived stripping is the run still a silent draft; then it must
