@@ -218,7 +218,7 @@ svg { fill: none; stroke: currentColor; stroke-width: 1.75; stroke-linecap: roun
 .jr-blk-grid { display: grid; gap: 8px; }
 @media (max-width: 520px) { .jr-blk-grid { grid-template-columns: 1fr !important; } }
 .jr-blk-div { height: 1px; background: var(--line-1); }
-.jr-blk-chart { border-radius: 12px; padding: 8px 4px 0; background: var(--surface-1); border: 0; box-shadow: none; }
+.jr-blk-chart { --chart-accent: #00e5ff; --chart-plain: 1; border-radius: 12px; padding: 8px 4px 0; background: var(--surface-1); border: 0; box-shadow: none; }
 .jr-blk-chart::before, .jr-blk-chart::after { display: none; }
 .jr-blk-chart-label { font-size: 13px; line-height: 16px; font-weight: 500; color: var(--text-2); margin: 0 0 4px 8px; text-shadow: none; }
 .jr-blk-cal { min-height: 240px; }
@@ -257,3 +257,26 @@ html.kbd .tabs { display: none; }
   *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
   .edge-glow::before, .edge-glow::after { animation: none; }
 }
+
+/* ── Control (batch 6): the PC screen, tap to click ─────────────────────────────────────────── */
+.ctl { display: flex; flex-direction: column; gap: 12px; padding-top: 4px; }
+.ctl-head { display: flex; align-items: center; gap: 8px; }
+.ctl-status { flex: 1; font-size: 13px; line-height: 16px; font-weight: 500; color: var(--text-2); font-variant-numeric: tabular-nums; }
+.btn.small { height: 36px; padding: 0 14px; font-size: 14px; }
+.btn.small.on { color: var(--accent-text); }
+.btn.danger { background: rgba(255, 92, 108, .16); color: #ff8a94; }
+.ctl-screen { position: relative; border-radius: 12px; overflow: hidden; background: var(--surface-1); aspect-ratio: 16 / 9; display: grid; place-items: center; touch-action: none; }
+.ctl-screen img { display: block; width: 100%; height: 100%; object-fit: contain; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
+/* fill: the frame turned on its side to use the tall screen — the box is sized to the rotated image */
+.ctl-screen.fill { aspect-ratio: auto; height: calc(var(--app-h, 100dvh) - 300px); background: #000; }
+.ctl-screen.fill img { position: absolute; left: 50%; top: 50%; width: calc(var(--app-h, 100dvh) - 300px); height: calc(100vw - 32px); max-width: none; transform: translate(-50%, -50%) rotate(90deg); transform-origin: center; }
+.ctl-empty { font-size: 13px; line-height: 16px; color: var(--text-3); padding: 16px; text-align: center; }
+.ctl-dims { position: absolute; right: 8px; bottom: 6px; font-size: 11px; line-height: 14px; color: var(--text-3); font-variant-numeric: tabular-nums; }
+.ctl-keys { display: flex; gap: 6px; overflow-x: auto; scrollbar-width: none; margin: 0 -16px; padding: 0 16px 2px; }
+.ctl-keys::-webkit-scrollbar { display: none; }
+.key { flex: none; height: 36px; min-width: 44px; padding: 0 12px; border-radius: 10px; background: var(--surface-2); font-size: 13px; line-height: 16px; font-weight: 500; color: var(--text-1); transition: transform 80ms var(--ease-ui), background 120ms; }
+.key:active, .key.busy { transform: scale(.96); background: var(--surface-4); }
+.ctl-type { display: flex; gap: 6px; }
+.ctl-type input { flex: 1; min-width: 0; height: 44px; padding: 0 14px; border: 0; outline: none; border-radius: 22px; background: var(--surface-2); font-size: 16px; color: var(--text-1); }
+.ctl-type input::placeholder { color: var(--text-3); }
+.ctl-hint { font-size: 12px; line-height: 16px; color: var(--text-3); }

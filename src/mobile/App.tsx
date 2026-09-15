@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Stage } from "./Stage";
 import { Thread } from "./Thread";
+import { Control } from "./Control";
 import { useVoice } from "./voice";
 import type { CortexState } from "./Cortex";
 import { askJarvis, bootSession, fetchProfile, loadThread, prepareFiles, resolveClientContext, saveThread, STRENGTH_LABEL, type Health, type Profile, type Strength, type Turn } from "./brain";
@@ -165,6 +166,7 @@ export function MobileApp() {
                 <div className="home-sub">{online === "online" ? "Ask anything, or tap the mic." : online === "offline" ? "The PC is not reachable." : "Connecting…"}</div>
               </div>
             ))
+            : tab === "control" ? <Control active={tab === "control"} />
             : <div className="not-built"><div className="kicker">{current.label}</div><div className="nb-title">Not built yet</div><div className="nb-body">Arrives in batch {current.batch}. Nothing here is faked.</div></div>}
         </main>
 

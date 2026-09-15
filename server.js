@@ -6561,10 +6561,13 @@ function meshAuthDevice(req) {
 // script text for a scanner to read, it reports true physical pixels (so DPI needs no
 // SetProcessDPIAware P/Invoke at all — the other half of what was being flagged), and it returns
 // in about 190ms rather than 1.2s.
-async function capturePrimaryScreen({ reason = "" } = {}) {
+// `preview` = { maxWidth, quality }: a downscaled JPEG for a phone that only needs to LOOK at the
+// screen a few times a second. The returned `dimensions` are still the full desktop's, so a
+// normalized tap on the preview maps to the same real pixel — bounds and image agree by ratio.
+async function capturePrimaryScreen({ reason = "", preview = null } = {}) {
   const screenshotsDir = path.join(RUNTIME_DIR, "screen-captures");
   fs.mkdirSync(screenshotsDir, { recursive: true });
-  const outputPath = path.join(screenshotsDir, `laptop-screen-${Date.now()}.png`);
+  const outputPath = path.join(screenshotsDir, `laptop-screen-${Date.now()}${preview ? ".jpg" : ".png"}`);
   if (process.env.JARVIS_MOCK_SCREEN_CAPTURE === "1") {
     const mockPng = Buffer.from(
       "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+P+/HgAHEgL91LL9WQAAAABJRU5ErkJggg==",
@@ -6632,14 +6635,16 @@ async function capturePrimaryScreen({ reason = "" } = {}) {
       top: monitor.y() - top,
     };
   };
-  const encoded = monitors.length === 1
-    ? await sharp(asLayer(monitors[0]).input, { raw: { width, height, channels: 4 } })
-      .png({ compressionLevel: 9, effort: 7 })
-      .toBuffer()
-    : await sharp({ create: { width, height, channels: 4, background: { r: 0, g: 0, b: 0, alpha: 1 } } })
-      .composite(monitors.map(asLayer))
-      .png({ compressionLevel: 9, effort: 7 })
-      .toBuffer();
+  // Measured 2026-09-15 on the 4K desk: PNG at compressionLevel 9 / effort 7 took ~10 s per frame,
+  // which was most of a "what's on my screen" turn and made a live view impossible. Level 6 /
+  // effort 2 is a fraction of that at a slightly larger file; resolution is never reduced on this
+  // path (the bounds contract for computer_use). The phone preview is a resized JPEG.
+  const pipeline = monitors.length === 1
+    ? sharp(asLayer(monitors[0]).input, { raw: { width, height, channels: 4 } })
+    : sharp({ create: { width, height, channels: 4, background: { r: 0, g: 0, b: 0, alpha: 1 } } }).composite(monitors.map(asLayer));
+  const encoded = preview
+    ? await pipeline.resize({ width: clamp(Number(preview.maxWidth) || 1280, 320, 2560), withoutEnlargement: true }).jpeg({ quality: clamp(Number(preview.quality) || 70, 30, 92), mozjpeg: true }).toBuffer()
+    : await pipeline.png({ compressionLevel: 6, effort: 2 }).toBuffer();
   fs.writeFileSync(outputPath, encoded, { mode: 0o600 });
 
   const stat = fs.statSync(outputPath);
@@ -6657,7 +6662,7 @@ async function capturePrimaryScreen({ reason = "" } = {}) {
     fileName: path.basename(outputPath),
     url: `/api/device-mesh/screen/${encodeURIComponent(path.basename(outputPath))}`,
     bytes: stat.size,
-    mimeType: "image/png",
+    mimeType: preview ? "image/jpeg" : "image/png",
     dimensions,
     bounds: { x: left, y: top, width, height },
     reason,
@@ -6676,7 +6681,7 @@ function sendScreenCaptureFile(res, fileName) {
     return;
   }
   res.writeHead(200, {
-    "content-type": "image/png",
+    "content-type": safeFile.endsWith(".jpg") ? "image/jpeg" : "image/png",
     "cache-control": "private, max-age=15",
   });
   fs.createReadStream(target).pipe(res);
@@ -13370,7 +13375,9 @@ ${entryText}`;
       });
       return;
     }
-    const capture = await capturePrimaryScreen({ reason: "Device Mesh live screen frame" });
+    // ?w=1280&q=70 asks for the phone preview (downscaled JPEG); without it the full PNG as before
+    const previewWidth = Number(url?.searchParams?.get("w") || 0);
+    const capture = await capturePrimaryScreen({ reason: "Device Mesh live screen frame", preview: previewWidth ? { maxWidth: previewWidth, quality: Number(url.searchParams.get("q") || 70) } : null });
     const nextFrameCount = Number(state.liveScreen.frameCount || 0) + 1;
     const frameId = `frame_${nextFrameCount}_${Date.now()}`;
     saveMeshRuntimeState({

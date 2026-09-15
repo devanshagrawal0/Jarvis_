@@ -21,7 +21,6 @@ export type ChartPoint = { t: string; v: number };
 export type ChartKind = "line" | "area" | "bar";
 
 const MINT = "#3FE8A8";
-const MINT_DIM = "rgba(63,232,168,.30)";
 
 export function StageChart({ points, kind = "line", label, height = 260 }: {
   points: ChartPoint[];
@@ -34,22 +33,31 @@ export function StageChart({ points, kind = "line", label, height = 260 }: {
   useEffect(() => {
     const el = ref.current;
     if (!el || !points.length) return;
+    // The surface decides the trace colour and how much chrome the plot carries. The desktop keeps
+    // the mint bezel look; the phone sets `--chart-accent` (its one accent) and `--chart-plain: 1`
+    // (no grid, no glow, muted scales) on the block. Read from the container so the registry that
+    // renders this block does not have to know which surface it is on.
+    const cs = getComputedStyle(el);
+    const ACCENT = cs.getPropertyValue("--chart-accent").trim() || MINT;
+    const PLAIN = cs.getPropertyValue("--chart-plain").trim() === "1";
+    const rgba = (hex: string, a: number) => { const m = /^#([0-9a-f]{6})$/i.exec(hex); if (!m) return hex; const n = parseInt(m[1], 16); return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${a})`; };
+    const ACCENT_DIM = rgba(ACCENT, 0.3);
     const chart = createChart(el, {
       width: el.clientWidth || 320,
       height,
       layout: {
         background: { type: ColorType.Solid, color: "transparent" },
-        textColor: "#dbe7ee",
+        textColor: PLAIN ? "rgba(255,255,255,.4)" : "#dbe7ee",
         fontSize: 13,
         fontFamily: '"Inter", ui-sans-serif, system-ui, sans-serif',
         attributionLogo: false,
       },
       grid: {
-        vertLines: { color: "rgba(122,180,205,.085)", style: LineStyle.Dashed },
-        horzLines: { color: "rgba(122,180,205,.085)", style: LineStyle.Dashed },
+        vertLines: { color: PLAIN ? "transparent" : "rgba(122,180,205,.085)", style: LineStyle.Dashed },
+        horzLines: { color: PLAIN ? "transparent" : "rgba(122,180,205,.085)", style: LineStyle.Dashed },
       },
-      rightPriceScale: { borderColor: "rgba(96,190,230,.28)", scaleMargins: { top: 0.14, bottom: 0.1 } },
-      timeScale: { borderColor: "rgba(96,190,230,.28)", timeVisible: false, secondsVisible: false, fixLeftEdge: true, fixRightEdge: true },
+      rightPriceScale: { borderColor: PLAIN ? "transparent" : "rgba(96,190,230,.28)", scaleMargins: { top: 0.14, bottom: 0.1 } },
+      timeScale: { borderColor: PLAIN ? "transparent" : "rgba(96,190,230,.28)", timeVisible: false, secondsVisible: false, fixLeftEdge: true, fixRightEdge: true },
       crosshair: {
         mode: CrosshairMode.Normal,
         vertLine: { color: "rgba(120,220,255,.45)", labelBackgroundColor: "#0e2137" },
@@ -71,17 +79,17 @@ export function StageChart({ points, kind = "line", label, height = 260 }: {
     const last = clean[clean.length - 1].value;
     let series;
     if (kind === "bar") {
-      series = chart.addSeries(HistogramSeries, { color: MINT_DIM, priceFormat: { type: "price" } });
-      series.setData(clean.map((p) => ({ time: p.time, value: p.value, color: MINT_DIM })));
+      series = chart.addSeries(HistogramSeries, { color: ACCENT_DIM, priceFormat: { type: "price" } });
+      series.setData(clean.map((p) => ({ time: p.time, value: p.value, color: ACCENT_DIM })));
     } else {
       // Both "line" and "area" draw as an area. A bare stroke leaves the plot bottom-heavy with dead
       // space, and the falling-away gradient is what makes the trace read as a level above a floor
       // rather than a squiggle in a box. "line" simply takes the lighter fill.
       series = chart.addSeries(AreaSeries, {
-        lineColor: MINT,
-        lineWidth: 3,
-        topColor: kind === "area" ? "rgba(63,232,168,.42)" : "rgba(63,232,168,.34)",
-        bottomColor: "rgba(63,232,168,0)",
+        lineColor: ACCENT,
+        lineWidth: PLAIN ? 2 : 3,
+        topColor: rgba(ACCENT, PLAIN ? 0.18 : kind === "area" ? 0.42 : 0.34),
+        bottomColor: rgba(ACCENT, 0),
         priceLineVisible: false,
         lastValueVisible: false,
       });
@@ -92,19 +100,19 @@ export function StageChart({ points, kind = "line", label, height = 260 }: {
     // actually looking for, so it is drawn rather than left to a hover.
     series.createPriceLine({
       price: last,
-      color: MINT,
+      color: ACCENT,
       lineWidth: 1,
       lineStyle: LineStyle.Dashed,
       axisLabelVisible: true,
-      axisLabelColor: MINT,
-      axisLabelTextColor: "#04231a",
+      axisLabelColor: ACCENT,
+      axisLabelTextColor: PLAIN ? "#000" : "#04231a",
       title: "",
     });
     chart.timeScale().fitContent();
 
     // Bloom the trace, not the type: the plot lives on the first canvas, the axes on later ones.
     const paneCanvas = el.querySelector("canvas");
-    if (paneCanvas) paneCanvas.style.filter = "drop-shadow(0 0 3px rgba(63,232,168,.42))";
+    if (paneCanvas && !PLAIN) paneCanvas.style.filter = "drop-shadow(0 0 3px rgba(63,232,168,.42))";
 
     const ro = new ResizeObserver(() => {
       try { chart.applyOptions({ width: el.clientWidth || 320 }); } catch { /* chart already removed */ }
