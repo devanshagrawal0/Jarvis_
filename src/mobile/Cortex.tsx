@@ -25,7 +25,7 @@ const WEIGHTS: Record<CortexState, [number, number, number, number]> = {
 };
 // spin (rad/s), noise amplitude, noise speed, brightness
 const TUNING: Record<CortexState, { spin: number; amp: number; speed: number; energy: number }> = {
-  idle: { spin: 0.16, amp: 0.003, speed: 0.15, energy: 0.75 },
+  idle: { spin: 0.16, amp: 0.0, speed: 0.15, energy: 0.75 },
   thinking: { spin: 0.9, amp: 0.03, speed: 1.1, energy: 1.0 },
   speaking: { spin: 0.2, amp: 0.02, speed: 0.6, energy: 0.85 },
 };
@@ -109,8 +109,10 @@ const VERT = /* glsl */ `
     float coreW = w.y;
     target *= 1.0 + coreW * 0.06 * sin(uTime * 2.6);
     // slow, low-frequency curl so the cloud drifts in currents instead of fizzing
-    vec3 flow = curl(target * 0.8 + vec3(0.0, uTime * 0.3, 0.0)) * uAmp * (0.5 + aSeed);
-    vec3 pos = target + flow;
+    // the curl field is six noise evaluations per particle: skipped entirely when the flow is
+    // effectively off (the idle globe), which is most of the app's life on a phone
+    vec3 pos = target;
+    if (uAmp > 0.004) pos += curl(target * 0.8 + vec3(0.0, uTime * 0.3, 0.0)) * uAmp * (0.5 + aSeed);
     vec4 mv = modelViewMatrix * vec4(pos, 1.0);
     gl_Position = projectionMatrix * mv;
     float dist = -mv.z;
@@ -293,7 +295,7 @@ function globeForm(n: number, out: Float32Array, kinds: Float32Array, arcIdx: Fl
 // globe dock, nothing is re-created.
 export type CortexAnchor = { x: number; y: number; scale: number };
 
-export function Cortex({ count, state, audio = 0, geo, anchor }: { count: number; state: CortexState; audio?: number; geo: GeoJson | null; anchor?: CortexAnchor }) {
+export function Cortex({ count, state, audio = 0, audioRef, geo, anchor }: { count: number; state: CortexState; audio?: number; audioRef?: { current: number }; geo: GeoJson | null; anchor?: CortexAnchor }) {
   const points = useRef<THREE.Points>(null);
   const root = useRef<THREE.Group>(null);
   const { gl } = useThree();
@@ -362,7 +364,8 @@ export function Cortex({ count, state, audio = 0, geo, anchor }: { count: number
     L.speed += (t.speed - L.speed) * Math.min(1, d * 3); L.energy += (t.energy - L.energy) * Math.min(1, d * 3);
     L.noiseT += d * L.speed;
     u.uTime.value = L.noiseT; u.uClock.value += d; u.uAmp.value = L.amp; u.uEnergy.value = L.energy;
-    u.uAudio.value += (audio - u.uAudio.value) * Math.min(1, d * 8);
+    const level = audioRef ? audioRef.current : audio;
+    u.uAudio.value += (level - u.uAudio.value) * Math.min(1, d * 8);
     u.uSpin.value += d * L.spin;
     if (root.current && anchor) {
       const k = Math.min(1, d * 5);

@@ -58,7 +58,33 @@ function safeEqual(left, right) {
   return crypto.timingSafeEqual(a, b);
 }
 
-function createRequestTrust({ relaySecret = "", deviceFromBearer, maxRelayAgeMs = 60_000 } = {}) {
+// The owner's phone over the tailnet. `tailscale serve` terminates TLS on this machine and proxies to
+// loopback, so the socket IS loopback — but the Host is the MagicDNS name and X-Forwarded-* are
+// present, which is exactly what C-04 refuses for the local-owner principal. What makes this a
+// principal of its own is the identity header: serve OVERWRITES `Tailscale-User-Login` with the
+// login of the tailnet peer that connected (verified 2026-09-15: a spoofed value sent through the
+// tunnel came out as the real login). Requirements, all of them:
+//   1. loopback socket                         — only the local tailscaled can be the client
+//   2. Host is one of this node's tailnet names — not localhost, not a random string
+//   3. Tailscale-User-Login equals this node's owner login
+//   4. none of Cloudflare's headers            — the public quick tunnel also lands on loopback and
+//                                                forwards client headers verbatim, but it always adds
+//                                                cf-connecting-ip/cf-ray, which a client cannot remove
+// A device on the tailnet that is not the owner's account fails (3); the public internet fails (4);
+// LAN clients are not loopback and fail (1).
+const CLOUDFLARE_HEADERS = ["cf-connecting-ip", "cf-ray", "cf-ipcountry", "cf-visitor", "cf-warp-tag-id"];
+function isTailnetOwnerRequest(req, tailnetHosts, ownerLogin) {
+  if (!ownerLogin || !tailnetHosts || tailnetHosts.size === 0) return false;
+  if (!isLoopbackAddress(normalizedRemoteAddress(req))) return false;
+  if (!tailnetHosts.has(hostnameFromRequest(req))) return false;
+  const login = String(req.headers["tailscale-user-login"] || "").trim().toLowerCase();
+  if (!login || !safeEqual(login, ownerLogin)) return false;
+  if (CLOUDFLARE_HEADERS.some((name) => String(req.headers[name] || "").trim())) return false;
+  if (req.headers["x-jarvis-relay-signature"]) return false;
+  return true;
+}
+
+function createRequestTrust({ relaySecret = "", deviceFromBearer, maxRelayAgeMs = 60_000, tailnetHosts = null, tailnetOwnerLogin = "" } = {}) {
   const usedRelayNonces = new Map();
 
   function pruneRelayNonces(now) {
@@ -86,6 +112,7 @@ function createRequestTrust({ relaySecret = "", deviceFromBearer, maxRelayAgeMs 
 
   function principalFor(req, pathname, search = "") {
     if (isDirectOwnerRequest(req)) return { kind: "local-owner", id: "local-owner", trustLevel: "owner" };
+    if (isTailnetOwnerRequest(req, tailnetHosts, tailnetOwnerLogin)) return { kind: "tailnet-owner", id: tailnetOwnerLogin, trustLevel: "owner" };
     const relay = verifyRelay(req, pathname, search);
     if (relay) return relay;
     const device = typeof deviceFromBearer === "function" ? deviceFromBearer(req) : null;
@@ -93,12 +120,20 @@ function createRequestTrust({ relaySecret = "", deviceFromBearer, maxRelayAgeMs 
     return null;
   }
 
+  // "Owner surface": the routes that must only ever be driven by the owner in person — approvals,
+  // contacts. The owner's own machine qualifies, and so does the owner's phone over the tailnet
+  // (see isTailnetOwnerRequest: identity stamped by tailscaled, never by the client). Paired
+  // devices and the relay do NOT — they are trusted to ask, not to approve.
+  function isOwnerSurface(req) {
+    return isDirectOwnerRequest(req) || isTailnetOwnerRequest(req, tailnetHosts, tailnetOwnerLogin);
+  }
+
   function isPublicApi(req, pathname) {
     if (req.method === "OPTIONS") return true;
     return PUBLIC_API_RULES.some((rule) => rule.method === req.method && rule.path === pathname);
   }
 
-  return { hostnameFromRequest, normalizedRemoteAddress, isDirectOwnerRequest, principalFor, isPublicApi };
+  return { hostnameFromRequest, normalizedRemoteAddress, isDirectOwnerRequest, isOwnerSurface, principalFor, isPublicApi };
 }
 
-module.exports = { createRequestTrust, isDirectOwnerRequest, hostnameFromRequest, normalizedRemoteAddress };
+module.exports = { createRequestTrust, isDirectOwnerRequest, isTailnetOwnerRequest, hostnameFromRequest, normalizedRemoteAddress };

@@ -128,19 +128,26 @@ const HOST = process.env.JARVIS_HOST || "127.0.0.1";
 // check below must recognise. It is read from the local Tailscale daemon once at boot — never typed
 // in — so it follows whatever the tailnet is called. JARVIS_TRUSTED_HOSTS (comma list) is the manual
 // override for anything else.
-const TAILSCALE_HOSTS = (() => {
+// The tailnet: the machine's own MagicDNS names/IPs (for the Host check) and the login that owns this
+// node (for the phone-as-owner principal in request-trust). Both come from the daemon, not config.
+const TAILSCALE = (() => {
   const hosts = new Set();
+  let ownerLogin = "";
   try {
     const exe = process.platform === "win32" ? "C:\\Program Files\\Tailscale\\tailscale.exe" : "tailscale";
-    if (process.platform === "win32" && !fs.existsSync(exe)) return hosts;
+    if (process.platform === "win32" && !fs.existsSync(exe)) return { hosts, ownerLogin };
     const status = JSON.parse(execFileSync(exe, ["status", "--json"], { encoding: "utf8", timeout: 4000, windowsHide: true }));
     const dns = String(status?.Self?.DNSName || "").replace(/\.$/, "").toLowerCase();
     if (dns) { hosts.add(dns); hosts.add(dns.split(".")[0]); }
     for (const ip of status?.Self?.TailscaleIPs || []) hosts.add(String(ip).toLowerCase());
+    const user = status?.User?.[String(status?.Self?.UserID || "")];
+    ownerLogin = String(user?.LoginName || "").trim().toLowerCase();
   } catch { /* no Tailscale, or daemon down — nothing to trust */ }
   for (const extra of String(process.env.JARVIS_TRUSTED_HOSTS || "").split(",")) { const h = extra.trim().toLowerCase(); if (h) hosts.add(h); }
-  return hosts;
+  if (process.env.JARVIS_TAILNET_OWNER) ownerLogin = String(process.env.JARVIS_TAILNET_OWNER).trim().toLowerCase();
+  return { hosts, ownerLogin };
 })();
+const TAILSCALE_HOSTS = TAILSCALE.hosts;
 const ROOT = __dirname;
 const WORKSPACE_ROOT = path.resolve(ROOT, "..");
 const CONFIG_DIR = path.join(ROOT, "config");
@@ -599,7 +606,10 @@ function deviceFromBearer(req) {
 const requestTrust = createRequestTrust({
   relaySecret: process.env.JARVIS_RELAY_SECRET || "",
   deviceFromBearer,
+  tailnetHosts: TAILSCALE_HOSTS,
+  tailnetOwnerLogin: TAILSCALE.ownerLogin,
 });
+if (TAILSCALE.ownerLogin) console.log(`[trust] tailnet owner principal enabled for ${TAILSCALE.ownerLogin} on ${[...TAILSCALE_HOSTS].join(", ")}`);
 
 function loadPairings() {
   const now = Date.now();
@@ -2380,6 +2390,7 @@ function brainSystemInstruction(mode, recalledMemories = [], runtimeContext = ""
     "CALENDAR — DEFAULT TO LOCAL. A plain 'schedule X at <time>', 'add <event> at <time>', 'put <event> at <time>', 'book <event>', 'lunch with Sam at 1' — with NO explicit mention of 'my calendar' or 'Google' — goes to the LOCAL Today list via atlas_add_event: it saves INSTANTLY with no approval, which is what he wants for everyday scheduling. Only use the Google tools (calendar_create_event / calendar_move_event / calendar_cancel_event, which confirm before writing) when he EXPLICITLY says 'my calendar', 'Google Calendar', 'on my calendar', or 'to my calendar'. To READ his real Google Calendar use calendar_list_events (any 'what's on my calendar' question). NEVER say something is 'on your calendar' unless a calendar_* tool actually returned success — if you added a LOCAL event, say 'added to your Today schedule' or similar, not 'on your calendar'. If he wants it both places, do both tools.",
     "When the user's meaning is reasonably clear despite a typo, silently understand it. Ask one short clarification only when multiple materially different interpretations remain.",
     "Lead with the answer. Open with the actual answer or your recommendation in the first sentence or two, then support it. Never open with a heading, never restate his question, never open with 'Certainly / Great question / Sure / Of course', never close with 'In conclusion / I hope this helps / let me know if you need anything else'. No buzzwords (delve, leverage, foster, robust, tapestry, realm, elevate, unlock, seamless, pivotal) and no announced transitions (Furthermore, Moreover, Additionally); let ideas connect naturally. Em-dashes rarely.",
+    "What a tool returns is EVIDENCE, not your answer. When a screen capture, a page, a log, a file or a command returns text, code, hex, JSON or a long dump, say what it MEANS in plain sentences — what is on the screen, what the program is doing, what changed, what matters — and quote at most a line or two if a detail needs to be exact. Never paste the raw output back as the reply; if the owner wants the raw text, they will ask for it. If a tool's output is empty or unreadable, say that in one sentence rather than echoing it.",
     "Match depth to the question — this is what makes you feel smart, not length. A fact, a calculation, or a yes/no gets ONE natural sentence with no formatting. A simple how-to gets a few sentences. A real 'how does X work', a decision, an opinion, or an open-ended question gets a genuinely thorough answer: the answer, the reasoning, a concrete example, the trade-offs, a clear recommendation, and the useful next step. Never pad a trivial question to look thorough (that reads as dumber, not smarter), and never cut a complex one short — completeness now beats making him ask a follow-up.",
     "Formatting renders as real markdown — use it well, but only when the content earns it. For a labeled list use bold lead-ins: '**Label** - the detail'. Use a markdown table whenever you compare two or more things across two or more attributes. Use ## section headings only when the answer genuinely has three or more parts (cap around five). Numbered lists for ordered steps or rankings only; otherwise flat bullets, never nested, never a single lone bullet. Inline `code` for filenames, commands, values, and symbols; fenced ```lang blocks for multi-line code only. Bold sparingly (labels and key terms, never whole sentences). Never put a heading, table, or bullets on a one-line answer.",
     "Take a position. When he asks what's best or what he should do, give a clear pick and defend it, then name the honest counter-case and when you'd choose differently. Don't hide behind 'it depends' — if it genuinely depends, say what on, then still give your default call.",
@@ -2414,15 +2425,27 @@ function brainSystemInstruction(mode, recalledMemories = [], runtimeContext = ""
     // treated them as established fact. They are separated here and dated, so an old exchange reads
     // as an old exchange.
     ...(() => {
-      const items = recalledMemories.slice(0, 8);
+      // Measured on the owner's phone, 2026-09-15: the system prompt grew 23k -> 40k -> 50k chars
+      // across three turns because every episodic memory is the raw transcript of a past turn
+      // (up to 8,000 chars each) and up to eight of them were pasted in whole. That is +12k tokens
+      // per call, slower answers, and a model buried in its own old replies. An episode's job here
+      // is a pointer ("we talked about X, the answer was roughly Y"), so each one is clipped and
+      // fewer are shown; the full text still lives in the conversation log and the vault.
+      const clip = (text, n) => { const t = String(text || ""); return t.length > n ? `${t.slice(0, n).trimEnd()}…` : t; };
+      const seenText = new Set();
+      const items = recalledMemories
+        .filter((item) => { const k = String(item.text || "").slice(0, 80).toLowerCase(); if (!k || seenText.has(k)) return false; seenText.add(k); return true; })
+        .slice(0, 8)
+        .map((item) => ({ ...item, text: clip(item.text, item.kind === "episodic" || item.kind === "episode" ? 480 : 400) }));
       const when = (item) => {
         const t = new Date(item.updatedAt || item.createdAt || 0).getTime();
         if (!t) return "";
         const days = Math.floor((Date.now() - t) / 86_400_000);
         return days <= 0 ? " (today)" : days === 1 ? " (yesterday)" : ` (${days}d ago)`;
       };
-      const facts = items.filter((item) => item.kind !== "episodic");
-      const past = items.filter((item) => item.kind === "episodic");
+      const isPast = (item) => item.kind === "episodic" || item.kind === "episode";
+      const facts = items.filter((item) => !isPast(item));
+      const past = items.filter(isPast).slice(0, 4);
       const lines = [];
       lines.push(facts.length
         ? `What you know about the owner — durable facts and learned procedures; prefer these over guessing, and defer to the owner if he corrects one: ${facts.map((item) => `[${item.category}] ${item.text}`).join(" | ")}`
@@ -3742,12 +3765,26 @@ function thinkingConfigFor(model, route) {
   return undefined;
 }
 
+// Reads a streamGenerateContent SSE body and rebuilds the same `candidates[0].content.parts` shape
+// the non-streaming endpoint returns, so the caller does not care which one answered.
+//
+// Until 2026-09-15 streaming was only used on tool-less turns, because this reader kept text and
+// dropped everything else — a functionCall part would have been lost. Measured on the phone: every
+// tool turn is two sequential calls of 2–5 s each with NOTHING on screen until the last token, and
+// the owner read that as a 7–10 s freeze. Now:
+//   - text parts stream out as deltas the moment they arrive (and are merged into one part);
+//   - functionCall parts are kept whole, with their `thoughtSignature` — Gemini 3 requires the
+//     signature to be echoed back with the call on the next turn, so parts are never rebuilt by hand;
+//   - `thought: true` parts (thought summaries) are neither shown nor kept;
+//   - finishReason travels with the candidate like before.
 async function readGeminiStream(response, onTextDelta) {
   const contentType = String(response.headers.get("content-type") || "");
   if (!contentType.includes("text/event-stream") || !response.body) return response.json().catch(() => ({}));
   const decoder = new TextDecoder();
   let buffer = "";
-  let text = "";
+  const parts = [];          // rebuilt in arrival order
+  let textPart = null;       // the open text part being appended to
+  let finishReason = "";
   let groundingMetadata = {};
   let usageMetadata = null; // Cortex v4 P0.6 — final SSE chunk carries token usage
   const consume = (block) => {
@@ -3759,10 +3796,15 @@ async function readGeminiStream(response, onTextDelta) {
     const payload = JSON.parse(payloadText);
     const candidate = payload.candidates?.[0];
     groundingMetadata = candidate?.groundingMetadata || groundingMetadata;
+    if (candidate?.finishReason) finishReason = candidate.finishReason;
     if (payload.usageMetadata) usageMetadata = payload.usageMetadata;
     for (const part of candidate?.content?.parts || []) {
-      if (!part.text) continue;
-      text += part.text;
+      if (part.thought) continue;
+      if (part.functionCall) { parts.push(part); textPart = null; continue; }
+      if (typeof part.text !== "string" || !part.text) continue;
+      if (!textPart) { textPart = { text: "" }; parts.push(textPart); }
+      textPart.text += part.text;
+      if (part.thoughtSignature) textPart.thoughtSignature = part.thoughtSignature;
       onTextDelta?.(part.text);
     }
   };
@@ -3781,7 +3823,8 @@ async function readGeminiStream(response, onTextDelta) {
   if (buffer.trim()) consume(buffer);
   return {
     candidates: [{
-      content: { role: "model", parts: text ? [{ text }] : [] },
+      content: { role: "model", parts },
+      ...(finishReason ? { finishReason } : {}),
       groundingMetadata,
     }],
     ...(usageMetadata ? { usageMetadata } : {}),
@@ -5261,7 +5304,9 @@ One of JARVIS's existing on-screen widgets already covers this (${presentedWhy})
         else if (useGrounding) tools.push({ google_search: {} }, { url_context: {} });
         else if (sendFns) tools.push({ functionDeclarations });
         try {
-          const useStreaming = Boolean(onTextDelta) && turn === 0 && !sendFns;
+          // Every model call streams when the caller can show deltas — tool turns included, see
+          // readGeminiStream. The answer after a tool result is where the owner waits longest.
+          const useStreaming = Boolean(onTextDelta);
           const endpoint = useStreaming ? "streamGenerateContent" : "generateContent";
           const query = useStreaming ? `alt=sse&key=${encodeURIComponent(settings.geminiKey)}` : `key=${encodeURIComponent(settings.geminiKey)}`;
           const systemText = brainSystemInstruction(mode, recalledMemories, runtimeInstruction, functionDeclarations);
@@ -7795,6 +7840,7 @@ async function handleApi(req, res, pathname, url) {
       state: "live",
       principal: req.jarvisPrincipal ? { kind: req.jarvisPrincipal.kind, id: req.jarvisPrincipal.id, trustLevel: req.jarvisPrincipal.trustLevel } : null,
       directOwner: requestTrust.isDirectOwnerRequest(req),
+      ownerSurface: requestTrust.isOwnerSurface(req),
       bindHost: HOST,
       remoteRelayConfigured: Boolean(process.env.JARVIS_RELAY_SECRET),
       generatedAt: isoNow(),
@@ -9131,7 +9177,7 @@ async function handleApi(req, res, pathname, url) {
   // The owner's own address book. Owner surface only: it is a list of real people, and nothing
   // reached by a relay or a paired phone has any business reading or writing it.
   if (pathname === "/api/contacts" || pathname.startsWith("/api/contacts/")) {
-    if (!requestTrust.isDirectOwnerRequest(req)) {
+    if (!requestTrust.isOwnerSurface(req)) {
       sendJson(res, 403, { error: "Contacts are available only on the direct owner surface." });
       return;
     }
@@ -9221,7 +9267,7 @@ async function handleApi(req, res, pathname, url) {
   }
 
   if (req.method === "GET" && pathname === "/api/confirmations/pending") {
-    if (!requestTrust.isDirectOwnerRequest(req)) {
+    if (!requestTrust.isOwnerSurface(req)) {
       sendJson(res, 403, { error: "Pending approvals are visible only on the direct owner surface." });
       return;
     }
@@ -9233,7 +9279,7 @@ async function handleApi(req, res, pathname, url) {
 
   const confirmationMatch = pathname.match(/^\/api\/confirmations\/([^/]+)\/approve$/);
   if (req.method === "POST" && confirmationMatch) {
-    if (!requestTrust.isDirectOwnerRequest(req)) {
+    if (!requestTrust.isOwnerSurface(req)) {
       sendJson(res, 403, { error: "Approval requires the direct owner surface." });
       return;
     }
@@ -9336,7 +9382,7 @@ async function handleApi(req, res, pathname, url) {
 
   const confirmationDenyMatch = pathname.match(/^\/api\/confirmations\/([^/]+)\/deny$/);
   if (req.method === "POST" && confirmationDenyMatch) {
-    if (!requestTrust.isDirectOwnerRequest(req)) {
+    if (!requestTrust.isOwnerSurface(req)) {
       sendJson(res, 403, { error: "Denial requires the direct owner surface." });
       return;
     }

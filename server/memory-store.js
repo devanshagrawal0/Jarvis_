@@ -335,7 +335,9 @@ function createMemoryStore(runtimeDir, { neuralVaultBridge } = {}) {
       stored.push(upsert({
         kind: "episodic",
         category: "conversation",
-        text: `User: ${user.slice(0, 3000)}\nJARVIS: ${assistant.slice(0, 5000)}`,
+        // The episode is a pointer to the exchange, not a copy of it — the full turn is in the
+        // conversation log. 8,000-char episodes were being recalled whole into every prompt.
+        text: `User: ${user.slice(0, 800)}\nJARVIS: ${assistant.slice(0, 1200)}`,
         source,
         confidence: 0.85,
         importance: metadata.tools?.length ? 0.65 : 0.35,
