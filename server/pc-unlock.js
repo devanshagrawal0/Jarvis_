@@ -57,7 +57,11 @@ function createPcUnlock({ runtimeDir, log = () => {} } = {}) {
     const { credential } = verification.registrationInfo;
     const id = credential.id;                                                       // base64url string
     const publicKey = Buffer.from(credential.publicKey).toString("base64");
-    if (!store.credentials.some((c) => c.id === id)) { store.credentials.push({ id, publicKey, counter: credential.counter, enrolledAt: new Date().toISOString() }); save(); }
+    // Record the authenticator's transports. Passing these back on auth (e.g. ["internal"] for a
+    // platform authenticator) keeps iOS/Safari on THIS device and stops it offering the
+    // cross-device "scan a QR from another phone" flow.
+    const transports = Array.isArray(credential.transports) && credential.transports.length ? credential.transports : ["internal"];
+    if (!store.credentials.some((c) => c.id === id)) { store.credentials.push({ id, publicKey, counter: credential.counter, transports, enrolledAt: new Date().toISOString() }); save(); }
     log(`enrolled credential ${id.slice(0, 10)}… (${store.credentials.length} total)`);
     return { enrolled: true, count: store.credentials.length };
   }
@@ -67,7 +71,7 @@ function createPcUnlock({ runtimeDir, log = () => {} } = {}) {
     const { rpID } = ctx;
     if (!store.credentials.length) throw Object.assign(new Error("Set up Face ID unlock first."), { statusCode: 409 });
     const { generateAuthenticationOptions } = await lib();
-    const opts = await generateAuthenticationOptions({ rpID, userVerification: "required", allowCredentials: store.credentials.map((c) => ({ id: c.id })) });
+    const opts = await generateAuthenticationOptions({ rpID, userVerification: "required", allowCredentials: store.credentials.map((c) => ({ id: c.id, transports: c.transports || ["internal"] })) });
     const challengeId = putChallenge("auth", opts.challenge);
     return { challengeId, options: opts };
   }
