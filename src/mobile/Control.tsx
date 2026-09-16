@@ -400,8 +400,11 @@ function Takeover({ onExit }: { onExit: () => void }) {
     let lock: any = null; (navigator as any).wakeLock?.request?.("screen").then((l: any) => { lock = l; }).catch(() => {});
     return () => {
       alive = false; window.clearInterval(beat); window.removeEventListener("resize", onResize); lock?.release?.();
+      // Only close THIS viewer's connection. Leave the PC's encoder running: reopening Takeover
+      // reuses the same live stream instantly, and the server idle-stops the encoder ~90 s after the
+      // last viewer leaves. Tearing ffmpeg down on every exit caused a Desktop Duplication (ddagrab)
+      // stall — the handle isn't freed the instant ffmpeg dies, so an immediate reopen got black video.
       void player.current?.stop(); player.current = null;
-      void post("/api/device-mesh/stream/stop", {}).catch(() => {});
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [quality, attempt]);

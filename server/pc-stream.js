@@ -87,13 +87,20 @@ function createPcStream({ toolsDir, runtimeDir, log = () => {} } = {}) {
     throw new Error("MediaMTX did not start listening on :8889");
   }
 
-  // ffmpeg prints one "frame= 1234 fps= 60 ... bitrate=8000.0kbits/s ... speed=1x" line per second
-  // on stderr (carriage-return separated). That line IS the health signal; there is no other.
+  // ffmpeg prints one "frame= 1234 fps= 60 ... bitrate=N/A ... speed=1x" line per second on stderr
+  // (carriage-return separated). That line IS the health signal. NOTE: the WHIP muxer prints
+  // `bitrate=N/A` (not `…kbits/s`), so bitrate and speed are parsed separately and are optional —
+  // requiring a numeric bitrate here is what made stats.frame never advance, so the frame-based
+  // health check killed every healthy encoder as "stalled".
   function parseStats(chunk) {
     const text = String(chunk);
     stderrTail = stderrTail.concat(text.split(/\r?\n|\r/).filter(Boolean)).slice(-30);
-    const m = /frame=\s*(\d+)\s+fps=\s*([\d.]+).*?bitrate=\s*([\d.]+)kbits\/s.*?speed=\s*([\d.]+)x/s.exec(text);
-    if (m) stats = { frame: Number(m[1]), fps: Number(m[2]), bitrateKbps: Number(m[3]), speed: Number(m[4]), at: Date.now() };
+    const m = /frame=\s*(\d+)\s+fps=\s*([\d.]+)/.exec(text);
+    if (m) {
+      const br = /bitrate=\s*([\d.]+)kbits\/s/.exec(text);
+      const sp = /speed=\s*([\d.]+)x/.exec(text);
+      stats = { frame: Number(m[1]), fps: Number(m[2]), bitrateKbps: br ? Number(br[1]) : 0, speed: sp ? Number(sp[1]) : 0, at: Date.now() };
+    }
   }
 
   function armIdleStop() {
@@ -111,31 +118,23 @@ function createPcStream({ toolsDir, runtimeDir, log = () => {} } = {}) {
     return code > 0 && code !== 404;
   }
 
-  async function start({ quality = "balanced" } = {}) {
-    lastViewerAt = Date.now();
-    if (publisher) { armIdleStop(); return status(); }
-    // Wait for any in-flight stop to finish first. ddagrab (Desktop Duplication) allows only a
-    // limited number of live capturers, so spawning a new ffmpeg while the previous one is still
-    // dying makes BOTH run at ~0.01x and produce no frames — the "did not start streaming" flake.
-    if (stoppingPromise) { try { await stoppingPromise; } catch { /* it's gone either way */ } }
-    if (publisher) { armIdleStop(); return status(); }
-    const ffmpeg = findFfmpeg();
-    if (!ffmpeg) throw new Error("ffmpeg is not installed on the PC");
-    await ensureMediamtx();
-    preset = PRESETS[quality] ? quality : "balanced";
-    const p = PRESETS[preset];
+  // Healthy = encoding real frames right now (the counter moved recently). ddagrab (Windows Desktop
+  // Duplication) intermittently stalls a freshly-spawned capturer at ~0.4x if the previous handle
+  // has not been released yet, so "publisher exists" is not enough — it can be a frozen process.
+  function healthy() { return Boolean(publisher) && stats.frame > 20 && Date.now() - stats.at < 2500; }
+
+  function spawnPublisher(p) {
     lastError = "";
     stats = { frame: 0, fps: 0, bitrateKbps: 0, speed: 0, at: 0 };
     stderrTail = [];
+    const ffmpeg = findFfmpeg();
     const args = [
       "-hide_banner", "-nostdin", "-loglevel", "warning", "-stats",
       "-init_hw_device", "d3d11va", "-filter_threads", "4",
       // Desktop Duplication → system memory → CPU scale → libx264. Diagnosed 2026-09-16 end to end:
-      // the AMD GPU encoder (h264_amf) delivered 6 MB of RTP but the WebRTC decoder assembled ZERO
-      // frames (framesReceived 0, endless PLI) — h264_amf's bitstream is not WebRTC-decodable, and
-      // no profile/level/SPS tweak fixed it. libx264 through the identical pipeline decoded the real
-      // desktop at 1920×1080 (framesReceived 189). baseline profile + zerolatency, no B-frames
-      // (WebRTC forbids them). ~1 core at 1080p30, ~all-core headroom to 1080p60.
+      // the AMD GPU encoder (h264_amf) delivered RTP but the WebRTC decoder assembled ZERO frames
+      // (not WebRTC-decodable); libx264 through the identical pipeline decoded the real desktop at
+      // 1920×1080. baseline profile + zerolatency, no B-frames (WebRTC forbids them).
       "-filter_complex", `ddagrab=framerate=${p.fps}:draw_mouse=1,hwdownload,format=bgra,scale=${p.width}:${p.height}:flags=bilinear:threads=4,format=yuv420p`,
       "-c:v", "libx264", "-profile:v", "baseline", "-preset", "ultrafast", "-tune", "zerolatency",
       "-b:v", p.bitrate, "-maxrate", p.bitrate, "-bufsize", p.bufsize,
@@ -144,7 +143,6 @@ function createPcStream({ toolsDir, runtimeDir, log = () => {} } = {}) {
     ];
     publisher = spawn(ffmpeg, args, { stdio: ["ignore", "ignore", "pipe"], windowsHide: true });
     startedAt = new Date().toISOString();
-    // full stderr to disk — the only place ffmpeg explains a failed capture or handshake
     const ffLog = fs.createWriteStream(path.join(logDir, "ffmpeg.log"), { flags: "a" });
     ffLog.write(`\n--- ${startedAt} ${args.join(" ")}\n`);
     publisher.stderr.on("data", (c) => { ffLog.write(c); parseStats(c); });
@@ -156,23 +154,38 @@ function createPcStream({ toolsDir, runtimeDir, log = () => {} } = {}) {
       publisher = null;
       clearTimeout(idleTimer);
     });
-    // Ready = MediaMTX has the path AND ffmpeg is actually encoding real frames. A stalled ddagrab
-    // still registers the path (so streamReady alone passes) but emits ~1 frame, so also require the
-    // frame counter to advance. If neither happens in ~8 s, kill it and fail loudly.
-    let ready = false;
-    for (let i = 0; i < 55; i += 1) {
-      await new Promise((r) => setTimeout(r, 150));
-      if (!publisher) break;
-      if (stats.frame > 15 && (await streamReady())) { ready = true; break; }
+  }
+
+  async function start({ quality = "balanced" } = {}) {
+    lastViewerAt = Date.now();
+    if (healthy()) { armIdleStop(); return status(); }         // reuse a live, healthy stream
+    if (publisher) await stop("replacing-stalled");            // an existing publisher is frozen — replace it
+    if (stoppingPromise) { try { await stoppingPromise; } catch { /* gone either way */ } }
+    const ffmpeg = findFfmpeg();
+    if (!ffmpeg) throw new Error("ffmpeg is not installed on the PC");
+    await ensureMediamtx();
+    preset = PRESETS[quality] ? quality : "balanced";
+    const p = PRESETS[preset];
+    // Spawn and require real frames to start flowing. A stalled ddagrab (handle not yet released)
+    // is killed and retried with a longer settle — the contention clears within a couple of tries.
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      spawnPublisher(p);
+      let frames = false;
+      for (let i = 0; i < 30; i += 1) {                        // up to ~4.5 s for frames to advance
+        await new Promise((r) => setTimeout(r, 150));
+        if (!publisher) break;
+        if (stats.frame > 20) { frames = true; break; }
+      }
+      if (frames && publisher) {
+        // frames flow — wait for MediaMTX to expose the path, then done
+        for (let i = 0; i < 20; i += 1) { if (await streamReady()) break; await new Promise((r) => setTimeout(r, 150)); }
+        armIdleStop();
+        return status();
+      }
+      log(`start attempt ${attempt + 1} stalled (frame=${stats.frame}) — retrying`);
+      await stop("stalled-start");                             // kill + ddagrab settle, then retry
     }
-    if (!ready && publisher) {
-      const stalled = stats.frame <= 15;
-      log(`start failed (frames=${stats.frame}) — killing`);
-      await stop("stalled-start");
-      throw new Error(stalled ? "The screen encoder stalled (another capture may be running). Try again." : "The stream did not come online.");
-    }
-    armIdleStop();
-    return status();
+    throw new Error("The screen capture could not start (Desktop Duplication is busy). Try again in a moment.");
   }
 
   let stoppingPromise = null;
@@ -181,15 +194,22 @@ function createPcStream({ toolsDir, runtimeDir, log = () => {} } = {}) {
     const child = publisher;
     if (!child) return status();
     log(`stopping publisher (${reason})`);
-    stoppingPromise = new Promise((resolve) => {
-      const done = () => resolve();
-      child.once("exit", done);
-      try { child.kill(); } catch { done(); }
-      setTimeout(() => { try { child.kill("SIGKILL"); } catch { /* gone */ } done(); }, 2500);
-    });
+    // Wait for the process to exit AND then a settle window: Windows Desktop Duplication (ddagrab)
+    // does not release the capture handle the instant ffmpeg exits, so a new capturer spawned too
+    // soon starves (stalls at ~0.4x, black video on reopen). start() awaits this whole promise, so
+    // an immediate reopen can't spawn until the handle is actually free.
+    stoppingPromise = (async () => {
+      await new Promise((resolve) => {
+        const done = () => resolve();
+        child.once("exit", done);
+        try { child.kill(); } catch { done(); }
+        setTimeout(() => { try { child.kill("SIGKILL"); } catch { /* gone */ } done(); }, 2500);
+      });
+      publisher = null;
+      await new Promise((r) => setTimeout(r, 1200));
+    })();
     await stoppingPromise;
     stoppingPromise = null;
-    publisher = null;
     return status();
   }
 
