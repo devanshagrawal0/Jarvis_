@@ -1,0 +1,5 @@
+LIBRARY JarvisUnlock.dll
+
+EXPORTS
+    DllCanUnloadNow     PRIVATE
+    DllGetClassObject   PRIVATE
