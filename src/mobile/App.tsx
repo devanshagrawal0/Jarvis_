@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Stage } from "./Stage";
 import { Thread } from "./Thread";
 import { Control } from "./Control";
+import { Files } from "./Files";
 import { useVoice } from "./voice";
 import type { CortexState } from "./Cortex";
 import { useThread } from "./useThread";
@@ -139,6 +140,7 @@ export function MobileApp() {
               </div>
             ))
             : tab === "control" ? <Control active={tab === "control"} dock={ctlDock} strength={strength} />
+            : tab === "files" ? <Files active={tab === "files"} />
             : <div className="not-built"><div className="kicker">{current.label}</div><div className="nb-title">Not built yet</div><div className="nb-body">Arrives in batch {current.batch}. Nothing here is faked.</div><div className="build mono">build {typeof __JARVIS_BUILD__ === "string" ? __JARVIS_BUILD__ : "dev"}</div></div>}
         </main>
 

@@ -79,6 +79,7 @@ function createPcStream({ toolsDir, runtimeDir, log = () => {} } = {}) {
     if (!fs.existsSync(mediamtxExe)) throw new Error(`MediaMTX not installed at ${mediamtxExe}`);
     const out = fs.openSync(path.join(logDir, "mediamtx.log"), "a");
     mediamtx = spawn(mediamtxExe, [path.join(mediamtxDir, "mediamtx.yml")], { cwd: mediamtxDir, stdio: ["ignore", out, out], windowsHide: true, detached: false });
+    mediamtx.on("error", (e) => { log(`mediamtx spawn error: ${e.message}`); mediamtx = null; });
     mediamtx.on("exit", (code) => { log(`mediamtx exited (${code})`); mediamtx = null; });
     for (let i = 0; i < 40; i += 1) {
       await new Promise((r) => setTimeout(r, 100));
@@ -142,8 +143,13 @@ function createPcStream({ toolsDir, runtimeDir, log = () => {} } = {}) {
       "-f", "whip", `http://127.0.0.1:${MEDIAMTX_PORT}/${STREAM_PATH}/whip`,
     ];
     publisher = spawn(ffmpeg, args, { stdio: ["ignore", "ignore", "pipe"], windowsHide: true });
+    // A spawn/pipe error emits 'error'; without a listener Node throws and takes the whole server
+    // down. ddagrab crashes (DXGI "Generic error") arrive this way — swallow them here and let the
+    // start() retry / idle logic handle recovery.
+    publisher.on("error", (e) => { lastError = `ffmpeg spawn error: ${e.message}`; log(lastError); publisher = null; });
     startedAt = new Date().toISOString();
     const ffLog = fs.createWriteStream(path.join(logDir, "ffmpeg.log"), { flags: "a" });
+    ffLog.on("error", () => {});
     ffLog.write(`\n--- ${startedAt} ${args.join(" ")}\n`);
     publisher.stderr.on("data", (c) => { ffLog.write(c); parseStats(c); });
     publisher.on("close", () => ffLog.end());

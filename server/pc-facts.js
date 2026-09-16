@@ -19,6 +19,8 @@ function createPcFacts({ log = () => {} } = {}) {
     let resolve, reject;
     audioReady = new Promise((ok, no) => { resolve = ok; reject = no; });
     audio = spawn("powershell.exe", ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", AUDIO_SCRIPT], { stdio: ["pipe", "pipe", "pipe"], windowsHide: true });
+    audio.on("error", (e) => { log(`audio worker spawn error: ${e.message}`); audio = null; reject(new Error(e.message)); });
+    audio.stdin.on("error", () => {});
     audio.stdout.setEncoding("utf8");
     audio.stdout.on("data", (chunk) => {
       audioBuf += chunk;

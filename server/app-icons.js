@@ -24,6 +24,8 @@ function createAppIcons({ runtimeDir, log = () => {} } = {}) {
   function ensure() {
     if (child) return child;
     child = spawn("powershell.exe", ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", SCRIPT], { stdio: ["pipe", "pipe", "pipe"], windowsHide: true });
+    child.on("error", (e) => { log(`icon worker spawn error: ${e.message}`); child = null; for (const [, ws] of pending) for (const w of ws) w(null); pending.clear(); });
+    child.stdin.on("error", () => {});
     child.stdout.setEncoding("utf8");
     child.stdout.on("data", (chunk) => {
       buffer += chunk;

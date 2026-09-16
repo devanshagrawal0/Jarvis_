@@ -3,7 +3,7 @@
    linear() · transform/opacity only · two glass surfaces · the globe is the only light. */
 
 :root {
-  --bg-0: #000; --bg-1: #0a0b0d;
+  --bg-0: #050609; --bg-1: #0a0b0d;
   --surface-1: rgba(255, 255, 255, .04); --surface-2: rgba(255, 255, 255, .06); --surface-3: rgba(255, 255, 255, .09); --surface-4: rgba(255, 255, 255, .12);
   --line-1: rgba(255, 255, 255, .06); --line-2: rgba(255, 255, 255, .10); --line-focus: rgba(0, 229, 255, .45);
   --text-1: rgba(255, 255, 255, .92); --text-2: rgba(255, 255, 255, .62); --text-3: rgba(255, 255, 255, .40); --text-disabled: rgba(255, 255, 255, .28);
@@ -88,7 +88,10 @@ html.kbd .edge-glow, html.kbd .tk { top: var(--vv-top, 0px); height: var(--app-h
 .home-sub { font-size: 15px; line-height: 20px; color: var(--text-3); animation: rise 600ms 60ms var(--ease-out) both; }
 
 /* ── dock: composer + tab bar (the second glass surface) ────────────────────────────────────── */
-.dock { position: sticky; bottom: 0; z-index: 10; margin-top: auto; padding: 8px 0 var(--sab); background: var(--glass); -webkit-backdrop-filter: blur(20px) saturate(140%); backdrop-filter: blur(20px) saturate(140%); box-shadow: inset 0 1px 0 rgba(255, 255, 255, .06); }
+/* The tab bar hugs the home indicator instead of floating a full safe-area band above it: only a
+   small cushion below the labels (the thin indicator sits in it), not the whole ~34px inset — that
+   band read as wasted black space at the bottom. The bar background still fills to the true edge. */
+.dock { position: sticky; bottom: 0; z-index: 10; margin-top: auto; padding: 8px 0 max(6px, calc(env(safe-area-inset-bottom, 0px) - 18px)); background: var(--glass); -webkit-backdrop-filter: blur(20px) saturate(140%); backdrop-filter: blur(20px) saturate(140%); box-shadow: inset 0 1px 0 rgba(255, 255, 255, .06); }
 .composer-wrap { max-width: var(--col); margin: 0 auto; padding: 0 12px; }
 .composer { display: flex; align-items: flex-end; gap: 4px; min-height: 52px; padding: 4px 6px 4px 6px; border-radius: 26px; background: var(--surface-2); box-shadow: 0 0 0 1px transparent; transition: box-shadow 160ms var(--ease-ui), border-radius 160ms var(--ease-ui); }
 .composer:focus-within { box-shadow: 0 0 0 1px var(--line-focus); }
@@ -421,5 +424,41 @@ html.kbd .tk.flat .tk-rot { height: var(--app-h, 100dvh); }
 .tk-keys .key { background: rgba(255, 255, 255, .14); -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px); }
 /* the typing field is real (it must own the keyboard) but never seen */
 .tk-kbd { position: absolute; left: 0; bottom: 0; width: 1px; height: 1px; opacity: .01; font-size: 16px; border: 0; outline: none; background: transparent; color: transparent; caret-color: transparent; }
+
+/* ── Files tab ────────────────────────────────────────────────────────────────────────────── */
+.files { display: flex; flex-direction: column; gap: 12px; padding-top: 6px; }
+.froots { display: flex; gap: 8px; overflow-x: auto; scrollbar-width: none; margin: 0 -16px; padding: 0 16px 2px; }
+.froots::-webkit-scrollbar { display: none; }
+.froot { flex: none; display: flex; flex-direction: column; align-items: center; gap: 6px; width: 72px; padding: 12px 6px 10px; border-radius: 16px; background: var(--surface-1); box-shadow: inset 0 0 0 1px var(--line-1); transition: transform 80ms var(--ease-ui), background 120ms; }
+.froot:active { transform: scale(.95); background: var(--surface-3); }
+.froot.on { background: var(--accent-soft); box-shadow: inset 0 0 0 1px var(--accent-line); }
+.froot-ico { width: 34px; height: 34px; display: grid; place-items: center; border-radius: 10px; background: var(--accent-soft); color: var(--accent-text); }
+.froot-ico svg { width: 19px; height: 19px; }
+.froot small { font-size: 11px; line-height: 14px; color: var(--text-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
+.fbar { display: flex; align-items: center; gap: 8px; }
+.fup { flex: none; width: 38px; height: 38px; display: grid; place-items: center; border-radius: 12px; background: var(--surface-2); color: var(--text-1); }
+.fup svg { width: 18px; height: 18px; transform: rotate(-90deg); }
+.fcrumbs { display: flex; align-items: center; gap: 4px; overflow-x: auto; scrollbar-width: none; min-width: 0; }
+.fcrumbs::-webkit-scrollbar { display: none; }
+.fcrumbs button { flex: none; font-size: 13px; line-height: 16px; color: var(--text-2); padding: 4px 2px; white-space: nowrap; }
+.fcrumbs button:last-child { color: var(--text-1); font-weight: 600; }
+.fcrumbs i { flex: none; font-style: normal; color: var(--text-3); }
+.fsend { flex: none; display: inline-flex; align-items: center; gap: 6px; height: 38px; padding: 0 14px 0 12px; border-radius: 12px; background: var(--accent); color: #001318; font-size: 13px; line-height: 16px; font-weight: 700; box-shadow: 0 6px 18px rgba(0, 229, 255, .22); }
+.fsend svg { width: 17px; height: 17px; }
+.fup-bar { display: flex; align-items: center; gap: 10px; padding: 10px 14px; border-radius: 12px; background: var(--accent-soft); box-shadow: inset 0 0 0 1px var(--accent-line); font-size: 13px; line-height: 16px; color: var(--accent-text); }
+.fup-bar .spin { width: 16px; height: 16px; border: 2px solid rgba(0,229,255,.25); border-top-color: var(--accent); border-radius: 50%; animation: spin 800ms linear infinite; flex: none; }
+.flist { display: flex; flex-direction: column; gap: 4px; }
+.frow { display: flex; align-items: center; gap: 12px; min-width: 0; min-height: 56px; padding: 8px 8px 8px 12px; border-radius: 12px; background: var(--surface-1); text-align: left; transition: transform 70ms var(--ease-ui), background 120ms; }
+.frow:active { transform: scale(.99); background: var(--surface-3); }
+.fico { flex: none; width: 26px; display: grid; place-items: center; }
+.fico svg { width: 22px; height: 22px; }
+.fthumb { flex: none; width: 40px; height: 40px; border-radius: 8px; object-fit: cover; background: var(--surface-3); }
+.fthumb + .fico { display: none; }
+.frow-t { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1; }
+.frow-t b { font-size: 15px; line-height: 19px; font-weight: 500; color: var(--text-1); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.frow-t small { font-size: 12px; line-height: 15px; color: var(--text-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.frow-go { flex: none; color: var(--text-3); }
+.frow-go svg { width: 16px; height: 16px; }
+.fpreview { width: 100%; max-height: 42vh; object-fit: contain; border-radius: 14px; background: #05070a; margin-bottom: 8px; }
 
 .build { margin-top: 16px; font-size: 11px; line-height: 14px; color: var(--text-3); }

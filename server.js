@@ -85,6 +85,7 @@ const { createPcStream } = require("./server/pc-stream");
 const { createPcInput } = require("./server/pc-input");
 const { createAppIcons } = require("./server/app-icons");
 const { createPcFacts } = require("./server/pc-facts");
+const { createPcFiles } = require("./server/pc-files");
 const { DEFAULT_AUTONOMY_PROFILE, normalizeAutonomyProfile } = require("./server/autonomy-policy");
 const { createGoogleProvider } = require("./server/providers/google-provider");
 const { createCanvasProvider } = require("./server/providers/canvas-provider");
@@ -384,6 +385,7 @@ let pcStream;
 let pcInput;
 let appIcons;
 let pcFacts;
+let pcFiles;
 // Real CPU % for the phone's PC card (os.loadavg() is always 0 on Windows): sampled from
 // os.cpus() time deltas every 2 s, only while someone asked in the last minute.
 const cpuSampler = { last: null, percent: 0, askedAt: 0, timer: null };
@@ -1263,6 +1265,9 @@ function validateMutationRequest(req, pathname, session) {
   // non-simple content type, so a cross-site page cannot send it without a CORS preflight the
   // server never grants — the origin check above is what protects it, not the JSON rule.
   if (pathname.startsWith("/api/device-mesh/stream/whep")) return;
+  // Phone→PC file upload streams raw file bytes, not JSON. Origin is checked above; owner surface
+  // is enforced in the handler.
+  if (pathname === "/api/device-mesh/fs/upload") return;
   const contentType = String(req.headers["content-type"] || "");
   if (!isBodylessDelete(req) && !contentType.includes("application/json")) {
     throw Object.assign(new Error("Mutation requests must use application/json"), { statusCode: 415 });
@@ -13170,6 +13175,77 @@ ${entryText}`;
     sendJson(res, 200, { ok: true, power: await pcFacts.setPowerPlan(String(data.id || "")) });
     return;
   }
+  // ── Phone Files tab: browse THIS PC (owner surface only) ──────────────────────────────────
+  if (pathname.startsWith("/api/device-mesh/fs")) {
+    if (!requestTrust.isOwnerSurface(req)) throw Object.assign(new Error("Owner surface required."), { statusCode: 403 });
+    if (req.method === "GET" && pathname === "/api/device-mesh/fs") {
+      const dir = url.searchParams.get("path") || "";
+      if (!dir) { sendJson(res, 200, { ok: true, roots: pcFiles.roots() }); return; }
+      try { sendJson(res, 200, { ok: true, ...(await pcFiles.list(dir)) }); }
+      catch (e) { sendJson(res, e.code === "EACCES" || e.code === "EPERM" ? 403 : 400, { ok: false, error: e.code === "EACCES" || e.code === "EPERM" ? "No permission to open that folder." : e.message }); }
+      return;
+    }
+    if (req.method === "GET" && pathname === "/api/device-mesh/fs/search") {
+      const base = url.searchParams.get("path") || "";
+      try { sendJson(res, 200, { ok: true, ...(await pcFiles.search(base || os.homedir(), url.searchParams.get("q") || "")) }); }
+      catch (e) { sendJson(res, 400, { ok: false, error: e.message }); }
+      return;
+    }
+    if (req.method === "GET" && pathname === "/api/device-mesh/fs/thumb") {
+      const buf = await pcFiles.thumbnail(url.searchParams.get("path") || "").catch(() => null);
+      if (!buf) { res.writeHead(404); res.end(); return; }
+      res.writeHead(200, { "content-type": "image/jpeg", "cache-control": "private, max-age=3600" });
+      res.end(buf);
+      return;
+    }
+    if (req.method === "GET" && pathname === "/api/device-mesh/fs/file") {
+      let info; try { info = pcFiles.fileForServe(url.searchParams.get("path") || ""); }
+      catch (e) { res.writeHead(e.statusCode || 400, { "content-type": "application/json" }); res.end(JSON.stringify({ error: e.message })); return; }
+      const download = url.searchParams.get("download") === "1";
+      const typeByExt = { ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".gif": "image/gif", ".webp": "image/webp", ".pdf": "application/pdf", ".mp4": "video/mp4", ".webm": "video/webm", ".mp3": "audio/mpeg", ".txt": "text/plain; charset=utf-8", ".md": "text/plain; charset=utf-8", ".json": "application/json" };
+      res.writeHead(200, {
+        "content-type": typeByExt[path.extname(info.name).toLowerCase()] || "application/octet-stream",
+        "content-length": info.size,
+        "cache-control": "private, max-age=60",
+        ...(download ? { "content-disposition": `attachment; filename="${encodeURIComponent(info.name)}"` } : {}),
+      });
+      fs.createReadStream(info.path).on("error", () => { try { res.destroy(); } catch { /* gone */ } }).pipe(res);
+      return;
+    }
+    // Phone → PC: stream the request body into a file in the destination folder. `name` and target
+    // `path` (folder) are query params; the body is the raw file bytes. Any type; owner surface only.
+    if (req.method === "POST" && pathname === "/api/device-mesh/fs/upload") {
+      let target; try { target = pcFiles.uploadTarget(url.searchParams.get("path") || "", url.searchParams.get("name") || "upload"); }
+      catch (e) { sendJson(res, e.statusCode || 400, { ok: false, error: e.message }); return; }
+      await new Promise((resolve, reject) => {
+        const ws = fs.createWriteStream(target.path, { mode: 0o644 });
+        req.pipe(ws);
+        ws.on("finish", resolve);
+        ws.on("error", reject);
+        req.on("error", reject);
+      }).then(() => {
+        const st = fs.statSync(target.path);
+        sendJson(res, 201, { ok: true, name: target.name, path: target.path, size: st.size });
+      }).catch((e) => {
+        try { fs.unlinkSync(target.path); } catch { /* nothing written */ }
+        sendJson(res, 500, { ok: false, error: `Upload failed: ${e.message}` });
+      });
+      return;
+    }
+    if (req.method === "POST" && pathname === "/api/device-mesh/fs/open") {
+      const data = await parseRequestData(req);
+      try { sendJson(res, 200, { ok: true, ...pcFiles.openOnPc(data.path || "") }); }
+      catch (e) { sendJson(res, e.statusCode || 400, { ok: false, error: e.message }); }
+      return;
+    }
+    if (req.method === "POST" && pathname === "/api/device-mesh/fs/reveal") {
+      const data = await parseRequestData(req);
+      try { sendJson(res, 200, { ok: true, ...pcFiles.revealOnPc(data.path || "") }); }
+      catch (e) { sendJson(res, 400, { ok: false, error: e.message }); }
+      return;
+    }
+  }
+
   // A widget on the PC screen — the same action ui_open_widget produces, delivered to the desktop.
   if (req.method === "POST" && pathname === "/api/device-mesh/pc/widget") {
     if (!requestTrust.isOwnerSurface(req)) throw Object.assign(new Error("Owner surface required."), { statusCode: 403 });
@@ -15089,6 +15165,7 @@ pcStream = createPcStream({ toolsDir: path.join(WORKSPACE_ROOT, "tools"), runtim
 pcInput = createPcInput({ log: (m) => console.log(`[pc-input] ${m}`) });
 appIcons = createAppIcons({ runtimeDir: RUNTIME_DIR, log: (m) => console.log(`[app-icons] ${m}`) });
 pcFacts = createPcFacts({ log: (m) => console.log(`[pc-facts] ${m}`) });
+pcFiles = createPcFiles({ log: (m) => console.log(`[pc-files] ${m}`) });
 try {
   // Managed browser tasks are invisible by default. browser_login_handoff temporarily
   // relaunches this dedicated profile headed, then completeLoginHandoff returns it headless.
@@ -15316,6 +15393,12 @@ function ensureEclipseIntegration() {
 }
 startupCheckpoint("eclipse integration deferred");
 
+// Last line of defence: a stray child-process 'error', a rejected promise deep in a helper, or a
+// bad frame must never take the whole server down (it did — an unhandled ffmpeg spawn error killed
+// it and the phone lost everything). Log and keep serving.
+process.on("uncaughtException", (err) => { try { console.error(`[uncaught] ${err && err.stack ? err.stack : err}`); } catch { /* never rethrow */ } });
+process.on("unhandledRejection", (reason) => { try { console.error(`[unhandledRejection] ${reason && reason.stack ? reason.stack : reason}`); } catch { /* never rethrow */ } });
+
 const server = http.createServer(async (req, res) => {
   try {
     validateHost(req);
@@ -15360,7 +15443,16 @@ const server = http.createServer(async (req, res) => {
     }
     serveStatic(req, res, url.pathname);
   } catch (error) {
-    sendJson(res, error.statusCode || 500, { error: error.message || "Server error" });
+    const code = error.statusCode || 500;
+    // TEMP DIAGNOSTIC (2026-09-16): the phone reports "forbidden". Log every rejected request with
+    // the identity headers tailscale serve stamped, so the real cause is measured, not guessed.
+    if (code === 401 || code === 403) {
+      try {
+        const h = req.headers || {};
+        console.log(`[reject] ${code} ${req.method} ${req.url} :: ${error.message} | host=${h.host} origin=${h.origin || "-"} sec-fetch-site=${h["sec-fetch-site"] || "-"} ts-login=${h["tailscale-user-login"] || "-"} ts-name=${h["tailscale-user-name"] || "-"} xff=${h["x-forwarded-for"] || "-"} ua=${String(h["user-agent"] || "").slice(0, 40)}`);
+      } catch { /* logging must never throw */ }
+    }
+    sendJson(res, code, { error: error.message || "Server error" });
   }
 });
 

@@ -300,7 +300,7 @@ function AppsPanel({ inv, reach, onOpen, onClose }: { inv: AppsPayload | null; r
   );
 }
 
-function Sheet({ title, sub, onClose, children }: { title: string; sub?: string; onClose: () => void; children: React.ReactNode }) {
+export function Sheet({ title, sub, onClose, children }: { title: string; sub?: string; onClose: () => void; children: React.ReactNode }) {
   useEffect(() => { const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); }; window.addEventListener("keydown", onKey); return () => window.removeEventListener("keydown", onKey); }, [onClose]);
   return createPortal(
     <div className="sheet-wrap" onClick={onClose}>

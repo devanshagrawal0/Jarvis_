@@ -41,6 +41,8 @@ function createPcInput({ log = () => {} } = {}) {
     const promise = new Promise((ok, no) => { resolve = ok; reject = no; });
     ready = { promise, resolve, reject };
     child = spawn("powershell.exe", ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", SCRIPT], { stdio: ["pipe", "pipe", "pipe"], windowsHide: true });
+    child.on("error", (e) => { log(`input agent spawn error: ${e.message}`); child = null; ready?.reject(new Error(e.message)); failAll("input agent spawn error"); });
+    child.stdin.on("error", () => {});
     counts = { events: 0, errors: 0, startedAt: new Date().toISOString() };
     child.stdout.setEncoding("utf8");
     child.stdout.on("data", (chunk) => {
