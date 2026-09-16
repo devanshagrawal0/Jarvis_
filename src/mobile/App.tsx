@@ -108,7 +108,7 @@ export function MobileApp() {
 
   return (
     <div className={`app ${docked ? "docked" : "hero"}`} data-build={typeof __JARVIS_BUILD__ === "string" ? __JARVIS_BUILD__ : "dev"}>
-      <Stage docked={docked} slot={dockSlot} area={heroArea} state={coreState} audioRef={voice.level} />
+      <Stage docked={docked} hidden={tab !== "jarvis"} slot={dockSlot} area={heroArea} state={coreState} audioRef={voice.level} />
       {voice.state === "listening" || voice.state === "speaking" ? <div className={`edge-glow ${voice.state}`} aria-hidden="true" /> : null}
       <div ref={scrollRef} className="scroll">
         <header className="top">

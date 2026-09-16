@@ -4573,6 +4573,7 @@ function createCapabilityEngine({
     apps: Object.keys(appCatalog),
     installedApps,
     rooms: ROOM_CATALOG.map(([id, what]) => ({ id, what })),
+    widgets: WIDGET_CATALOG.map(([id, what]) => ({ id, what })),
     execute,
     privateBrowser: managedBrowser,
     browserNavigationMemory: universalHeadlessBrowser.navigationMemory,

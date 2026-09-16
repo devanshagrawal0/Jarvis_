@@ -83,6 +83,8 @@ const { createBrowserAutomationService } = require("./server/browser-service");
 const { createDesktopTakeoverService } = require("./server/desktop-takeover-service");
 const { createPcStream } = require("./server/pc-stream");
 const { createPcInput } = require("./server/pc-input");
+const { createAppIcons } = require("./server/app-icons");
+const { createPcFacts } = require("./server/pc-facts");
 const { DEFAULT_AUTONOMY_PROFILE, normalizeAutonomyProfile } = require("./server/autonomy-policy");
 const { createGoogleProvider } = require("./server/providers/google-provider");
 const { createCanvasProvider } = require("./server/providers/canvas-provider");
@@ -315,6 +317,23 @@ function pushDesktopUi(uiActions, origin = "phone") {
   for (const client of desktopUiClients) { try { client.write(frame); } catch { desktopUiClients.delete(client); } }
   return list.length;
 }
+// "Open the helix room" from the phone while JARVIS is not on the PC screen: open JARVIS on the
+// PC (default browser, this server's UI), wait for it to subscribe, then deliver the action —
+// instead of reporting "done" to a screen nothing changed on. Returns how many actions landed.
+let desktopLaunchAt = 0;
+async function deliverToDesktop(uiActions, origin = "phone") {
+  const list = Array.isArray(uiActions) ? uiActions.filter(Boolean) : [];
+  if (!list.length) return { delivered: 0, launched: false };
+  if (desktopUiClients.size) return { delivered: pushDesktopUi(list, origin), launched: false };
+  const launched = Date.now() - desktopLaunchAt > 15000;
+  if (launched) {
+    desktopLaunchAt = Date.now();
+    try { spawn("cmd", ["/c", "start", "", `http://127.0.0.1:${PORT}/`], { detached: true, shell: false, stdio: "ignore", windowsHide: true }).unref(); }
+    catch (e) { console.warn(`[desktop-ui] could not open JARVIS on the PC: ${e.message}`); return { delivered: 0, launched: false }; }
+  }
+  for (let i = 0; i < 60 && !desktopUiClients.size; i += 1) await new Promise((r) => setTimeout(r, 250));
+  return { delivered: desktopUiClients.size ? pushDesktopUi(list, origin) : 0, launched };
+}
 let memoryStore;
 let memoryExtractor;
 let memoryVNextBoundary;
@@ -363,6 +382,39 @@ let shadowBrowserService;
 let desktopTakeover;
 let pcStream;
 let pcInput;
+let appIcons;
+let pcFacts;
+// Real CPU % for the phone's PC card (os.loadavg() is always 0 on Windows): sampled from
+// os.cpus() time deltas every 2 s, only while someone asked in the last minute.
+const cpuSampler = { last: null, percent: 0, askedAt: 0, timer: null };
+function cpuSample() {
+  const cpus = os.cpus();
+  const now = cpus.reduce((a, c) => { const t = c.times; a.idle += t.idle; a.total += t.user + t.nice + t.sys + t.irq + t.idle; return a; }, { idle: 0, total: 0 });
+  if (cpuSampler.last) {
+    const dt = now.total - cpuSampler.last.total, di = now.idle - cpuSampler.last.idle;
+    if (dt > 0) cpuSampler.percent = Math.max(0, Math.min(100, Math.round((1 - di / dt) * 100)));
+  }
+  cpuSampler.last = now;
+  if (Date.now() - cpuSampler.askedAt > 60000) { clearInterval(cpuSampler.timer); cpuSampler.timer = null; }
+}
+function cpuPercent() {
+  cpuSampler.askedAt = Date.now();
+  if (!cpuSampler.timer) { cpuSample(); cpuSampler.timer = setInterval(cpuSample, 2000); }
+  return cpuSampler.percent;
+}
+// The window in front on the PC — title and process — cached briefly (one PowerShell call).
+let foregroundCache = { at: 0, value: null };
+async function foregroundWindow() {
+  if (Date.now() - foregroundCache.at < 3000) return foregroundCache.value;
+  try {
+    const out = await new Promise((resolve, reject) => {
+      execFile("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", "Add-Type -Name W -Namespace J -MemberDefinition '[DllImport(\"user32.dll\")] public static extern IntPtr GetForegroundWindow(); [DllImport(\"user32.dll\")] public static extern int GetWindowThreadProcessId(IntPtr h, out int pid);'; $h=[J.W]::GetForegroundWindow(); $pid2=0; [J.W]::GetWindowThreadProcessId($h,[ref]$pid2) | Out-Null; $p=Get-Process -Id $pid2 -ErrorAction SilentlyContinue; @{ title=$p.MainWindowTitle; process=$p.ProcessName } | ConvertTo-Json -Compress"], { timeout: 4000, windowsHide: true }, (err, stdout) => err ? reject(err) : resolve(stdout));
+    });
+    const parsed = JSON.parse(String(out || "{}"));
+    foregroundCache = { at: Date.now(), value: { title: String(parsed.title || ""), process: String(parsed.process || "") } };
+  } catch { foregroundCache = { at: Date.now(), value: null }; }
+  return foregroundCache.value;
+}
 let providers;
 let gmailReader;
 let previousCpuSample;
@@ -1207,6 +1259,10 @@ function validateMutationRequest(req, pathname, session) {
     ].filter(Boolean));
     if (!isLocalhost && !allowed.has(origin)) throw Object.assign(new Error("Request origin rejected"), { statusCode: 403 });
   }
+  // WHEP signalling is application/sdp by standard (POST offer, PATCH candidates, DELETE). It is a
+  // non-simple content type, so a cross-site page cannot send it without a CORS preflight the
+  // server never grants — the origin check above is what protects it, not the JSON rule.
+  if (pathname.startsWith("/api/device-mesh/stream/whep")) return;
   const contentType = String(req.headers["content-type"] || "");
   if (!isBodylessDelete(req) && !contentType.includes("application/json")) {
     throw Object.assign(new Error("Mutation requests must use application/json"), { statusCode: 415 });
@@ -12214,11 +12270,10 @@ ${entryText}`;
           ? `[Your JARVIS widget workspace currently holds: ${openList.join(", ")}. These are in-app panels, not desktop apps. If asked what's open, answer from this list. Rearrange with ui_arrange_widgets; move/resize a named widget; close them all by calling ui_close_widget with no id.]`
           : `[No JARVIS widgets are open right now.]`)
       : "";
+    // A phone turn is the SAME request as the laptop bar — no extra framing. `surface` only
+    // decides where the UI actions go (the PC screen), never how the brain reads the message.
     const fromPhone = data.surface === "phone";
-    const phoneFraming = fromPhone
-      ? "[The owner is on their PHONE, away from the PC. This PC is what they mean by 'the laptop', 'my computer', 'the screen'. Requests to open apps or games, switch rooms, type, click, or change what is on screen are about THIS PC; do them with the machine tools (open_app, desktop_control, screen_inspect, ui_open_room, close_app, list_processes) rather than describing them. Keep replies short — they read on a phone.]"
-      : "";
-    const framing = [phoneFraming, widgetAwareness, context].filter(Boolean).join("\n\n");
+    const framing = [widgetAwareness, context].filter(Boolean).join("\n\n");
     const modelPrompt = framing ? `${framing}\n\nUser: ${prompt}` : prompt;
     // Prefer the caller's OWN recent turns (room-scoped memory) when provided —
     // the global conversation log mixes in other rooms/projects (e.g. Kalshi),
@@ -12388,7 +12443,7 @@ ${entryText}`;
       onEvent: (event) => sendEvent({ type: "event", event }),
       // Mid-turn surface updates: the skeleton going up when a render starts, and coming down if
       // the turn ends without one. The client already applies `ui` envelopes as they arrive.
-      onUiActions: (uiActions) => { sendEvent({ type: "ui", uiActions }); if (fromPhone) pushDesktopUi(uiActions); },
+      onUiActions: (uiActions) => { sendEvent({ type: "ui", uiActions }); if (fromPhone) void deliverToDesktop(uiActions); },
       onTextDelta: (text) => {
         streamedText += text;
         sendEvent({ type: "delta", text });
@@ -12423,8 +12478,9 @@ ${entryText}`;
     sendEvent({ type: "event", event: { kind: "receipt", status: "complete", label: "Receipt recorded", detail: receipt.id } });
     sendEvent({ type: "event", event: { kind: "run", status: result.error ? "error" : "complete", label: result.error ? "Completed with limits" : "Response complete", detail: result.model || result.source || "JARVIS" } });
     if (fromPhone && result.uiActions?.length) {
-      const pushed = pushDesktopUi(result.uiActions);
-      sendEvent({ type: "event", event: { kind: "run", status: pushed ? "complete" : "error", label: pushed ? "Sent to the PC screen" : "PC screen not listening", detail: pushed ? `${pushed} action(s)` : "JARVIS is not open on the PC" } });
+      const { delivered, launched } = await deliverToDesktop(result.uiActions);
+      sendEvent({ type: "event", event: { kind: "run", status: delivered ? "complete" : "error", label: delivered ? (launched ? "Opened JARVIS on the PC" : "Sent to the PC screen") : "PC screen did not answer", detail: delivered ? `${delivered} action(s)` : "JARVIS did not open on the PC" } });
+      if (!delivered) result.response = `${String(result.response || "").trim()}\n\nThe PC screen did not pick that up: JARVIS did not open on the PC.`.trim();
     }
     sendEvent({ type: "done", result: { ...result, receipt } });
     res.end();
@@ -13053,11 +13109,105 @@ ${entryText}`;
     return;
   }
 
-  // What the PC can open, asked of the machine (Get-StartApps) — the Command mode's chips.
+  // What the PC can open, asked of the machine (Get-StartApps), each with the icon the Start
+  // menu draws for it. `kind` comes from the entry itself: a steam://rungameid/ launcher is a
+  // game, a package identity (contains "!") is a Store app, anything else is a desktop program.
   if (req.method === "GET" && pathname === "/api/device-mesh/apps") {
     if (!requestTrust.isOwnerSurface(req)) throw Object.assign(new Error("Owner surface required."), { statusCode: 403 });
-    const apps = await capabilityEngine.installedApps();
-    sendJson(res, 200, { ok: true, apps, rooms: capabilityEngine.rooms, desktopListening: desktopUiClients.size > 0 });
+    const raw = await capabilityEngine.installedApps();
+    const apps = raw.map((a) => ({
+      name: a.name, id: a.id,
+      kind: /^steam:\/\/rungameid\//i.test(a.id) ? "game" : a.id.includes("!") ? "store" : /^https?:\/\//i.test(a.id) ? "link" : "desktop",
+      icon: `/api/device-mesh/apps/icon?id=${encodeURIComponent(a.id)}`,
+    }));
+    appIcons.warm(apps.map((a) => a.id));
+    // what was actually opened lately — from the receipts, newest first, unique
+    const recent = [];
+    for (const r of loadReceipts()) {
+      if (r.action !== "capability.open_app") continue;
+      let opened = ""; try { opened = String(JSON.parse(r.result || "{}").opened || ""); } catch { /* not json */ }
+      if (opened && !recent.includes(opened)) recent.push(opened);
+      if (recent.length >= 6) break;
+    }
+    sendJson(res, 200, { ok: true, apps, recent, rooms: capabilityEngine.rooms, desktopListening: desktopUiClients.size > 0 });
+    return;
+  }
+  // The PC card: live numbers from this machine, nothing estimated.
+  if (req.method === "GET" && pathname === "/api/device-mesh/pc") {
+    if (!requestTrust.isOwnerSurface(req)) throw Object.assign(new Error("Owner surface required."), { statusCode: 403 });
+    const [fg, audio, power] = await Promise.all([foregroundWindow(), pcFacts.getAudio(), pcFacts.powerPlan()]);
+    sendJson(res, 200, {
+      ok: true,
+      hostname: os.hostname(),
+      uptimeSeconds: Math.round(os.uptime()),
+      cpuPercent: cpuPercent(),
+      cpuModel: os.cpus()[0]?.model || "",
+      cores: os.cpus().length,
+      memUsedPercent: Math.round((1 - os.freemem() / os.totalmem()) * 100),
+      memTotalGb: Math.round(os.totalmem() / 1073741824),
+      foreground: fg,
+      audio,
+      displays: pcFacts.displays(),
+      power,
+      widgets: capabilityEngine.widgets,
+      desktopListening: desktopUiClients.size > 0,
+      stream: pcStream.status().running,
+      tailnet: [...TAILSCALE_HOSTS][0] || "",
+    });
+    return;
+  }
+  // Real controls on the PC, each one a direct system call with the result read back.
+  if (req.method === "POST" && pathname === "/api/device-mesh/pc/volume") {
+    if (!requestTrust.isOwnerSurface(req)) throw Object.assign(new Error("Owner surface required."), { statusCode: 403 });
+    const data = await parseRequestData(req);
+    const audio = data.mute !== undefined ? await pcFacts.setMute(Boolean(data.mute)) : await pcFacts.setVolume(Number(data.volume) / 100);
+    sendJson(res, 200, { ok: true, audio });
+    return;
+  }
+  if (req.method === "POST" && pathname === "/api/device-mesh/pc/power") {
+    if (!requestTrust.isOwnerSurface(req)) throw Object.assign(new Error("Owner surface required."), { statusCode: 403 });
+    const data = await parseRequestData(req);
+    sendJson(res, 200, { ok: true, power: await pcFacts.setPowerPlan(String(data.id || "")) });
+    return;
+  }
+  // A widget on the PC screen — the same action ui_open_widget produces, delivered to the desktop.
+  if (req.method === "POST" && pathname === "/api/device-mesh/pc/widget") {
+    if (!requestTrust.isOwnerSurface(req)) throw Object.assign(new Error("Owner surface required."), { statusCode: 403 });
+    const data = await parseRequestData(req);
+    const id = String(data.id || "").toLowerCase().slice(0, 40);
+    if (!capabilityEngine.widgets.some((w) => w.id === id)) throw Object.assign(new Error(`No "${id}" widget.`), { statusCode: 400 });
+    const out = await deliverToDesktop([{ type: "open-widget", id, focus: Boolean(data.focus) }], "phone-button");
+    sendJson(res, 200, { ok: out.delivered > 0, ...out, error: out.delivered ? "" : "JARVIS did not open on the PC." });
+    return;
+  }
+  // Tap on a room: the same UI action ui_open_room produces, delivered to the PC screen (opening
+  // JARVIS there first if it is not on screen). No brain call for a button.
+  if (req.method === "POST" && pathname === "/api/device-mesh/pc/room") {
+    if (!requestTrust.isOwnerSurface(req)) throw Object.assign(new Error("Owner surface required."), { statusCode: 403 });
+    const data = await parseRequestData(req);
+    const id = String(data.id || "").toLowerCase().slice(0, 40);
+    if (!capabilityEngine.rooms.some((r) => r.id === id)) throw Object.assign(new Error(`No "${id}" room.`), { statusCode: 400 });
+    const out = await deliverToDesktop([{ type: "open-widget", id, focus: false }], "phone-button");
+    sendJson(res, 200, { ok: out.delivered > 0, ...out, error: out.delivered ? "" : "JARVIS did not open on the PC." });
+    return;
+  }
+  // Tap on an app: launched exactly like the brain's open_app (same executor, same receipt).
+  if (req.method === "POST" && pathname === "/api/device-mesh/apps/open") {
+    if (!requestTrust.isOwnerSurface(req)) throw Object.assign(new Error("Owner surface required."), { statusCode: 403 });
+    const data = await parseRequestData(req);
+    const name = String(data.name || "").slice(0, 120);
+    if (!name) throw Object.assign(new Error("Which app?"), { statusCode: 400 });
+    const result = await capabilityEngine.execute("open_app", { app: name }, { sessionId: req.jarvisSession?.id, source: "phone-control" });
+    sendJson(res, result.ok ? 200 : 400, { ok: Boolean(result.ok), opened: result.result?.opened || "", error: result.ok ? "" : result.error || "Could not open it.", receiptId: result.receipt?.id || "" });
+    return;
+  }
+  if (req.method === "GET" && pathname === "/api/device-mesh/apps/icon") {
+    if (!requestTrust.isOwnerSurface(req)) throw Object.assign(new Error("Owner surface required."), { statusCode: 403 });
+    const id = String(url.searchParams.get("id") || "").slice(0, 400);
+    const file = id ? await appIcons.iconFor(id) : null;
+    if (!file) { res.writeHead(404, { "content-type": "application/json" }); res.end(JSON.stringify({ error: "no icon" })); return; }
+    res.writeHead(200, { "content-type": "image/png", "cache-control": "private, max-age=86400" });
+    fs.createReadStream(file).pipe(res);
     return;
   }
 
@@ -14937,6 +15087,8 @@ windowsBroker = createWindowsBrokerClient(ROOT);
 desktopTakeover = createDesktopTakeoverService({ runtimeDir: RUNTIME_DIR });
 pcStream = createPcStream({ toolsDir: path.join(WORKSPACE_ROOT, "tools"), runtimeDir: RUNTIME_DIR, log: (m) => console.log(`[pc-stream] ${m}`) });
 pcInput = createPcInput({ log: (m) => console.log(`[pc-input] ${m}`) });
+appIcons = createAppIcons({ runtimeDir: RUNTIME_DIR, log: (m) => console.log(`[app-icons] ${m}`) });
+pcFacts = createPcFacts({ log: (m) => console.log(`[pc-facts] ${m}`) });
 try {
   // Managed browser tasks are invisible by default. browser_login_handoff temporarily
   // relaunches this dedicated profile headed, then completeLoginHandoff returns it headless.
@@ -15334,6 +15486,8 @@ function shutdown() {
     try { windowsBroker?.stop?.(); } catch {}
     try { await pcStream?.shutdown?.(); } catch {}
     try { pcInput?.stop?.(); } catch {}
+    try { appIcons?.stop?.(); } catch {}
+    try { pcFacts?.stop?.(); } catch {}
     try { actionFabric?.close?.(); } catch {}
     try { memoryVNextBoundary?.shutdown?.(); } catch {}
     await Promise.allSettled([

@@ -1,6 +1,7 @@
 const { GoogleGenAI } = require("@google/genai");
 const { MODELS, fallbacksFor, candidatesFor, noteModelFailure, noteModelSuccess } = require("./gemini-models");
 const { declarationsForLane, routeExecutionLane } = require("./automation/execution-lane-router");
+const { rawUserMessage } = require("./brain-classify");
 
 function tokenize(value) {
   return [...new Set(String(value || "").toLowerCase().match(/[a-z0-9][a-z0-9_-]{1,}/g) || [])];
@@ -8,7 +9,12 @@ function tokenize(value) {
 
 function createAgentRuntime({ getSettings, toolGateway, codeKnowledge, memoryStore, widgetCatalogText = "", getPresentationCorrections = null }) {
   function classify(prompt, history = [], mode = "chat") {
-    const text = String(prompt || "");
+    // ONLY the owner's own words. Surface framing ("<context>, blank line, User: <message>") used to be
+    // classified along with the message: the phone's framing mentions "games", which made the
+    // sports-schedule rule fire on "open the helix room on the PC", which set fresh + cleared
+    // action, which switched the turn to web grounding and stripped every tool — and the model
+    // then claimed it had opened the room. brain-classify.js already states this rule.
+    const text = rawUserMessage(prompt);
     const lower = text.toLowerCase();
     const recent = history.slice(-8).map((item) => item.text).join(" ").toLowerCase();
     const recentScreenContext = /\b(screen|desktop|laptop|current window|chrome|browser|tab|youtube|canvas|student hub)\b/.test(recent);
@@ -166,7 +172,7 @@ function createAgentRuntime({ getSettings, toolGateway, codeKnowledge, memorySto
   }
 
   function shouldUseSemanticRouter(prompt, baseline, history = []) {
-    const text = String(prompt || "").trim();
+    const text = rawUserMessage(prompt);
     const lower = text.toLowerCase();
     if (!text) return false;
     if (/^(hi|hello|hey|good (morning|afternoon|evening)|thanks|thank you|how are you|what can you do)[.!? ]*$/i.test(text)) return false;

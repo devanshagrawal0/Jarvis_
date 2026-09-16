@@ -72,7 +72,9 @@ function FpsGovernor({ onStepDown }: { onStepDown: () => void }) {
   return null;
 }
 
-export function Stage({ docked, slot, area, state, audioRef }: { docked: boolean; slot: React.RefObject<HTMLElement | null>; area: React.RefObject<HTMLElement | null>; state: CortexState; audioRef: { current: number } }) {
+// `hidden` (any tab but Jarvis): the render loop stops and the canvas is invisible — no GPU work
+// for a globe nobody can see, and nothing painted over the other tabs.
+export function Stage({ docked, hidden = false, slot, area, state, audioRef }: { docked: boolean; hidden?: boolean; slot: React.RefObject<HTMLElement | null>; area: React.RefObject<HTMLElement | null>; state: CortexState; audioRef: { current: number } }) {
   const [geo, setGeo] = useState<any>(null);
   const [level, setLevel] = useState(() => { try { return Math.min(LADDER.length - 1, Number(localStorage.getItem("jarvis.mobile.quality") || 0)); } catch { return 0; } });
   const q = LADDER[level];
@@ -82,8 +84,8 @@ export function Stage({ docked, slot, area, state, audioRef }: { docked: boolean
   useEffect(() => { fetch("/globe-room/countries.geojson").then((r) => (r.ok ? r.json() : null)).then(setGeo).catch(() => setGeo(null)); }, []);
   useEffect(() => { try { localStorage.setItem("jarvis.mobile.quality", String(level)); } catch { /* ignore */ } }, [level]);
   return (
-    <Canvas className="stage" camera={{ fov: 40, position: [0, 0, 8.6], near: 0.1, far: 50 }} gl={{ alpha: true, antialias: false, powerPreference: "high-performance", stencil: false }} dpr={dpr}
-      style={{ position: "fixed", left: 0, top: "var(--vv-top, 0px)", width: "100%", height: "var(--app-h, 100dvh)", zIndex: 20, pointerEvents: "none" }}>
+    <Canvas className="stage" frameloop={hidden ? "never" : "always"} camera={{ fov: 40, position: [0, 0, 8.6], near: 0.1, far: 50 }} gl={{ alpha: true, antialias: false, powerPreference: "high-performance", stencil: false }} dpr={dpr}
+      style={{ position: "fixed", left: 0, top: "var(--stage-top, 0px)", width: "100%", height: "var(--stage-h, 100dvh)", zIndex: 20, pointerEvents: "none", visibility: hidden ? "hidden" : "visible" }}>
       <Suspense fallback={null}>
         <Rig docked={docked} slot={slot} area={area} state={state} audioRef={audioRef} geo={geo} count={q.count} />
       </Suspense>

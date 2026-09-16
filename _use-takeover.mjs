@@ -1,0 +1,41 @@
+import { chromium } from "playwright";
+import fs from "node:fs";
+// Takeover like the owner: Control tab → tap the frame → wait for video → tap the PC → type → PC screenshot as proof.
+const base = process.argv[2] || "https://nucbox-k8-plus.tail6f924a.ts.net";
+const out = "D:/jarvis/_newpc/tk";
+const b = await chromium.launch({ channel: "msedge", headless: true, args: ["--headless=new", "--use-angle=d3d11", "--use-gl=angle", "--enable-gpu", "--ignore-gpu-blocklist", "--autoplay-policy=no-user-gesture-required"] });
+const ctx = await b.newContext({ viewport: { width: 430, height: 932 }, deviceScaleFactor: 2, isMobile: true, hasTouch: true, ignoreHTTPSErrors: true });
+const page = await ctx.newPage();
+const log = (...a) => console.log(new Date().toISOString().slice(11, 19), ...a);
+page.on("console", (m) => { if (m.type() === "error" || /whep|stream|ice|rtc/i.test(m.text())) log("console:", m.type(), m.text().slice(0, 200)); });
+page.on("response", (r) => { if (/stream\//.test(r.url())) log("→", r.status(), r.request().method(), r.url().replace(base, "")); });
+await page.goto(`${base}/app.html`, { waitUntil: "load", timeout: 60000 });
+await page.evaluate(() => localStorage.setItem("jarvis.mobile.coach", "off"));
+await page.reload({ waitUntil: "load" });
+await page.waitForTimeout(2000);
+await page.getByRole("button", { name: "Control" }).click();
+await page.waitForTimeout(3000);
+await page.locator(".frame").click();
+const t0 = Date.now();
+await page.waitForFunction(() => /fps/.test(document.querySelector(".tk-read")?.textContent || ""), null, { timeout: 45000 }).catch(() => log("no fps readout in 45 s"));
+log("after", ((Date.now() - t0) / 1000).toFixed(1), "s → readout:", await page.locator(".tk-read").innerText().catch(() => "?"), "| msg:", (await page.locator(".tk-msg").innerText().catch(() => "")).replace(/\s+/g, " "));
+await page.waitForTimeout(5000);
+log("readout +5s:", await page.locator(".tk-read").innerText().catch(() => "?"));
+log("video:", JSON.stringify(await page.evaluate(() => { const v = document.querySelector(".tk-video"); return { w: v?.videoWidth, h: v?.videoHeight, t: v?.currentTime?.toFixed(1), paused: v?.paused, ready: v?.readyState }; })));
+await page.screenshot({ path: `${out}-1.png` });
+// a tap in the middle, then type through the keyboard, then read the PC's own screen
+const box = await page.locator(".tk-rot").boundingBox();
+await page.touchscreen.tap(box.x + box.width / 2, box.y + box.height / 2);
+await page.waitForTimeout(600);
+await page.locator(".tk-btn[aria-label='Keyboard']").click();
+await page.waitForTimeout(400);
+await page.locator(".tk-kbd").focus();
+await page.keyboard.type("hello from the phone", { delay: 15 });
+await page.waitForTimeout(1200);
+log("readout after input:", await page.locator(".tk-read").innerText().catch(() => "?"), "| input err:", await page.locator(".tk-err").innerText().catch(() => ""));
+const r = await page.evaluate(async () => (await fetch("/api/device-mesh/live/frame?w=1600&q=80")).json());
+if (r.frameUrl) { const buf = await page.evaluate(async (u) => Array.from(new Uint8Array(await (await fetch(u)).arrayBuffer())), r.frameUrl); fs.writeFileSync(`${out}-pc.jpg`, Buffer.from(buf)); log("pc screen saved"); }
+log("stream status:", JSON.stringify((await page.evaluate(async () => (await fetch("/api/device-mesh/stream/status")).json())).stream).slice(0, 300));
+await page.locator(".tk-btn.danger").click();
+await page.waitForTimeout(1500);
+await b.close();

@@ -124,9 +124,12 @@ function createPcStream({ toolsDir, runtimeDir, log = () => {} } = {}) {
     stderrTail = [];
     const args = [
       "-hide_banner", "-nostdin", "-loglevel", "warning", "-stats",
-      "-init_hw_device", "d3d11va",
-      // Desktop Duplication straight into D3D11 textures, scaled on the GPU, never touching RAM
-      "-filter_complex", `ddagrab=framerate=${p.fps}:draw_mouse=1,scale_d3d11=width=${p.width}:height=${p.height}:format=nv12`,
+      "-init_hw_device", "d3d11va", "-filter_threads", "4",
+      // Desktop Duplication → system memory → CPU scale → AMF. Measured 2026-09-16 on the 780M:
+      // the all-GPU path (scale_d3d11, or raw 4K BGRA into h264_amf) is rejected by the AMD driver
+      // ("Could not create the texture (80070057)" / "SubmitInput() failed with error 18"); this
+      // path runs 1080p at 56–58 fps for ~1.6 cores.
+      "-filter_complex", `ddagrab=framerate=${p.fps}:draw_mouse=1,hwdownload,format=bgra,scale=${p.width}:${p.height}:flags=bilinear:threads=4,format=nv12`,
       "-c:v", "h264_amf", "-usage", "ultralowlatency", "-rc", "cbr",
       "-b:v", p.bitrate, "-maxrate", p.bitrate, "-bufsize", p.bufsize,
       "-g", String(p.fps * 2), "-bf", "0", "-profile:v", "main",
@@ -134,7 +137,11 @@ function createPcStream({ toolsDir, runtimeDir, log = () => {} } = {}) {
     ];
     publisher = spawn(ffmpeg, args, { stdio: ["ignore", "ignore", "pipe"], windowsHide: true });
     startedAt = new Date().toISOString();
-    publisher.stderr.on("data", parseStats);
+    // full stderr to disk — the only place ffmpeg explains a failed capture or handshake
+    const ffLog = fs.createWriteStream(path.join(logDir, "ffmpeg.log"), { flags: "a" });
+    ffLog.write(`\n--- ${startedAt} ${args.join(" ")}\n`);
+    publisher.stderr.on("data", (c) => { ffLog.write(c); parseStats(c); });
+    publisher.on("close", () => ffLog.end());
     publisher.on("exit", (code, signal) => {
       const tail = stderrTail.slice(-4).join(" | ");
       if (code && code !== 0) lastError = `ffmpeg exited (${code}): ${tail}`;
