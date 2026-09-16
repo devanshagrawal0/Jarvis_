@@ -15,7 +15,7 @@ await page.reload({ waitUntil: "load" });
 await page.waitForTimeout(2000);
 await page.getByRole("button", { name: "Control" }).click();
 await page.waitForTimeout(3000);
-await page.locator(".frame").click();
+await page.locator(".pchero").click();
 const t0 = Date.now();
 await page.waitForFunction(() => /fps/.test(document.querySelector(".tk-read")?.textContent || ""), null, { timeout: 45000 }).catch(() => log("no fps readout in 45 s"));
 log("after", ((Date.now() - t0) / 1000).toFixed(1), "s → readout:", await page.locator(".tk-read").innerText().catch(() => "?"), "| msg:", (await page.locator(".tk-msg").innerText().catch(() => "")).replace(/\s+/g, " "));

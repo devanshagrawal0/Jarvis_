@@ -36,9 +36,9 @@ function findFfmpeg() {
 // Quality presets are the whole knob the phone gets. Bitrate is what the tailnet (WireGuard over
 // Wi-Fi/LTE) has to carry; resolution is what the AMF encoder has to chew per frame.
 const PRESETS = {
-  best: { width: 1920, height: 1080, fps: 60, bitrate: "12M", bufsize: "1500k" },
-  balanced: { width: 1920, height: 1080, fps: 60, bitrate: "8M", bufsize: "1M" },
-  light: { width: 1280, height: 720, fps: 30, bitrate: "4M", bufsize: "500k" },
+  best: { width: 1920, height: 1080, fps: 60, bitrate: "10M", bufsize: "1500k" },
+  balanced: { width: 1920, height: 1080, fps: 30, bitrate: "6M", bufsize: "1M" },
+  light: { width: 1280, height: 720, fps: 60, bitrate: "5M", bufsize: "700k" },
 };
 
 function probe(port, pathname, method = "GET", timeout = 800) {
@@ -125,14 +125,16 @@ function createPcStream({ toolsDir, runtimeDir, log = () => {} } = {}) {
     const args = [
       "-hide_banner", "-nostdin", "-loglevel", "warning", "-stats",
       "-init_hw_device", "d3d11va", "-filter_threads", "4",
-      // Desktop Duplication → system memory → CPU scale → AMF. Measured 2026-09-16 on the 780M:
-      // the all-GPU path (scale_d3d11, or raw 4K BGRA into h264_amf) is rejected by the AMD driver
-      // ("Could not create the texture (80070057)" / "SubmitInput() failed with error 18"); this
-      // path runs 1080p at 56–58 fps for ~1.6 cores.
-      "-filter_complex", `ddagrab=framerate=${p.fps}:draw_mouse=1,hwdownload,format=bgra,scale=${p.width}:${p.height}:flags=bilinear:threads=4,format=nv12`,
-      "-c:v", "h264_amf", "-usage", "ultralowlatency", "-rc", "cbr",
+      // Desktop Duplication → system memory → CPU scale → libx264. Diagnosed 2026-09-16 end to end:
+      // the AMD GPU encoder (h264_amf) delivered 6 MB of RTP but the WebRTC decoder assembled ZERO
+      // frames (framesReceived 0, endless PLI) — h264_amf's bitstream is not WebRTC-decodable, and
+      // no profile/level/SPS tweak fixed it. libx264 through the identical pipeline decoded the real
+      // desktop at 1920×1080 (framesReceived 189). baseline profile + zerolatency, no B-frames
+      // (WebRTC forbids them). ~1 core at 1080p30, ~all-core headroom to 1080p60.
+      "-filter_complex", `ddagrab=framerate=${p.fps}:draw_mouse=1,hwdownload,format=bgra,scale=${p.width}:${p.height}:flags=bilinear:threads=4,format=yuv420p`,
+      "-c:v", "libx264", "-profile:v", "baseline", "-preset", "ultrafast", "-tune", "zerolatency",
       "-b:v", p.bitrate, "-maxrate", p.bitrate, "-bufsize", p.bufsize,
-      "-g", String(p.fps * 2), "-bf", "0", "-profile:v", "main",
+      "-g", String(p.fps * 2), "-bf", "0", "-bsf:v", "dump_extra=freq=keyframe",
       "-f", "whip", `http://127.0.0.1:${MEDIAMTX_PORT}/${STREAM_PATH}/whip`,
     ];
     publisher = spawn(ffmpeg, args, { stdio: ["ignore", "ignore", "pipe"], windowsHide: true });

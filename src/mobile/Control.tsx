@@ -27,7 +27,7 @@ type PcEvent = { t: "move"; x: number; y: number } | { t: "click"; x: number; y:
 
 const HOTKEYS: Array<[string, string]> = [["Esc", "escape"], ["Tab", "tab"], ["⌫", "backspace"], ["Enter", "enter"], ["↑", "up"], ["↓", "down"], ["←", "left"], ["→", "right"], ["Win", "win"], ["Ctrl+C", "ctrl+c"], ["Ctrl+V", "ctrl+v"], ["Ctrl+Z", "ctrl+z"], ["Alt+Tab", "alt+tab"], ["Alt+F4", "alt+f4"], ["F11", "f11"], ["Space", "space"]];
 const QUALITIES = ["balanced", "best", "light"] as const;
-const QUALITY_LABEL: Record<string, string> = { best: "1080p60 · 12 Mb", balanced: "1080p60 · 8 Mb", light: "720p30 · 4 Mb" };
+const QUALITY_LABEL: Record<string, string> = { best: "1080p60 · 10 Mb", balanced: "1080p30 · 6 Mb", light: "720p60 · 5 Mb" };
 const KIND_LABEL: Record<AppEntry["kind"], string> = { game: "Game", store: "Windows app", desktop: "Desktop app", link: "Link" };
 
 // line icons, 1.6 stroke, currentColor
