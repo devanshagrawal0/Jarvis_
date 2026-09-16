@@ -334,6 +334,16 @@ function Takeover({ onExit }: { onExit: () => void }) {
   const [enc, setEnc] = useState<{ fps: number; bitrateKbps: number } | null>(null);
   const [keys, setKeys] = useState(false);
   const [trackpad, setTrackpad] = useState(false);
+  const [bar, setBar] = useState(true);
+  // the controls bar auto-hides ~5 s after it appears so the top of the PC screen is reachable;
+  // showing it (the grip) re-arms the timer. It stays up while the keyboard is open.
+  useEffect(() => {
+    if (!bar || keys) return;
+    const t = window.setTimeout(() => setBar(false), 5000);
+    return () => window.clearTimeout(t);
+  }, [bar, keys]);
+  // show the controls the moment the video appears (then they auto-hide), not during the black wait
+  useEffect(() => { if (phase === "live") setBar(true); }, [phase]);
   const [quality, setQuality] = useState<(typeof QUALITIES)[number]>(() => (localStorage.getItem("jarvis.mobile.streamq") as any) || "balanced");
   const [landscapeNative, setLandscapeNative] = useState(window.innerWidth > window.innerHeight);
   const [rtt, setRtt] = useState(0);
@@ -525,16 +535,18 @@ function Takeover({ onExit }: { onExit: () => void }) {
     : msg;
 
   return createPortal(
-    <div className={`tk ${rotated ? "rot" : "flat"} ${keys ? "keys" : ""}`}>
+    <div className={`tk ${rotated ? "rot" : "flat"} ${keys ? "keys" : ""} ${bar ? "bar-on" : "bar-off"}`}>
       <div className="tk-rot" onTouchStart={onTouchStart} onTouchMove={onTouchMove} onTouchEnd={onTouchEnd} onTouchCancel={onTouchEnd} onContextMenu={(e) => e.preventDefault()}>
         <video ref={videoRef} className="tk-video" autoPlay playsInline muted style={{ transform: `translate(${zoom.x}px, ${zoom.y}px) scale(${zoom.s})` }} />
         {phase !== "live" ? <div className={`tk-msg ${phase}`}>{phase === "starting" ? <i className="spin" /> : null}<span>{msg}</span>{phase === "error" ? <button type="button" className="btn small" onClick={() => setAttempt((a) => a + 1)}>Retry</button> : null}</div> : null}
-        <div className="tk-bar">
+        {/* the bar auto-hides so the top of the PC screen is tappable; a tiny grip brings it back */}
+        <button type="button" className="tk-grip" onClick={() => setBar((b) => !b)} aria-label={bar ? "Hide controls" : "Show controls"}><i /></button>
+        <div className="tk-bar" hidden={!bar}>
           <span className="tk-read mono">{readout}{enc && phase === "live" ? ` · enc ${enc.fps}` : ""}</span>
           {inputErr ? <span className="tk-err">{inputErr}</span> : null}
           {zoom.s > 1 ? <button type="button" className="tk-btn" onClick={() => setZoom({ s: 1, x: 0, y: 0 })}>1×</button> : null}
           <button type="button" className={`tk-btn ico ${trackpad ? "on" : ""}`} onClick={() => setTrackpad((t) => !t)} aria-label="Trackpad mode">{I.trackpad}</button>
-          <button type="button" className={`tk-btn ico ${keys ? "on" : ""}`} onClick={() => setKeys((k) => !k)} aria-label="Keyboard">{I.keyboard}</button>
+          <button type="button" className={`tk-btn ico ${keys ? "on" : ""}`} onClick={() => { setKeys((k) => !k); setBar(true); }} aria-label="Keyboard">{I.keyboard}</button>
           <button type="button" className="tk-btn" onClick={cycleQuality} aria-label="Quality">{QUALITY_LABEL[quality]}</button>
           <button type="button" className="tk-btn danger" onClick={onExit}>Stop</button>
         </div>

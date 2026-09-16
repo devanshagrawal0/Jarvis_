@@ -114,6 +114,11 @@ function createPcStream({ toolsDir, runtimeDir, log = () => {} } = {}) {
   async function start({ quality = "balanced" } = {}) {
     lastViewerAt = Date.now();
     if (publisher) { armIdleStop(); return status(); }
+    // Wait for any in-flight stop to finish first. ddagrab (Desktop Duplication) allows only a
+    // limited number of live capturers, so spawning a new ffmpeg while the previous one is still
+    // dying makes BOTH run at ~0.01x and produce no frames — the "did not start streaming" flake.
+    if (stoppingPromise) { try { await stoppingPromise; } catch { /* it's gone either way */ } }
+    if (publisher) { armIdleStop(); return status(); }
     const ffmpeg = findFfmpeg();
     if (!ffmpeg) throw new Error("ffmpeg is not installed on the PC");
     await ensureMediamtx();
@@ -151,27 +156,39 @@ function createPcStream({ toolsDir, runtimeDir, log = () => {} } = {}) {
       publisher = null;
       clearTimeout(idleTimer);
     });
-    // Give the encoder a moment to negotiate WHIP; report the truth either way.
-    for (let i = 0; i < 40; i += 1) {
+    // Ready = MediaMTX has the path AND ffmpeg is actually encoding real frames. A stalled ddagrab
+    // still registers the path (so streamReady alone passes) but emits ~1 frame, so also require the
+    // frame counter to advance. If neither happens in ~8 s, kill it and fail loudly.
+    let ready = false;
+    for (let i = 0; i < 55; i += 1) {
       await new Promise((r) => setTimeout(r, 150));
       if (!publisher) break;
-      if (await streamReady()) break;
+      if (stats.frame > 15 && (await streamReady())) { ready = true; break; }
+    }
+    if (!ready && publisher) {
+      const stalled = stats.frame <= 15;
+      log(`start failed (frames=${stats.frame}) — killing`);
+      await stop("stalled-start");
+      throw new Error(stalled ? "The screen encoder stalled (another capture may be running). Try again." : "The stream did not come online.");
     }
     armIdleStop();
     return status();
   }
 
+  let stoppingPromise = null;
   async function stop(reason = "requested") {
     clearTimeout(idleTimer);
     const child = publisher;
     if (!child) return status();
     log(`stopping publisher (${reason})`);
-    await new Promise((resolve) => {
+    stoppingPromise = new Promise((resolve) => {
       const done = () => resolve();
       child.once("exit", done);
       try { child.kill(); } catch { done(); }
       setTimeout(() => { try { child.kill("SIGKILL"); } catch { /* gone */ } done(); }, 2500);
     });
+    await stoppingPromise;
+    stoppingPromise = null;
     publisher = null;
     return status();
   }

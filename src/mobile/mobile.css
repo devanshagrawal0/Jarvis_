@@ -400,9 +400,16 @@ html.kbd .tk.flat .tk-rot { height: var(--app-h, 100dvh); }
 .spin { width: 22px; height: 22px; border-radius: 50%; border: 2px solid var(--surface-4); border-top-color: var(--accent); animation: spin 900ms linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
 /* the bar sits along the top edge of the (rotated) frame: readout left, actions right */
-.tk-bar { position: absolute; left: 0; right: 0; top: 0; display: flex; align-items: center; gap: 6px; padding: 8px 10px; background: linear-gradient(rgba(0, 0, 0, .7), rgba(0, 0, 0, 0)); pointer-events: none; }
+.tk-bar { position: absolute; left: 0; right: 0; top: 0; display: flex; align-items: center; gap: 6px; padding: 8px 10px 20px; background: linear-gradient(rgba(0, 0, 0, .72), rgba(0, 0, 0, 0)); pointer-events: none; animation: tk-bar-in 180ms var(--ease-out) both; }
 .tk-bar > * { pointer-events: auto; }
-.tk-read { flex: 1; min-width: 0; font-size: 11px; line-height: 14px; color: var(--text-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tk-bar[hidden] { display: none; }
+/* the readout is info only — it must never intercept a tap meant for the PC screen */
+.tk-read { flex: 1; min-width: 0; font-size: 11px; line-height: 14px; color: var(--text-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; pointer-events: none; }
+@keyframes tk-bar-in { from { opacity: 0; transform: translateY(-8px); } to { opacity: 1; transform: none; } }
+/* a small grip at the top edge to toggle the bar; tiny footprint so it barely covers the screen */
+.tk-grip { position: absolute; left: 50%; top: 0; transform: translateX(-50%); width: 64px; height: 22px; display: grid; place-items: center; z-index: 2; }
+.tk-grip i { width: 40px; height: 4px; border-radius: 2px; background: rgba(255, 255, 255, .5); box-shadow: 0 1px 3px rgba(0, 0, 0, .6); }
+.tk.bar-on .tk-grip i { background: rgba(255, 255, 255, .3); }
 .tk-err { font-size: 11px; line-height: 14px; color: #ff8a94; white-space: nowrap; }
 .tk-btn { height: 30px; padding: 0 12px; border-radius: 15px; background: rgba(255, 255, 255, .12); -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px); font-size: 12px; line-height: 16px; font-weight: 600; color: var(--text-1); }
 .tk-btn.on { background: var(--accent); color: #000; }

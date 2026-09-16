@@ -32,8 +32,18 @@ export class WhepPlayer {
       const t = window.setTimeout(done, 1200);
       pc.onicegatheringstatechange = () => { if (pc.iceGatheringState === "complete") { window.clearTimeout(t); done(); } };
     });
-    const res = await fetch(this.whepUrl, { method: "POST", headers: { "content-type": "application/sdp", ...authHeaders() }, body: pc.localDescription?.sdp || "" });
-    if (res.status === 404) throw new Error("The PC is not streaming yet.");
+    // The encoder takes a second or two to come online in MediaMTX after the server starts it, so a
+    // 404 here just means "not ready yet" — retry for a few seconds rather than giving up (that race
+    // is what showed "The PC is not streaming yet" on the phone even though ffmpeg was publishing).
+    const body = pc.localDescription?.sdp || "";
+    let res: Response | null = null;
+    for (let i = 0; i < 20; i += 1) {
+      res = await fetch(this.whepUrl, { method: "POST", headers: { "content-type": "application/sdp", ...authHeaders() }, body });
+      if (res.status !== 404) break;
+      this.onState("starting");
+      await new Promise((r) => setTimeout(r, 600));
+    }
+    if (!res || res.status === 404) throw new Error("The PC did not start streaming. Try again.");
     if (res.status !== 201) throw new Error(`Stream handshake failed (${res.status}) ${(await res.text()).slice(0, 120)}`);
     this.resource = res.headers.get("location") || "";
     await pc.setRemoteDescription({ type: "answer", sdp: await res.text() });
