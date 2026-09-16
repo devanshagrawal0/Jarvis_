@@ -86,6 +86,7 @@ const { createPcInput } = require("./server/pc-input");
 const { createAppIcons } = require("./server/app-icons");
 const { createPcFacts } = require("./server/pc-facts");
 const { createPcFiles } = require("./server/pc-files");
+const { createPcUnlock } = require("./server/pc-unlock");
 const { DEFAULT_AUTONOMY_PROFILE, normalizeAutonomyProfile } = require("./server/autonomy-policy");
 const { createGoogleProvider } = require("./server/providers/google-provider");
 const { createCanvasProvider } = require("./server/providers/canvas-provider");
@@ -386,6 +387,7 @@ let pcInput;
 let appIcons;
 let pcFacts;
 let pcFiles;
+let pcUnlock;
 // Real CPU % for the phone's PC card (os.loadavg() is always 0 on Windows): sampled from
 // os.cpus() time deltas every 2 s, only while someone asked in the last minute.
 const cpuSampler = { last: null, percent: 0, askedAt: 0, timer: null };
@@ -13175,6 +13177,26 @@ ${entryText}`;
     sendJson(res, 200, { ok: true, power: await pcFacts.setPowerPlan(String(data.id || "")) });
     return;
   }
+  // ── Face-ID PC unlock, step 1: phone proves owner via WebAuthn (Face ID), server raises a
+  //    short-lived approval flag. No lock-screen code, no stored Windows password yet. ───────────
+  if (pathname.startsWith("/api/device-mesh/unlock")) {
+    // /pending is what the lock-screen Credential Provider will poll (step 2); everything else is
+    // owner surface. The rpID/origin come from the request so it works on whatever host is used.
+    const host = String(req.headers["x-forwarded-host"] || req.headers.host || "").split(":")[0].toLowerCase();
+    const ctx = { rpID: host, origin: `https://${host}` };
+    if (req.method === "GET" && pathname === "/api/device-mesh/unlock/pending") { sendJson(res, 200, pcUnlock.pending()); return; }
+    if (!requestTrust.isOwnerSurface(req)) throw Object.assign(new Error("Owner surface required."), { statusCode: 403 });
+    try {
+      if (req.method === "GET" && pathname === "/api/device-mesh/unlock/state") { sendJson(res, 200, pcUnlock.state()); return; }
+      if (req.method === "POST" && pathname === "/api/device-mesh/unlock/enroll/options") { sendJson(res, 200, await pcUnlock.enrollOptions(ctx)); return; }
+      if (req.method === "POST" && pathname === "/api/device-mesh/unlock/enroll/verify") { const d = await parseRequestData(req); sendJson(res, 200, await pcUnlock.enrollVerify(d.challengeId, d.response, ctx)); return; }
+      if (req.method === "POST" && pathname === "/api/device-mesh/unlock/auth/options") { sendJson(res, 200, await pcUnlock.authOptions(ctx)); return; }
+      if (req.method === "POST" && pathname === "/api/device-mesh/unlock/auth/verify") { const d = await parseRequestData(req); sendJson(res, 200, await pcUnlock.authVerify(d.challengeId, d.response, ctx)); return; }
+      if (req.method === "POST" && pathname === "/api/device-mesh/unlock/consume") { sendJson(res, 200, pcUnlock.consume()); return; }
+      if (req.method === "POST" && pathname === "/api/device-mesh/unlock/reset") { sendJson(res, 200, pcUnlock.reset()); return; }
+    } catch (e) { sendJson(res, e.statusCode || 400, { error: e.message }); return; }
+  }
+
   // ── Phone Files tab: browse THIS PC (owner surface only) ──────────────────────────────────
   if (pathname.startsWith("/api/device-mesh/fs")) {
     if (!requestTrust.isOwnerSurface(req)) throw Object.assign(new Error("Owner surface required."), { statusCode: 403 });
@@ -15166,6 +15188,7 @@ pcInput = createPcInput({ log: (m) => console.log(`[pc-input] ${m}`) });
 appIcons = createAppIcons({ runtimeDir: RUNTIME_DIR, log: (m) => console.log(`[app-icons] ${m}`) });
 pcFacts = createPcFacts({ log: (m) => console.log(`[pc-facts] ${m}`) });
 pcFiles = createPcFiles({ log: (m) => console.log(`[pc-files] ${m}`) });
+pcUnlock = createPcUnlock({ runtimeDir: RUNTIME_DIR, log: (m) => console.log(`[pc-unlock] ${m}`) });
 try {
   // Managed browser tasks are invisible by default. browser_login_handoff temporarily
   // relaunches this dedicated profile headed, then completeLoginHandoff returns it headless.

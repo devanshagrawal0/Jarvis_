@@ -4,6 +4,7 @@ import { api, post } from "../api";
 import { Thread } from "./Thread";
 import { useThread } from "./useThread";
 import { WhepPlayer, type StreamStats } from "./whep";
+import { UnlockPc } from "./UnlockPc";
 import type { Strength } from "./brain";
 
 // Control — the PC from the phone. Two modes:
@@ -210,6 +211,9 @@ function Command({ active, dock, strength, onTakeover }: { active: boolean; dock
           <span><small>{display ? "DISP" : "PING"}</small><b className="mono">{display ? `${display.width}×${display.height}` : ping ? `${ping}ms` : "—"}</b></span>
         </div>
       </div>
+
+      {/* ── unlock the PC with Face ID ── */}
+      <UnlockPc />
 
       {/* ── sections ── */}
       <div className="secgrid">
