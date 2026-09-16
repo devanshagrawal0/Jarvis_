@@ -448,6 +448,17 @@ export function JarvisUI() {
     const r = apexOpen ? "apex" : helixOpen ? "helix" : arbiterOpen ? "arbiter" : "";
     try { localStorage.setItem("jarvis.activeRoom", r); } catch { /* ignore */ }
   }, [apexOpen, helixOpen, arbiterOpen]);
+  // Actions JARVIS was asked to do to THIS screen from another surface (the phone's Command mode)
+  // arrive over a server-sent stream and take the same dispatch path as the desktop's own turns.
+  // EventSource reconnects on its own when the backend restarts.
+  useEffect(() => {
+    let es: EventSource | null = null;
+    try { es = new EventSource("/api/ui/events"); } catch { return; }
+    es.onmessage = (ev) => {
+      try { const d = JSON.parse(ev.data); if (d?.type === "ui" && Array.isArray(d.uiActions)) dispatchUiActions(d.uiActions); } catch { /* malformed frame */ }
+    };
+    return () => { es?.close(); };
+  }, []);
   const [voiceMode, setVoiceMode] = useState<"dictate" | "live">("dictate");
   const [liveVoiceState, setLiveVoiceState] = useState<"idle" | "connecting" | "listening" | "speaking" | "error">("idle");
   const liveVoiceRef = useRef<LiveVoiceController | null>(null);

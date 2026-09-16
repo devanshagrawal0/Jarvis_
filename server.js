@@ -81,6 +81,8 @@ const { createWindowsBrokerClient } = require("./server/windows-broker-client");
 const { createActionFabric, createJarvisActionSession, handleActionFabricRequest } = require("./server/action-fabric");
 const { createBrowserAutomationService } = require("./server/browser-service");
 const { createDesktopTakeoverService } = require("./server/desktop-takeover-service");
+const { createPcStream } = require("./server/pc-stream");
+const { createPcInput } = require("./server/pc-input");
 const { DEFAULT_AUTONOMY_PROFILE, normalizeAutonomyProfile } = require("./server/autonomy-policy");
 const { createGoogleProvider } = require("./server/providers/google-provider");
 const { createCanvasProvider } = require("./server/providers/canvas-provider");
@@ -303,6 +305,16 @@ const MIME_TYPES = {
 let commandCount = 0;
 let lastIntent = "standby";
 let capabilityEngine;
+// Desktop UI subscribers (SSE). UI actions produced by a turn that came from another surface —
+// the phone's Command mode — are pushed here so the PC's screen actually changes.
+const desktopUiClients = new Set();
+function pushDesktopUi(uiActions, origin = "phone") {
+  const list = Array.isArray(uiActions) ? uiActions.filter(Boolean) : [];
+  if (!list.length || !desktopUiClients.size) return 0;
+  const frame = `data: ${JSON.stringify({ type: "ui", uiActions: list, origin, at: new Date().toISOString() })}\n\n`;
+  for (const client of desktopUiClients) { try { client.write(frame); } catch { desktopUiClients.delete(client); } }
+  return list.length;
+}
 let memoryStore;
 let memoryExtractor;
 let memoryVNextBoundary;
@@ -349,6 +361,8 @@ let actionFabric;
 let sharedBrowserService;
 let shadowBrowserService;
 let desktopTakeover;
+let pcStream;
+let pcInput;
 let providers;
 let gmailReader;
 let previousCpuSample;
@@ -12200,7 +12214,11 @@ ${entryText}`;
           ? `[Your JARVIS widget workspace currently holds: ${openList.join(", ")}. These are in-app panels, not desktop apps. If asked what's open, answer from this list. Rearrange with ui_arrange_widgets; move/resize a named widget; close them all by calling ui_close_widget with no id.]`
           : `[No JARVIS widgets are open right now.]`)
       : "";
-    const framing = [widgetAwareness, context].filter(Boolean).join("\n\n");
+    const fromPhone = data.surface === "phone";
+    const phoneFraming = fromPhone
+      ? "[The owner is on their PHONE, away from the PC. This PC is what they mean by 'the laptop', 'my computer', 'the screen'. Requests to open apps or games, switch rooms, type, click, or change what is on screen are about THIS PC; do them with the machine tools (open_app, desktop_control, screen_inspect, ui_open_room, close_app, list_processes) rather than describing them. Keep replies short — they read on a phone.]"
+      : "";
+    const framing = [phoneFraming, widgetAwareness, context].filter(Boolean).join("\n\n");
     const modelPrompt = framing ? `${framing}\n\nUser: ${prompt}` : prompt;
     // Prefer the caller's OWN recent turns (room-scoped memory) when provided —
     // the global conversation log mixes in other rooms/projects (e.g. Kalshi),
@@ -12370,7 +12388,7 @@ ${entryText}`;
       onEvent: (event) => sendEvent({ type: "event", event }),
       // Mid-turn surface updates: the skeleton going up when a render starts, and coming down if
       // the turn ends without one. The client already applies `ui` envelopes as they arrive.
-      onUiActions: (uiActions) => sendEvent({ type: "ui", uiActions }),
+      onUiActions: (uiActions) => { sendEvent({ type: "ui", uiActions }); if (fromPhone) pushDesktopUi(uiActions); },
       onTextDelta: (text) => {
         streamedText += text;
         sendEvent({ type: "delta", text });
@@ -12404,6 +12422,10 @@ ${entryText}`;
     if (result.pendingConfirmations?.length) sendEvent({ type: "event", event: { kind: "approval", status: "approval", label: "Owner approval required", detail: `${result.pendingConfirmations.length} action(s) waiting` } });
     sendEvent({ type: "event", event: { kind: "receipt", status: "complete", label: "Receipt recorded", detail: receipt.id } });
     sendEvent({ type: "event", event: { kind: "run", status: result.error ? "error" : "complete", label: result.error ? "Completed with limits" : "Response complete", detail: result.model || result.source || "JARVIS" } });
+    if (fromPhone && result.uiActions?.length) {
+      const pushed = pushDesktopUi(result.uiActions);
+      sendEvent({ type: "event", event: { kind: "run", status: pushed ? "complete" : "error", label: pushed ? "Sent to the PC screen" : "PC screen not listening", detail: pushed ? `${pushed} action(s)` : "JARVIS is not open on the PC" } });
+    }
     sendEvent({ type: "done", result: { ...result, receipt } });
     res.end();
     return;
@@ -13019,6 +13041,26 @@ ${entryText}`;
     return;
   }
 
+  // The desktop UI listens here for actions that other surfaces (the phone) ask JARVIS to do to
+  // THIS screen. Owner surface only: the desktop itself is loopback.
+  if (req.method === "GET" && pathname === "/api/ui/events") {
+    if (!requestTrust.isOwnerSurface(req)) throw Object.assign(new Error("Owner surface required."), { statusCode: 403 });
+    res.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-store", connection: "keep-alive", "x-accel-buffering": "no" });
+    res.write(`: connected\n\n`);
+    desktopUiClients.add(res);
+    const ping = setInterval(() => { try { res.write(`: ping\n\n`); } catch { /* closing */ } }, 25000);
+    req.on("close", () => { clearInterval(ping); desktopUiClients.delete(res); });
+    return;
+  }
+
+  // What the PC can open, asked of the machine (Get-StartApps) — the Command mode's chips.
+  if (req.method === "GET" && pathname === "/api/device-mesh/apps") {
+    if (!requestTrust.isOwnerSurface(req)) throw Object.assign(new Error("Owner surface required."), { statusCode: 403 });
+    const apps = await capabilityEngine.installedApps();
+    sendJson(res, 200, { ok: true, apps, rooms: capabilityEngine.rooms, desktopListening: desktopUiClients.size > 0 });
+    return;
+  }
+
   if (req.method === "GET" && pathname === "/api/device-mesh/status") {
     sendJson(res, 200, meshStatusPayload(req.jarvisDevice));
     return;
@@ -13264,6 +13306,60 @@ ${entryText}`;
   if (req.method === "GET" && pathname === "/api/device-mesh/memory") {
     sendJson(res, 200, neuralVault.meshMemorySummary());
     return;
+  }
+
+  // Phone takeover: the desktop as real-time WebRTC video (server/pc-stream.js). Same permission
+  // as the polled live screen; only the owner surface (tailnet owner / local) may start it.
+  if (pathname.startsWith("/api/device-mesh/stream/")) {
+    if (req.jarvisDevice && !req.jarvisDevice.permissions?.requestLaptopScreen) {
+      throw Object.assign(new Error("This device is not allowed to view the laptop screen."), { statusCode: 403 });
+    }
+    if (!requestTrust.isOwnerSurface(req)) throw Object.assign(new Error("The PC stream is only available to the owner."), { statusCode: 403 });
+    if (req.method === "POST" && pathname === "/api/device-mesh/stream/start") {
+      const data = await parseRequestData(req);
+      const state = publicMeshRuntimeState();
+      if (state.emergencyStopped) saveMeshRuntimeState({ emergencyStopped: false });
+      const stream = await pcStream.start({ quality: data.quality });
+      void pcInput.warm(); // compile the SendInput helper now, not on the first tap
+      neuralVault.recordMeshStreamEvent({ sessionId: state.liveScreen?.sessionId, deviceId: meshActor(req).id, streamType: "screen", action: "webrtc_start", quality: { preset: stream.preset } });
+      sendJson(res, stream.running ? 200 : 503, { ok: stream.running, stream, whep: "/api/device-mesh/stream/whep", input: pcInput.status() });
+      return;
+    }
+    // Takeover input: {events:[{t:"click",x,y,b,n} | {t:"move",x,y} | {t:"down"|"up",b} | {t:"wheel",x,y,dy,dx} | {t:"key",k,d?} | {t:"text",s}]}
+    // — normalized 0..1 over the primary monitor, executed in order by the persistent agent.
+    if (req.method === "POST" && pathname === "/api/device-mesh/stream/input") {
+      const { actor, state } = requireControlBaton(req, "stream_input");
+      const data = await parseRequestData(req);
+      const events = (Array.isArray(data.events) ? data.events : [data]).filter((e) => e && typeof e.t === "string").slice(0, 200);
+      if (!events.length) throw Object.assign(new Error("No input events."), { statusCode: 400 });
+      pcStream.viewerSeen();
+      const results = await pcInput.sendMany(events);
+      const failed = results.filter((r) => !r.ok);
+      neuralVault?.recordMeshControlEvent?.({
+        sessionId: state.liveScreen?.sessionId, sourceDeviceId: actor.id, targetDeviceId: "local",
+        eventType: `stream_${events[0].t}`, event: { count: events.length, first: events[0] }, accepted: failed.length === 0,
+        rejectedReason: failed[0]?.error || "", metadata: { failed: failed.length },
+      });
+      saveMeshRuntimeState({ controlBaton: { lastEventAt: isoNow() } });
+      sendJson(res, 200, { ok: failed.length === 0, sent: events.length, failed: failed.length, error: failed[0]?.error || "" });
+      return;
+    }
+    if (req.method === "POST" && pathname === "/api/device-mesh/stream/stop") {
+      pcInput.stop();
+      const stream = await pcStream.stop("phone");
+      neuralVault.recordMeshStreamEvent({ sessionId: publicMeshRuntimeState().liveScreen?.sessionId, deviceId: meshActor(req).id, streamType: "screen", action: "webrtc_stop" });
+      sendJson(res, 200, { ok: true, stream });
+      return;
+    }
+    if (req.method === "GET" && pathname === "/api/device-mesh/stream/status") {
+      if (url.searchParams.get("viewer") === "1") pcStream.viewerSeen();
+      sendJson(res, 200, { ok: true, stream: pcStream.status(), whep: "/api/device-mesh/stream/whep" });
+      return;
+    }
+    if (pathname === "/api/device-mesh/stream/whep" || pathname.startsWith("/api/device-mesh/stream/whep/")) {
+      pcStream.proxyWhep(req, res, { subpath: pathname.slice("/api/device-mesh/stream/whep".length), publicBase: "/api/device-mesh/stream/whep" });
+      return;
+    }
   }
 
   if (req.method === "POST" && pathname === "/api/device-mesh/live/start") {
@@ -13559,6 +13655,8 @@ ${entryText}`;
       accepted: true,
       metadata: { reason: "Device Mesh emergency stop" },
     });
+    try { await pcStream?.stop?.("emergency"); } catch { /* the encoder may already be gone */ }
+    try { pcInput?.stop?.(); } catch { /* likewise */ }
     sendJson(res, 200, { ok: true, mesh: meshStatusPayload(req.jarvisDevice), emergency: emergencyStop("Device Mesh emergency stop") });
     return;
   }
@@ -14837,6 +14935,8 @@ codeKnowledge = createCodeKnowledge({
 });
 windowsBroker = createWindowsBrokerClient(ROOT);
 desktopTakeover = createDesktopTakeoverService({ runtimeDir: RUNTIME_DIR });
+pcStream = createPcStream({ toolsDir: path.join(WORKSPACE_ROOT, "tools"), runtimeDir: RUNTIME_DIR, log: (m) => console.log(`[pc-stream] ${m}`) });
+pcInput = createPcInput({ log: (m) => console.log(`[pc-input] ${m}`) });
 try {
   // Managed browser tasks are invisible by default. browser_login_handoff temporarily
   // relaunches this dedicated profile headed, then completeLoginHandoff returns it headless.
@@ -15232,6 +15332,8 @@ function shutdown() {
     try { memoryManager?.stop?.(); } catch {}
     try { apexIngest?.stop?.(); } catch {}
     try { windowsBroker?.stop?.(); } catch {}
+    try { await pcStream?.shutdown?.(); } catch {}
+    try { pcInput?.stop?.(); } catch {}
     try { actionFabric?.close?.(); } catch {}
     try { memoryVNextBoundary?.shutdown?.(); } catch {}
     await Promise.allSettled([

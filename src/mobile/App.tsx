@@ -4,7 +4,8 @@ import { Thread } from "./Thread";
 import { Control } from "./Control";
 import { useVoice } from "./voice";
 import type { CortexState } from "./Cortex";
-import { askJarvis, bootSession, fetchProfile, loadThread, prepareFiles, resolveClientContext, saveThread, STRENGTH_LABEL, type Health, type Profile, type Strength, type Turn } from "./brain";
+import { useThread } from "./useThread";
+import { bootSession, fetchProfile, resolveClientContext, STRENGTH_LABEL, type Health, type Profile, type Strength, type Turn } from "./brain";
 
 // Batch 2 (plan v2 §2/§3): the shell around the centrepiece — thin top bar, hairline composer,
 // tab strip, and the thread. The globe docks into the top bar the moment a conversation starts.
@@ -29,7 +30,6 @@ const uid = () => (crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Ma
 
 export function MobileApp() {
   const [tab, setTab] = useState<Tab>("jarvis");
-  const [turns, setTurns] = useState<Turn[]>(() => loadThread());
   const [text, setText] = useState("");
   const [files, setFiles] = useState<File[]>([]);
   // Same default as the desktop bar (Eco = minimal thinking). "Balanced" was costing 2–4 s of
@@ -38,8 +38,9 @@ export function MobileApp() {
   const [deep, setDeep] = useState(false);
   const [health, setHealth] = useState<Health | null | undefined>(undefined);
   const [profile, setProfile] = useState<Profile | null>(null);
-  const [busy, setBusy] = useState(false);
-  const [note, setNote] = useState("");
+  const thread = useThread("jarvis.mobile.thread.v2", { strength, deep, onDone: () => { void fetchProfile().then(setProfile); } });
+  const { turns, setTurns, busy, note, setNote } = thread;
+  const [ctlDock, setCtlDock] = useState<HTMLElement | null>(null);
   // Install coach (plan v1 §2.5): only when the page is NOT already running as an installed app,
   // and only until dismissed once. iOS has no install prompt API — the Share sheet is the way.
   const [coach, setCoach] = useState(() => {
@@ -54,7 +55,6 @@ export function MobileApp() {
   const fileRef = useRef<HTMLInputElement>(null);
   const dockSlot = useRef<HTMLDivElement>(null);
   const heroArea = useRef<HTMLDivElement>(null);
-  const abortRef = useRef<{ cancelled: boolean } | null>(null);
 
   // Voice: the transcripts land in the thread as they are heard, one user turn and one model turn
   // per spoken exchange, so the conversation stays the single record.
@@ -92,42 +92,14 @@ export function MobileApp() {
     const t = window.setInterval(async () => { const h = await bootSession(); if (alive) setHealth(h); }, 30000);
     return () => { alive = false; window.clearInterval(t); };
   }, []);
-  useEffect(() => { saveThread(turns); }, [turns]);
   useEffect(() => { try { localStorage.setItem("jarvis.mobile.strength", strength); } catch { /* ignore */ } }, [strength]);
 
   const [multi, setMulti] = useState(false);
   const grow = useCallback(() => { const el = inputRef.current; if (!el) return; el.style.height = "0px"; const h = Math.min(el.scrollHeight, 156); el.style.height = `${h}px`; setMulti(h > 44); }, []);
   useEffect(grow, [text, grow]);
 
-  const send = useCallback(async (raw: string, attached: File[] = []) => {
-    const prompt = raw.trim();
-    if ((!prompt && !attached.length) || busy) return;
-    setNote(""); setBusy(true);
-    let prepared: Awaited<ReturnType<typeof prepareFiles>> = [];
-    try { prepared = await prepareFiles(attached); } catch (e) { setNote(e instanceof Error ? e.message : String(e)); setBusy(false); return; }
-    const image = prepared.find((f) => f.dataUrl && f.mimeType.startsWith("image/"))?.dataUrl;
-    const userTurn: Turn = { id: uid(), role: "user", text: prompt, at: new Date().toISOString(), image, files: prepared.filter((f) => !(f.dataUrl && f.mimeType.startsWith("image/"))).map((f) => f.name) };
-    const modelTurn: Turn = { id: uid(), role: "model", text: "", at: new Date().toISOString(), streaming: true, activity: [] };
-    const history = turns;
-    setTurns((t) => [...t, userTurn, modelTurn]); setText(""); setFiles([]);
-    const token = { cancelled: false }; abortRef.current = token;
-    const patch = (fn: (m: Turn) => Turn) => setTurns((t) => t.map((x) => (x.id === modelTurn.id ? fn(x) : x)));
-    try {
-      const result = await askJarvis(prompt || "(see attachment)", history, { strength, deepResearch: deep, files: prepared }, {
-        onDelta: (d) => { if (!token.cancelled) patch((m) => ({ ...m, text: m.text + d, phase: undefined })); },
-        onPhase: (phase, message) => { if (!token.cancelled) patch((m) => ({ ...m, phase: message || phase })); },
-        onEvent: (ev) => { if (!token.cancelled) patch((m) => ({ ...m, activity: [...(m.activity || []), ev].slice(-24) })); },
-        onUi: (actions) => { if (!token.cancelled) patch((m) => ({ ...m, uiActions: [...(m.uiActions || []), ...actions] })); },
-      });
-      if (token.cancelled) return;
-      patch((m) => ({ ...m, streaming: false, phase: undefined, text: typeof result.response === "string" && result.response.trim() ? result.response : m.text, result, uiActions: result.uiActions?.length ? result.uiActions : m.uiActions }));
-      const p = await fetchProfile(); setProfile(p);
-    } catch (e) {
-      if (!token.cancelled) patch((m) => ({ ...m, streaming: false, phase: undefined, error: e instanceof Error ? e.message : String(e) }));
-    } finally { if (abortRef.current === token) { abortRef.current = null; setBusy(false); } }
-  }, [busy, turns, strength, deep]);
-
-  const stop = () => { if (abortRef.current) { abortRef.current.cancelled = true; abortRef.current = null; } setBusy(false); setTurns((t) => t.map((x) => (x.streaming ? { ...x, streaming: false, phase: undefined, error: x.text ? undefined : "Stopped." } : x))); };
+  const send = useCallback(async (raw: string, attached: File[] = []) => { setText(""); setFiles([]); await thread.send(raw, attached); }, [thread]);
+  const stop = thread.stop;
   // Enter (the keyboard's "send"/"done" key included) sends; Shift+Enter inserts a newline.
   const onKey = (e: React.KeyboardEvent<HTMLTextAreaElement>) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); void send(text, files); } };
 
@@ -135,7 +107,7 @@ export function MobileApp() {
   const current = TABS.find((t) => t.id === tab)!;
 
   return (
-    <div className={`app ${docked ? "docked" : "hero"}`}>
+    <div className={`app ${docked ? "docked" : "hero"}`} data-build={typeof __JARVIS_BUILD__ === "string" ? __JARVIS_BUILD__ : "dev"}>
       <Stage docked={docked} slot={dockSlot} area={heroArea} state={coreState} audioRef={voice.level} />
       {voice.state === "listening" || voice.state === "speaking" ? <div className={`edge-glow ${voice.state}`} aria-hidden="true" /> : null}
       <div ref={scrollRef} className="scroll">
@@ -166,8 +138,8 @@ export function MobileApp() {
                 <div className="home-sub">{online === "online" ? "Ask anything, or tap the mic." : online === "offline" ? "The PC is not reachable." : "Connecting…"}</div>
               </div>
             ))
-            : tab === "control" ? <Control active={tab === "control"} />
-            : <div className="not-built"><div className="kicker">{current.label}</div><div className="nb-title">Not built yet</div><div className="nb-body">Arrives in batch {current.batch}. Nothing here is faked.</div></div>}
+            : tab === "control" ? <Control active={tab === "control"} dock={ctlDock} strength={strength} />
+            : <div className="not-built"><div className="kicker">{current.label}</div><div className="nb-title">Not built yet</div><div className="nb-body">Arrives in batch {current.batch}. Nothing here is faked.</div><div className="build mono">build {typeof __JARVIS_BUILD__ === "string" ? __JARVIS_BUILD__ : "dev"}</div></div>}
         </main>
 
         <footer className="dock">
@@ -195,7 +167,7 @@ export function MobileApp() {
                 <button type="button" onClick={() => setDeep((d) => !d)}>Research <b className={deep ? "on" : ""}>{deep ? "Deep" : "Fast"}</b></button>
               </div>
             </div>
-          ) : null}
+          ) : tab === "control" ? <div ref={setCtlDock} /> : null}
           <nav className="tabs" aria-label="Sections">
             {TABS.map((t) => <button key={t.id} type="button" className={`tab ${tab === t.id ? "on" : ""}`} onClick={() => setTab(t.id)} aria-current={tab === t.id ? "page" : undefined}><span className="tab-ico">{I[t.id]}</span><span className="tab-lbl">{t.label}</span></button>)}
           </nav>
