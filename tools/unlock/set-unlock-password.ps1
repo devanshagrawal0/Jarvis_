@@ -27,7 +27,8 @@ if ($Password) {
 
 # Prefix the current user so the Credential Provider unlocks the right account: "DOMAIN\user\0password"
 $who = "$env:USERDOMAIN\$env:USERNAME"
-$payload = "$who`n$plain"
+# Trailing null so the DLL's decrypt reads exactly the password and no trailing garbage.
+$payload = "$who`n$plain`0"
 $bytes = [Text.Encoding]::Unicode.GetBytes($payload)
 $enc = [Security.Cryptography.ProtectedData]::Protect($bytes, $null, [Security.Cryptography.DataProtectionScope]::LocalMachine)
 [IO.File]::WriteAllBytes($out, $enc)
