@@ -34,6 +34,11 @@ const DENSE_MARGIN = 0.06;
 // retrieves one half of a pair and not the other (prepare-an-email without send-it). This is a
 // dependency map between tools, not keyword matching on the prompt — it never looks at what the
 // owner typed.
+// Public-web tools: a fresh-information turn must always be ABLE to answer from the web, so one of
+// these is reserved into the menu when the classifier marks the turn fresh (root fix for the
+// BTC->Kalshi mis-route, where keyword-baited market tools crowded web_research out).
+const PUBLIC_WEB_TOOLS = new Set(["web_research", "research_v2", "web_research_deep", "url_read"]);
+
 const TOOL_COMPANIONS = {
   gmail_prepare_email: ["gmail_send_prepared"],
   gmail_send_prepared: ["gmail_prepare_email"],
@@ -202,7 +207,14 @@ function createToolGateway({ capabilityEngine, moduleRegistry, codeKnowledge, to
     const declarationFor = (name) => capabilityEngine.declarations.find((item) => item.name === name);
     // The cap is applied ONCE, at the end, and nothing bypasses it — unlike the legacy path, where
     // 57 regex rules append after truncation and turn a limit of 8 into 20.
-    return ordered.map(declarationFor).filter(Boolean).slice(0, limit);
+    let finalNames = ordered.slice(0, limit);
+    // Reserve a public-web slot on a fresh-info turn so keyword-baited market tools can't crowd
+    // web_research out of the menu. Keyed off the classifier's `route.fresh`, not new keywords.
+    if (route && route.fresh && !finalNames.some((n) => PUBLIC_WEB_TOOLS.has(n))) {
+      const webPick = ["web_research", "research_v2"].find((n) => capabilityEngine.definitions.some((d) => d.name === n));
+      if (webPick) finalNames = [webPick, ...finalNames.filter((n) => n !== webPick)].slice(0, limit);
+    }
+    return finalNames.map(declarationFor).filter(Boolean);
   }
 
   // Kept SYNCHRONOUS on purpose. Twenty-odd existing assertions across three test files call this

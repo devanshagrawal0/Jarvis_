@@ -444,18 +444,18 @@ function createAgentRuntime({ getSettings, toolGateway, codeKnowledge, memorySto
         contents: [
           "You choose the FORM of JARVIS's answer for this turn. Not the content — the form.",
           "",
-          "text     — speak it. Right for anything social, for a single precise value, and for a lookup the owner reads once. A surface here costs him attention and gives nothing back.",
+          "text     — speak it. This is the DEFAULT for almost everything: any question, any social turn, any single value, any news/price/'how is X doing' — answer it in words (include the key numbers right in the sentences). A plain question is NOT a request to be shown a panel. Choose text unless the owner clearly wants to SEE something drawn.",
           widgetCatalogText
-            ? `widget   — he is asking for one of these existing windows BY NAME. Only choose this when he names one of them; if he is asking to be SHOWN information rather than to open a particular window, that is a surface. The windows: ${widgetCatalogText}`
+            ? `widget   — he is asking for one of these existing windows BY NAME. Only when he names one. The windows: ${widgetCatalogText}`
             : "widget   — he is asking for one of JARVIS's existing windows by name.",
-          "surface  — DRAW it on the Stage. The Stage is the owner's own panel: when he says 'the panel', 'the stage', 'on screen' or 'where i can see it', he means this, not one of the widgets below. Right whenever the answer is a trend, a comparison across several points, a schedule, or a grouped list — things read faster drawn than described. A question can still want a surface: 'how did X move this month' is asking to SEE the month, not to be read a list of numbers.",
-          "takeover — it needs the whole screen: a long dossier, or an agent run worth watching.",
-          "unsure   — say this whenever it is genuinely a toss-up. It is not a failure; it means JARVIS keeps its normal behaviour.",
+          "surface  — DRAW it on the Stage. Choose this ONLY when the owner clearly wants to SEE it drawn: he says panel / stage / screen / show me / draw / chart / graph / plot / visualize / 'where I can see it', OR he explicitly asks for a chart or a visual of a multi-point dataset (a price series over time, a comparison table he wants to look at, his schedule laid out). Do NOT choose surface just because the answer happens to contain numbers or because it's about markets — 'how's bitcoin', 'what's the price', 'how's the market', 'summarize the news' are QUESTIONS and get TEXT with the numbers in it. When in doubt, it is text.",
+          "takeover — it needs the whole screen: a long dossier, or an agent run worth watching, and only when he asked for the whole screen.",
+          "unsure   — a genuine toss-up. Not a failure; JARVIS keeps its normal (text) behaviour.",
           "",
-          "TIE-BREAK, and it matters. If both a widget and a surface could work, choose SURFACE. A drawn surface answers the question he actually asked; a widget is a fixed window that merely sits near it.",
-          "And if he says 'panel' or 'stage' anywhere in the request, he means the Stage — answer `surface`, even when another word in the sentence happens to match one of the window names above. Asking for the panel is the one thing that must never open a widget instead.",
+          "TIE-BREAK: if you are weighing text vs surface, choose TEXT. A surface must be clearly wanted — the owner shouldn't get a panel he didn't ask to see. Between widget and surface (both clearly wanted), choose surface.",
+          "If he says 'panel' or 'stage' anywhere in the request, he means the Stage — answer `surface`.",
           "",
-          "A surface must earn its pixels. If the owner would not look at it twice, choose text.",
+          "A surface must earn its pixels. If the owner would not look at it twice, choose text. Rendering a panel he didn't want is worse than answering in words.",
           "",
           "CONTAINER. The answer is `panel` unless the owner ASKED for the whole screen. Taking his screen is his call, not yours - he has said so plainly - so `fullscreen` is correct only when he actually asked for it in some way (full screen, whole screen, take over the screen, make it big, and so on, however he words it). Everything else is `panel`, no matter how long or important the answer is; a panel he can expand himself in one click. If you are weighing whether it deserves the screen, that weighing is the answer: panel.",
           "",
