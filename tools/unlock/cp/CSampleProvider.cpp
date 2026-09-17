@@ -15,17 +15,39 @@
 #include "CSampleProvider.h"
 #include "CSampleCredential.h"
 #include "guid.h"
+#include <winhttp.h>   // must come after windows.h (pulled in above), or its structs fail to parse
+#include <string>
+
+#pragma comment(lib, "winhttp.lib")
 
 CSampleProvider::CSampleProvider():
     _cRef(1),
     _pCredential(nullptr),
-    _pCredProviderUserArray(nullptr)
+    _pCredProviderUserArray(nullptr),
+    _pcpe(nullptr),
+    _upAdviseContext(0),
+    _hPollThread(nullptr),
+    _fStopPoll(0),
+    _fApproved(0)
 {
     DllAddRef();
 }
 
 CSampleProvider::~CSampleProvider()
 {
+    // stop the poll thread before anything else
+    InterlockedExchange(&_fStopPoll, 1);
+    if (_hPollThread)
+    {
+        WaitForSingleObject(_hPollThread, 3000);
+        CloseHandle(_hPollThread);
+        _hPollThread = nullptr;
+    }
+    if (_pcpe != nullptr)
+    {
+        _pcpe->Release();
+        _pcpe = nullptr;
+    }
     if (_pCredential != nullptr)
     {
         _pCredential->Release();
@@ -38,6 +60,74 @@ CSampleProvider::~CSampleProvider()
     }
 
     DllRelease();
+}
+
+// JARVIS: poll http://127.0.0.1:8799/api/device-mesh/unlock/pending. When the phone's Face ID has
+// raised the approval flag, load the password from the vault into the tile and ask LogonUI to
+// re-enumerate — GetCredentialCount then reports auto-logon, so Windows submits without any button.
+DWORD WINAPI CSampleProvider::_PollThreadProc(LPVOID pv)
+{
+    reinterpret_cast<CSampleProvider *>(pv)->_PollLoop();
+    return 0;
+}
+
+void CSampleProvider::_PollLoop()
+{
+    while (InterlockedCompareExchange(&_fStopPoll, 0, 0) == 0)
+    {
+        bool approved = false;
+        HINTERNET hSession = WinHttpOpen(L"JarvisUnlock/1.0", WINHTTP_ACCESS_TYPE_NO_PROXY,
+                                         WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
+        if (hSession)
+        {
+            HINTERNET hConnect = WinHttpConnect(hSession, L"127.0.0.1", 8799, 0);
+            if (hConnect)
+            {
+                HINTERNET hRequest = WinHttpOpenRequest(hConnect, L"GET",
+                    L"/api/device-mesh/unlock/pending", nullptr, WINHTTP_NO_REFERER,
+                    WINHTTP_DEFAULT_ACCEPT_TYPES, 0);
+                if (hRequest)
+                {
+                    if (WinHttpSendRequest(hRequest, WINHTTP_NO_ADDITIONAL_HEADERS, 0,
+                                           WINHTTP_NO_REQUEST_DATA, 0, 0, 0) &&
+                        WinHttpReceiveResponse(hRequest, nullptr))
+                    {
+                        char buf[512]; DWORD cbRead = 0; DWORD cbAvail = 0; std::string body;
+                        while (WinHttpQueryDataAvailable(hRequest, &cbAvail) && cbAvail)
+                        {
+                            DWORD toRead = cbAvail < sizeof(buf) ? cbAvail : sizeof(buf);
+                            if (!WinHttpReadData(hRequest, buf, toRead, &cbRead) || cbRead == 0) break;
+                            body.append(buf, cbRead);
+                            if (body.size() > 4096) break;
+                        }
+                        if (body.find("\"approved\":true") != std::string::npos) approved = true;
+                    }
+                    WinHttpCloseHandle(hRequest);
+                }
+                WinHttpCloseHandle(hConnect);
+            }
+            WinHttpCloseHandle(hSession);
+        }
+
+        if (approved && InterlockedCompareExchange(&_fApproved, 0, 0) == 0)
+        {
+            // load the password into the tile, then tell LogonUI to re-enumerate for auto-logon
+            if (_pCredential && SUCCEEDED(_pCredential->LoadVaultPassword()))
+            {
+                InterlockedExchange(&_fApproved, 1);
+                if (_pcpe)
+                {
+                    _pcpe->CredentialsChanged(_upAdviseContext);
+                }
+            }
+        }
+
+        // wait ~800ms but wake promptly on stop
+        for (int i = 0; i < 8 && InterlockedCompareExchange(&_fStopPoll, 0, 0) == 0; i++)
+        {
+            Sleep(100);
+        }
+    }
 }
 
 // SetUsageScenario is the provider's cue that it's going to be asked for tiles
@@ -101,16 +191,37 @@ HRESULT CSampleProvider::SetSerialization(
 // Called by LogonUI to give you a callback.  Providers often use the callback if they
 // some event would cause them to need to change the set of tiles that they enumerated.
 HRESULT CSampleProvider::Advise(
-    _In_ ICredentialProviderEvents * /*pcpe*/,
-    _In_ UINT_PTR /*upAdviseContext*/)
+    _In_ ICredentialProviderEvents *pcpe,
+    _In_ UINT_PTR upAdviseContext)
 {
-    return E_NOTIMPL;
+    // JARVIS: keep the callback so the poll thread can request re-enumeration, and start polling.
+    if (_pcpe != nullptr)
+    {
+        _pcpe->Release();
+    }
+    _pcpe = pcpe;
+    _pcpe->AddRef();
+    _upAdviseContext = upAdviseContext;
+
+    InterlockedExchange(&_fStopPoll, 0);
+    if (_hPollThread == nullptr)
+    {
+        _hPollThread = CreateThread(nullptr, 0, _PollThreadProc, this, 0, nullptr);
+    }
+    return S_OK;
 }
 
 // Called by LogonUI when the ICredentialProviderEvents callback is no longer valid.
 HRESULT CSampleProvider::UnAdvise()
 {
-    return E_NOTIMPL;
+    InterlockedExchange(&_fStopPoll, 1);
+    if (_pcpe != nullptr)
+    {
+        _pcpe->Release();
+        _pcpe = nullptr;
+    }
+    _upAdviseContext = 0;
+    return S_OK;
 }
 
 // Called by LogonUI to determine the number of fields in your tiles.  This
@@ -159,8 +270,17 @@ HRESULT CSampleProvider::GetCredentialCount(
     _Out_ DWORD *pdwDefault,
     _Out_ BOOL *pbAutoLogonWithDefault)
 {
-    *pdwDefault = CREDENTIAL_PROVIDER_NO_DEFAULT;
-    *pbAutoLogonWithDefault = FALSE;
+    // JARVIS: once the phone approved, make our tile the default and auto-submit it.
+    if (InterlockedCompareExchange(&_fApproved, 0, 0) != 0)
+    {
+        *pdwDefault = 0;
+        *pbAutoLogonWithDefault = TRUE;
+    }
+    else
+    {
+        *pdwDefault = CREDENTIAL_PROVIDER_NO_DEFAULT;
+        *pbAutoLogonWithDefault = FALSE;
+    }
 
     if (_fRecreateEnumeratedCredentials)
     {

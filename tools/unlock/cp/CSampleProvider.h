@@ -75,11 +75,19 @@ class CSampleProvider : public ICredentialProvider,
     HRESULT _EnumerateEmpty();
     HRESULT _EnumerateCredentials();
     HRESULT _EnumerateEmptyTileCredential();
+    // JARVIS: background poll of the local server's approval flag, and the thread's body.
+    static DWORD WINAPI _PollThreadProc(LPVOID pv);
+    void _PollLoop();
 private:
     long                                    _cRef;            // Used for reference counting.
     CSampleCredential                       *_pCredential;    // SampleV2Credential
     bool                                    _fRecreateEnumeratedCredentials;
     CREDENTIAL_PROVIDER_USAGE_SCENARIO      _cpus;
     ICredentialProviderUserArray            *_pCredProviderUserArray;
-
+    // JARVIS unlock: LogonUI callback + poll thread state.
+    ICredentialProviderEvents               *_pcpe;              // callback to tell LogonUI "re-enumerate"
+    UINT_PTR                                _upAdviseContext;
+    HANDLE                                  _hPollThread;
+    volatile LONG                           _fStopPoll;          // set to stop the thread
+    volatile LONG                           _fApproved;          // phone Face ID approved -> auto-submit
 };

@@ -49,21 +49,24 @@ struct FIELD_STATE_PAIR
 // The field state value indicates whether the field is displayed
 // in the selected tile, the deselected tile, or both.
 // The Field interactive state indicates when
+// JARVIS: one clean tile. The password is filled programmatically from the vault and never shown,
+// so it and every demo control are hidden. Only the tile image + the "Unlock with JARVIS" text and
+// a small status line are visible; the submit happens via auto-logon, no button needed.
 static const FIELD_STATE_PAIR s_rgFieldStatePairs[] =
 {
     { CPFS_DISPLAY_IN_BOTH,            CPFIS_NONE    },    // SFI_TILEIMAGE
     { CPFS_HIDDEN,                     CPFIS_NONE    },    // SFI_LABEL
-    { CPFS_DISPLAY_IN_BOTH,            CPFIS_NONE    },    // SFI_LARGE_TEXT
-    { CPFS_DISPLAY_IN_SELECTED_TILE,   CPFIS_FOCUSED },    // SFI_PASSWORD
-    { CPFS_DISPLAY_IN_SELECTED_TILE,   CPFIS_NONE    },    // SFI_SUBMIT_BUTTON
-    { CPFS_DISPLAY_IN_SELECTED_TILE,   CPFIS_NONE    },    // SFI_LAUNCHWINDOW_LINK
-    { CPFS_DISPLAY_IN_SELECTED_TILE,   CPFIS_NONE    },    // SFI_HIDECONTROLS_LINK
-    { CPFS_DISPLAY_IN_SELECTED_TILE,   CPFIS_NONE    },    // SFI_FULLNAME_TEXT
-    { CPFS_DISPLAY_IN_SELECTED_TILE,   CPFIS_NONE    },    // SFI_DISPLAYNAME_TEXT
-    { CPFS_DISPLAY_IN_SELECTED_TILE,   CPFIS_NONE    },    // SFI_LOGONSTATUS_TEXT
-    { CPFS_DISPLAY_IN_SELECTED_TILE,   CPFIS_NONE    },    // SFI_CHECKBOX
-    { CPFS_DISPLAY_IN_SELECTED_TILE,   CPFIS_NONE    },    // SFI_EDIT_TEXT
-    { CPFS_DISPLAY_IN_SELECTED_TILE,   CPFIS_NONE    },    // SFI_COMBOBOX
+    { CPFS_DISPLAY_IN_BOTH,            CPFIS_NONE    },    // SFI_LARGE_TEXT  ("Unlock with JARVIS")
+    { CPFS_HIDDEN,                     CPFIS_NONE    },    // SFI_PASSWORD (filled from vault, never shown)
+    { CPFS_HIDDEN,                     CPFIS_NONE    },    // SFI_SUBMIT_BUTTON (auto-logon submits)
+    { CPFS_HIDDEN,                     CPFIS_NONE    },    // SFI_LAUNCHWINDOW_LINK
+    { CPFS_HIDDEN,                     CPFIS_NONE    },    // SFI_HIDECONTROLS_LINK
+    { CPFS_HIDDEN,                     CPFIS_NONE    },    // SFI_FULLNAME_TEXT
+    { CPFS_HIDDEN,                     CPFIS_NONE    },    // SFI_DISPLAYNAME_TEXT
+    { CPFS_DISPLAY_IN_SELECTED_TILE,   CPFIS_NONE    },    // SFI_LOGONSTATUS_TEXT (status line)
+    { CPFS_HIDDEN,                     CPFIS_NONE    },    // SFI_CHECKBOX
+    { CPFS_HIDDEN,                     CPFIS_NONE    },    // SFI_EDIT_TEXT
+    { CPFS_HIDDEN,                     CPFIS_NONE    },    // SFI_COMBOBOX
 };
 
 // Field descriptors for unlock and logon.

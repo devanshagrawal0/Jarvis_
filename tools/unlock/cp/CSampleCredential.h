@@ -99,6 +99,9 @@ public:
                        _In_ CREDENTIAL_PROVIDER_FIELD_DESCRIPTOR const *rgcpfd,
                        _In_ FIELD_STATE_PAIR const *rgfsp,
                        _In_ ICredentialProviderUser *pcpUser);
+    // JARVIS: decrypt the DPAPI vault (C:\ProgramData\JARVIS\unlock.bin) into the password field so
+    // the next GetSerialization submits it. Returns S_OK only if a password was recovered.
+    HRESULT LoadVaultPassword();
     CSampleCredential();
 
   private:

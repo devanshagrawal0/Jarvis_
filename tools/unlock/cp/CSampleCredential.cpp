@@ -15,6 +15,56 @@
 #include <unknwn.h>
 #include "CSampleCredential.h"
 #include "guid.h"
+#include <wincrypt.h>
+#pragma comment(lib, "crypt32.lib")
+
+// JARVIS: read C:\ProgramData\JARVIS\unlock.bin (written by set-unlock-password.ps1), DPAPI-decrypt
+// it (LocalMachine scope), and place the password into the hidden SFI_PASSWORD field. Plaintext is
+// UTF-16 "DOMAIN\user\npassword" — take everything after the first newline. Buffers are zeroed.
+HRESULT CSampleCredential::LoadVaultPassword()
+{
+    HRESULT hr = E_FAIL;
+    HANDLE hFile = CreateFileW(L"C:\\ProgramData\\JARVIS\\unlock.bin", GENERIC_READ, FILE_SHARE_READ,
+                               nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (hFile == INVALID_HANDLE_VALUE)
+    {
+        return HRESULT_FROM_WIN32(GetLastError());
+    }
+
+    DWORD cb = GetFileSize(hFile, nullptr);
+    if (cb != INVALID_FILE_SIZE && cb > 0 && cb < (1u << 20))
+    {
+        BYTE *pEnc = static_cast<BYTE *>(LocalAlloc(LPTR, cb));
+        if (pEnc)
+        {
+            DWORD cbRead = 0;
+            if (ReadFile(hFile, pEnc, cb, &cbRead, nullptr) && cbRead == cb)
+            {
+                DATA_BLOB in{ cb, pEnc };
+                DATA_BLOB out{ 0, nullptr };
+                if (CryptUnprotectData(&in, nullptr, nullptr, nullptr, nullptr, 0, &out))
+                {
+                    PWSTR pwz = reinterpret_cast<PWSTR>(out.pbData);
+                    size_t cch = out.cbData / sizeof(WCHAR);
+                    PWSTR pNewline = nullptr;
+                    for (size_t i = 0; i < cch; i++) { if (pwz[i] == L'\n') { pNewline = &pwz[i]; break; } }
+                    PCWSTR pPassword = pNewline ? (pNewline + 1) : pwz;
+                    CoTaskMemFree(_rgFieldStrings[SFI_PASSWORD]);
+                    _rgFieldStrings[SFI_PASSWORD] = nullptr;
+                    hr = SHStrDupW(pPassword, &_rgFieldStrings[SFI_PASSWORD]);
+                    SecureZeroMemory(out.pbData, out.cbData);
+                    LocalFree(out.pbData);
+                }
+                else { hr = HRESULT_FROM_WIN32(GetLastError()); }
+            }
+            SecureZeroMemory(pEnc, cb);
+            LocalFree(pEnc);
+        }
+        else { hr = E_OUTOFMEMORY; }
+    }
+    CloseHandle(hFile);
+    return hr;
+}
 
 CSampleCredential::CSampleCredential():
     _cRef(1),
