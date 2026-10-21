@@ -41,7 +41,7 @@ function createAdapter({ mode = "stub", ledger = null, stubResponder = defaultSt
   // run: resolve model, spend-guard, call with retry/fallback, validate+repair structured output.
   // opts: { node, effort, system, input, schema?, tools?, previousInteractionId?, idempotencyKey?, stub? }
   async function run(opts) {
-    const { node, effort = "deep", system = "", input = "", schema = null } = opts;
+    const { node, agent = null, effort = "deep", system = "", input = "", schema = null } = opts;
     let spec = modelForNode(node, effort);
     if (!spec) throw new Error(`[eclipse] node "${node}" has no model role (model-less node must not call run())`);
 
@@ -57,7 +57,7 @@ function createAdapter({ mode = "stub", ledger = null, stubResponder = defaultSt
         const out = await validateAndRepair(res, call, schema);
         // Account usage.
         const usage = out.usage || res.usage || { tokensIn: preEst, tokensOut: 0 };
-        if (ledger) ledger.add({ node, tokensIn: usage.tokensIn || 0, tokensOut: usage.tokensOut || 0, cost: spec.cost });
+        if (ledger) ledger.add({ node, agent, tokensIn: usage.tokensIn || 0, tokensOut: usage.tokensOut || 0, cost: spec.cost });
         return {
           text: out.text ?? res.text ?? "",
           json: out.json,
@@ -98,7 +98,9 @@ function createAdapter({ mode = "stub", ledger = null, stubResponder = defaultSt
       if (parsed.success) return { text: current.text, json: parsed.data, usage: current.usage, repaired };
       if (i === 2) {
         const e = new Error(`[eclipse] structured output failed validation after ${repaired} repair(s)`);
-        e.code = "ECLIPSE_OUTPUT"; e.issues = parsed.error?.issues; throw e;
+        e.code = "ECLIPSE_OUTPUT"; e.issues = parsed.error?.issues;
+        e.rawText = String(current.text || "").slice(0, 600); // diagnosis: WHAT did the model return
+        throw e;
       }
       repaired += 1;
       const errText = (parsed.error?.issues || []).map((x) => `${x.path.join(".")}: ${x.message}`).join("; ");

@@ -19,6 +19,8 @@ const { createMemoryOperations } = require("./operations");
 const { createMemoryCutoverCoordinator } = require("./cutover-coordinator");
 const { createAuthorityResolver } = require("./authority-resolver");
 const { createMemoryMigration } = require("./migration-import");
+const { createRetrievalOracle } = require("./retrieval-oracle");
+const { createRoomManifests } = require("./room-manifests");
 const { openCoreStore } = require("./storage/core-store");
 
 const DOMAINS = ["explicit_commands", "conversation_runtime", "retrieval_context", "room_integrations"];
@@ -85,6 +87,29 @@ async function rehearseRollback({ logger } = {}) {
 
     const plan = cutover.createPlan({ shadowSessionId: session.id });
     cutover.approvePlan({ planId: plan.id, ...OWNER });
+
+    // THE CONTAINED STORE HAS TO SATISFY THE SAME STORE-BACKED GATES THE REAL CUTOVER DOES.
+    //
+    // `activateDomain` was hardened (A-06) so `projectionVerified` / `roomManifestsVerified` are
+    // no longer taken from the request body — `verifyProjection()` and `verifyRoomManifests()`
+    // query the store. This harness still passed the booleans and nothing else, and its store is
+    // a fresh mkdtemp with neither an active retrieval projection nor a room manifest. So the
+    // rehearsal died on domain 3 of 4 with "Retrieval cutover requires an active projection; none
+    // is active", `rehearsedDomains` stayed empty, `rollbackPassed` stayed false, and the gate
+    // could never pass — on any machine, for anyone. Measured here 2026-09-03 on two runs.
+    //
+    // Seeded rather than asserted, and seeded HERE rather than by relaxing the checks: the whole
+    // value of the rehearsal is that it walks the real coordinator through the real gates. An
+    // empty projection is the correct shape for it — the drill proves the authority flip and its
+    // cascade, not retrieval quality, and `activateProjection` accepts a zero-document projection
+    // because expected defaults to what was indexed.
+    const oracle = createRetrievalOracle({ store });
+    const rehearsalProjection = oracle.createProjection({ version: "rehearsal-projection", policyVersion: "gate-rehearsal:v1" });
+    oracle.activateProjection({ projectionId: rehearsalProjection.id });
+    createRoomManifests({ store }).publish({
+      scopeId: "owner:local", room: "helix", projectId: "rehearsal", sourceSequence: 1,
+      objective: "gate rollback rehearsal", summary: "Seeded so verifyRoomManifests() has a current manifest to read.",
+    });
 
     // Forward through every domain, asserting the runtime observes each flip.
     const forward = [];
@@ -333,6 +358,16 @@ async function prepareCutoverGate({ store, sessionId, probe, maxP95Ms = 250, log
     if (steps.projection.coverage !== 1) blockers.push(`projection coverage is ${steps.projection.coverage}, not 1`);
     if (steps.rollback.passed !== true) blockers.push("rollback rehearsal did not pass");
     if (Number(gate.p95LatencyMs) > Number(gate.maxP95Ms)) blockers.push(`p95 ${gate.p95LatencyMs}ms exceeds ${gate.maxP95Ms}ms`);
+    // `evaluateGate` also refuses on unresolved comparisons and on any recorded scope, deletion or
+    // privacy failure, and none of those had a line here — so the commonest real blocker on a live
+    // session (open high-severity comparisons) produced `passed:false` with an empty explanation.
+    // A report that cannot name why it failed is why this cutover sat untouched for five weeks.
+    if (Number(gate.unresolvedCritical) > 0) blockers.push(`${gate.unresolvedCritical} unresolved critical comparison(s) — resolve or downgrade them`);
+    if (Number(gate.unresolvedHigh) > 0) blockers.push(`${gate.unresolvedHigh} unresolved high-severity comparison(s) — resolve or downgrade them`);
+    if (Number(gate.scopeLeaks) > 0) blockers.push(`${gate.scopeLeaks} scope leak(s) recorded on this session`);
+    if (Number(gate.deletionFailures) > 0) blockers.push(`${gate.deletionFailures} deletion failure(s) recorded on this session`);
+    if (Number(gate.privacyFailures) > 0) blockers.push(`${gate.privacyFailures} privacy failure(s) recorded on this session`);
+    if (gate.rollbackPassed === false) blockers.push(`rollback rehearsal missing for: ${DOMAINS.filter((d) => !(gate.rehearsedDomains || []).includes(d)).join(", ")}`);
   }
 
   return { sessionId, gate, steps, blockers, uncovered: bench.uncovered };

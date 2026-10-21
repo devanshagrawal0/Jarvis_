@@ -8,11 +8,13 @@ const { GoogleGenAI } = require("@google/genai");
 const registry = require("../../gemini-models");
 const { openStore } = require("../orchestration/store");
 const { streamMission } = require("../orchestration/events");
-const { runMission } = require("../orchestration/run-graph");
+const { runMission, requestCancel } = require("../orchestration/run-graph");
 const { createInteractionsClient } = require("../model/interactions-client");
+const capabilities = require("../model/capabilities"); // N-4: local overrides, not registry mutation
 const { createLiveWebTools } = require("../tools/web-live");
 const { bridgeSummary, createJarvisToolbox } = require("../capabilities/jarvis-bridge");
 const { createReputation } = require("../agents/reputation");
+const { createAgentDefs } = require("../agents/defs"); // S1.B1: the agent registry
 const { renderConsole } = require("./console");
 
 function readJsonBody(req, limit = 1_000_000) {
@@ -40,10 +42,11 @@ function createEclipseIntegration(deps) {
   const maxCostUsd = deps.maxCostUsd ?? 0.5;
   const missions = new Map();            // missionId → { status, result, error, startedAt, effort, prompt }
   let store = null, reputation = null;   // opened lazily on first use
+  let agentDefs = null; // S1.B1 registry (seeded at ensureStore)
   const artifactsDir = path.join(runtimeDir, "eclipse-artifacts");
 
   function enabled() { try { return deps.isEnabled ? deps.isEnabled() : (deps.loadSettings().eclipseEnabled !== false); } catch { return true; } }
-  function ensureStore() { if (!store) { store = openStore({ dir: runtimeDir }); reputation = createReputation(store.db); } return store; }
+  function ensureStore() { if (!store) { store = openStore({ dir: runtimeDir }); reputation = createReputation(store.db); agentDefs = createAgentDefs(store.db); agentDefs.seedDefaults(); } return store; }
 
   function liveWiring() {
     const key = process.env.GEMINI_API_KEY || deps.secretStore.load().geminiKey;
@@ -51,7 +54,9 @@ function createEclipseIntegration(deps) {
     const s = deps.loadSettings();
     const flash = s.geminiModel || registry.MODELS.main;
     const pro = s.geminiReasoningModel || registry.MODELS.reasoning;
-    registry.MODELS.main = flash; registry.MODELS.reasoning = pro; registry.MODELS.router = s.geminiRouterModel || flash;
+    // N-4: never mutate the SHARED registry (other Jarvis features read it live). Overrides are
+    // module-local to ECLIPSE's model layer.
+    capabilities.setModelOverrides({ main: flash, reasoning: pro, router: s.geminiRouterModel || flash });
     const ai = new GoogleGenAI({ apiKey: key });
     return { liveCall: createInteractionsClient({ getApiKey: () => key }).liveCall, web: createLiveWebTools({ ai, searchModel: flash }) };
   }
@@ -116,6 +121,37 @@ function createEclipseIntegration(deps) {
     if (p === "/api/eclipse/missions" && req.method === "POST") {
       try { const body = await readJsonBody(req); if (!body.prompt) return json(res, 400, { error: "prompt required" }); const out = await launch(body); json(res, 202, out); }
       catch (e) { json(res, e.statusCode || 500, { error: e.message }); }
+      return true;
+    }
+    // Cancel: cooperative + durable. The graph checks the flag at every node boundary, so a
+    // cancel lands at the next node rather than mid-call — closing the browser's SSE stream alone
+    // never stopped the run, which is why "Detach" used to leave a mission burning budget.
+    const c = p.match(/^\/api\/eclipse\/missions\/([^/]+)\/cancel$/);
+    if (c && (req.method === "POST" || req.method === "DELETE")) {
+      const missionId = c[1];
+      const rec = missions.get(missionId);
+      if (!rec) { json(res, 404, { error: "unknown mission" }); return true; }
+      ensureStore();
+      requestCancel(store, missionId);                       // graphRunId === missionId
+      try { store.appendEvent(missionId, "mission.cancelling", { requestedAt: new Date().toISOString() }); } catch {}
+      json(res, 202, { missionId, cancelRequested: true, status: rec.status });
+      return true;
+    }
+    // S1.B2: editable preflight - the owner approves or edits the proposed plan. The plan
+    // node polls the task ledger; an edited plan is re-verified by the critics before adoption.
+    const pf = p.match(/^\/api\/eclipse\/missions\/([^/]+)\/plan$/);
+    if (pf && req.method === "POST") {
+      try {
+        const body = await readJsonBody(req);
+        ensureStore();
+        const { createTaskLedger } = require("../agents/conductor");
+        const tl = createTaskLedger(store.db);
+        const row = tl.read(pf[1]);
+        if (!row) { json(res, 404, { error: "no task ledger for mission" }); return true; }
+        tl.write({ missionId: pf[1], contract: row.contract, facts: row.facts, guesses: row.guesses, revision: row.revision,
+          plan: { ...row.plan, approvedAt: new Date().toISOString(), editedPlan: body.plan || null } });
+        json(res, 202, { missionId: pf[1], approved: true, edited: !!body.plan });
+      } catch (e) { json(res, e.statusCode || 500, { error: e.message }); }
       return true;
     }
     const m = p.match(/^\/api\/eclipse\/missions\/([^/]+)(\/stream)?$/);

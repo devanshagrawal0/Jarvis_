@@ -74,6 +74,9 @@ function openStore({ dir, db } = {}) {
     getRun: (id) => stmt.getRun.get(id),
     recordNodeRun: (row) => stmt.nodeRun.run({ node_run_id: `${row.graph_run_id}:${row.node_id}:${row.attempt || 0}`, attempt: 0, status: "complete", model_id: null, tokens: 0, cost_usd: 0, started_at: nowIso(), completed_at: nowIso(), ...row }),
     appendEvent, subscribe,
+    // How many SSE clients are tailing this mission right now. The preflight window only
+    // makes sense when somebody is actually watching (it taxed EVERY unattended run 20s).
+    subscriberCount: (missionId) => (listeners.get(missionId) || { size: 0 }).size,
     getEvents: (missionId, sinceSeq = -1) => stmt.getEvents.all(missionId, sinceSeq).map((e) => ({ ...e, payload: JSON.parse(e.payload_json) })),
     onceGuard, seen,
     close: () => { try { database.close(); } catch { /* already closed */ } },

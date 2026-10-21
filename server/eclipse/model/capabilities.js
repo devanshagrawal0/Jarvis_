@@ -37,6 +37,12 @@ function thinkingFor(role, effort) {
   return base;
 }
 
+// N-4: ECLIPSE-local model overrides. integration/index.js used to WRITE registry.MODELS.*,
+// mutating the shared gemini-models module that every other Jarvis feature reads (violating the
+// read-only rule in this file's header). Overrides now live HERE, module-local to ECLIPSE.
+const MODEL_OVERRIDES = {}; // role -> modelId
+function setModelOverrides(map) { for (const k of Object.keys(map || {})) { if (map[k]) MODEL_OVERRIDES[k] = map[k]; } }
+
 // Resolve a node to a concrete model call spec. Returns null for model-less nodes (commit).
 function modelForNode(node, effort = "deep") {
   const role = NODE_ROLE[node];
@@ -45,7 +51,7 @@ function modelForNode(node, effort = "deep") {
   return {
     node,
     role,
-    modelId: registry.modelFor(role),
+    modelId: MODEL_OVERRIDES[role] || registry.modelFor(role),
     thinking: thinkingFor(role, effort),
     retryClass: caps.retryClass,
     maxTools: caps.maxTools,
@@ -58,4 +64,4 @@ function modelForNode(node, effort = "deep") {
 const FALLBACK_CHAIN = { reasoning: "main", main: "router", router: "router", deepResearch: "reasoning", deepResearchMax: "reasoning", embedding: "embedding" };
 function fallbackRole(role) { return FALLBACK_CHAIN[role] || "main"; }
 
-module.exports = { ROLE_CAPS, NODE_ROLE, modelForNode, thinkingFor, fallbackRole, registry };
+module.exports = { setModelOverrides, ROLE_CAPS, NODE_ROLE, modelForNode, thinkingFor, fallbackRole, registry };

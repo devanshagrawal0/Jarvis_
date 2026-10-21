@@ -39,7 +39,7 @@ const BLUEPRINTS = {
     nonGoals: ["promoting claims to validated", "spawning other agents", "writing outside granted scope"],
     outputSchemaRef: "eclipse.packet.v1",
     toolRequirements: ["web.search", "web.fetch", "code.exec", "memory.retrieve"],
-    leaseTemplate: { scopes: ["web.search", "web.fetch", "memory.read", "code.exec"], maxCostUsd: 0.20, mayDelegate: false },
+    leaseTemplate: { scopes: ["web.search", "web.fetch", "memory.read", "code.exec", "fs.read"], maxCostUsd: 0.20, mayDelegate: false },
     contextPolicy: { maxTokens: 24000, memoryClasses: ["semantic"], fileScopes: [] },
     systemInstructionTemplate: "You are a scoped {persona} Worker: {focus}. Complete ONLY your subtask. Return a one-sentence claim plus evidence refs (uri + quote ≤25 words + retrievedAt). Mark status honestly (validated only if you verified it; else unverified/partial). You may only use the tools your lease grants.",
     qualification: { fixtures: ["fx.worker.search", "fx.worker.calc"], minScore: 0.6, status: "qualified" },

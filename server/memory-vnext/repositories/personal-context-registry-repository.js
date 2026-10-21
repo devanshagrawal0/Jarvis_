@@ -8,6 +8,11 @@ function createPersonalContextRegistryRepository({ db, clock }) {
   return Object.freeze({
     activeProjection: () => db.prepare("SELECT id,projection_version AS version FROM retrieval_projections WHERE state='active' ORDER BY activated_at DESC LIMIT 1").get(),
     currentAssertion: (predicate) => db.prepare("SELECT id FROM assertions WHERE scope_id=? AND subject_type='owner' AND subject_ref=? AND predicate=? AND status='active' ORDER BY updated_at DESC LIMIT 1").get(OWNER_SCOPE, OWNER_REF, String(predicate)),
+    // The predicates the owner already has. Handed to the extractor so it REUSES a name instead of
+    // coining a near-synonym: one backfill of 100 turns produced trading_mode_protocol AND
+    // trading_mode_procedure, verification_protocol AND evidence_verification, exercise_time AND
+    // exercise_schedule — the same preference split across rows that then compete at retrieval.
+    ownerPredicates: (limit = 120) => db.prepare("SELECT predicate FROM assertions WHERE scope_id=? AND subject_type='owner' AND subject_ref=? AND status='active' GROUP BY predicate ORDER BY MAX(updated_at) DESC LIMIT ?").all(OWNER_SCOPE, OWNER_REF, Math.max(1, Number(limit) || 120)).map((row) => row.predicate),
     latestAssertion: (predicate) => db.prepare("SELECT id,status FROM assertions WHERE scope_id=? AND subject_type='owner' AND subject_ref=? AND predicate=? ORDER BY updated_at DESC LIMIT 1").get(OWNER_SCOPE, OWNER_REF, String(predicate)),
     retrievalDocuments: (recordType, recordId) => db.prepare("SELECT id FROM retrieval_documents WHERE record_type=? AND record_id=? AND status='active'").all(String(recordType), String(recordId)),
     topicNodeIds: (topics) => (topics || []).map((topic) => db.prepare("SELECT id FROM graph_nodes WHERE scope_id=? AND node_type='topic' AND node_key=? AND status='active'").get(OWNER_SCOPE, `topic:${topic}`)?.id).filter(Boolean),

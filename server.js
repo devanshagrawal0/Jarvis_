@@ -13,6 +13,8 @@ const QRCode = require("qrcode");
 const { createCapabilityEngine, WIDGET_LIST_TEXT } = require("./server/capability-engine");
 const { createSecretStore } = require("./server/secret-store");
 const { classifyToolResults, summaryPrefix } = require("./server/tool-result-honesty");
+const displayCast = require("./server/display-cast");
+const gameModes = require("./server/modes");
 const { auditFaithfulness } = require("./server/stage-faithfulness");
 const { createContactStore } = require("./server/contacts");
 const { createEmailComposer } = require("./server/email-composer");
@@ -1270,6 +1272,13 @@ function validateMutationRequest(req, pathname, session) {
   // Phone→PC file upload streams raw file bytes, not JSON. Origin is checked above; owner surface
   // is enforced in the handler.
   if (pathname === "/api/device-mesh/fs/upload") return;
+  // Handoff open-url is called by an iOS Shortcut (Share Sheet), which carries no session cookie.
+  // It stays owner-only via the tailnet identity check in the handler (isOwnerSurface); a cross-site
+  // page cannot forge that, so skipping the cookie/CSRF gate here is safe.
+  if (pathname === "/api/device-mesh/pc/open-url") return;
+  // Display cast — owner-surface-guarded in the handler; the setter is called by the brain tool or a
+  // localhost owner call, neither of which carries a session cookie.
+  if (pathname === "/api/display/cast" || pathname === "/api/display/clear") return;
   const contentType = String(req.headers["content-type"] || "");
   if (!isBodylessDelete(req) && !contentType.includes("application/json")) {
     throw Object.assign(new Error("Mutation requests must use application/json"), { statusCode: 415 });
@@ -13298,6 +13307,50 @@ ${entryText}`;
     if (!name) throw Object.assign(new Error("Which app?"), { statusCode: 400 });
     const result = await capabilityEngine.execute("open_app", { app: name }, { sessionId: req.jarvisSession?.id, source: "phone-control" });
     sendJson(res, result.ok ? 200 : 400, { ok: Boolean(result.ok), opened: result.result?.opened || "", error: result.ok ? "" : result.error || "Could not open it.", receiptId: result.receipt?.id || "" });
+    return;
+  }
+  // Handoff — send a link/video from the phone to the laptop (opens in the PC's default browser).
+  if (req.method === "POST" && pathname === "/api/device-mesh/pc/open-url") {
+    if (!requestTrust.isOwnerSurface(req)) throw Object.assign(new Error("Owner surface required."), { statusCode: 403 });
+    const data = await parseRequestData(req);
+    let target = String(data.url || "").trim().slice(0, 2000);
+    if (!target) throw Object.assign(new Error("Nothing to send."), { statusCode: 400 });
+    if (!/^https?:\/\//i.test(target)) target = `https://${target}`;                 // bare host -> https
+    const result = await capabilityEngine.execute("open_url", { url: target }, { sessionId: req.jarvisSession?.id, source: "phone-handoff" });
+    sendJson(res, result.ok ? 200 : 400, { ok: Boolean(result.ok), url: target, error: result.ok ? "" : result.error || "Could not open it on the PC.", receiptId: result.receipt?.id || "" });
+    return;
+  }
+  // Display cast — main Jarvis (or an owner call) sets what the phone Display surface shows.
+  if (req.method === "GET" && pathname === "/api/display/current") {
+    if (!requestTrust.isOwnerSurface(req)) throw Object.assign(new Error("Owner surface required."), { statusCode: 403 });
+    sendJson(res, 200, { ok: true, cast: displayCast.getCast() });
+    return;
+  }
+  if (req.method === "POST" && pathname === "/api/display/cast") {
+    if (!requestTrust.isOwnerSurface(req)) throw Object.assign(new Error("Owner surface required."), { statusCode: 403 });
+    const data = await parseRequestData(req);
+    const result = displayCast.setCast(data || {});
+    sendJson(res, result.ok ? 200 : 400, result);
+    return;
+  }
+  if (req.method === "POST" && pathname === "/api/display/clear") {
+    if (!requestTrust.isOwnerSurface(req)) throw Object.assign(new Error("Owner surface required."), { statusCode: 403 });
+    sendJson(res, 200, displayCast.clearCast());
+    return;
+  }
+  // One-tap game modes — the phone slide runs the PC chain (display/audio/launch).
+  if (req.method === "POST" && pathname === "/api/modes/run") {
+    if (!requestTrust.isOwnerSurface(req)) throw Object.assign(new Error("Owner surface required."), { statusCode: 403 });
+    const data = await parseRequestData(req);
+    const result = await gameModes.runMode(String(data.mode || ""));
+    sendJson(res, result.ok ? 200 : (result.error ? 400 : 207), result);
+    return;
+  }
+  // Handoff — what's in front on the laptop right now (to "bring it here").
+  if (req.method === "GET" && pathname === "/api/device-mesh/pc/foreground") {
+    if (!requestTrust.isOwnerSurface(req)) throw Object.assign(new Error("Owner surface required."), { statusCode: 403 });
+    const fg = await foregroundWindow();
+    sendJson(res, 200, { ok: true, foreground: fg || null });
     return;
   }
   if (req.method === "GET" && pathname === "/api/device-mesh/apps/icon") {

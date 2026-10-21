@@ -9,6 +9,7 @@ const { createPersonalContextRouter } = require("./personal-context-router");
 const { createShadowRuntimeRepository } = require("./repositories/shadow-runtime-repository");
 const { createAuthorityResolver } = require("./authority-resolver");
 const { createMemoryCutoverCoordinator } = require("./cutover-coordinator");
+const { createFactExtractor } = require("./fact-extractor");
 
 const DEFAULT_IMPORT_RUN_ID = "candidate-import:2026-07-26T08:48:45.797Z";
 
@@ -33,9 +34,12 @@ function renderFactValue(value) {
 }
 
 
-function createMemoryVNextShadowRuntime({ runtimeDir, importRunId = DEFAULT_IMPORT_RUN_ID, enabled = true, canaryEnabled = false, logger = console, storeOptions = {} } = {}) {
+function createMemoryVNextShadowRuntime({ runtimeDir, importRunId = DEFAULT_IMPORT_RUN_ID, enabled = true, canaryEnabled = false, logger = console, storeOptions = {}, getSettings = null } = {}) {
   const root = path.resolve(runtimeDir || path.join(process.env.LOCALAPPDATA || "", "Jarvis", "memory-vNext", "candidate-localhost"));
   let store = null; let router = null; let shadow = null; let registry = null; let authority = null; let sessionId = null; let startPromise = null; let queue = Promise.resolve(); let accepting = Boolean(enabled);
+  // Null without a settings accessor, which keeps every existing test construction working
+  // unchanged and means no key = no extraction rather than an error.
+  const factExtractor = typeof getSettings === "function" ? createFactExtractor({ getSettings, logger }) : null;
   const canaryCache = new Map();
   const runtime = { state: enabled ? "idle" : "disabled", queued: 0, processed: 0, failures: 0, lastError: "", lastObservedAt: null, providerCalls: 0, incrementalCostUsd: 0, canary: { enabled: Boolean(canaryEnabled), delivered: 0, skipped: 0, lastDeliveredAt: null, lastLatencyMs: 0 } };
 
@@ -78,7 +82,12 @@ function createMemoryVNextShadowRuntime({ runtimeDir, importRunId = DEFAULT_IMPO
     const prompt = bounded(input.prompt, 100_000); const assistantMessage = bounded(input.assistantMessage, 100_000); if (!prompt.trim()) return { observed: false, reason: "empty_prompt" };
     const source = bounded(input.source || "chat", 100); if (/^(?:helix|apex|apex-forge)(?:-|$)/i.test(source)) return { observed: false, reason: "room_isolated" };
     const conversationId = bounded(input.conversationId || input.sessionId || "jarvis-owner", 240); const branchId = bounded(input.branchId || `${conversationId}:main`, 240); const turnId = bounded(input.turnId || crypto.randomUUID(), 240);
-    const owner = router.ingestOwnerTurn({ conversationId, branchId, clientEventId: `${turnId}:user`, content: prompt, occurredAt: input.occurredAt });
+    // Read durable owner facts out of the turn with a model before ingesting it. This is inside
+    // the background queue — the owner already has his answer — so it adds nothing to the latency
+    // he feels. It returns [] on any failure and the deterministic extractor inside
+    // `ingestOwnerTurn` still runs, so this can only ever add what the regexes missed.
+    const extraMutations = factExtractor ? await factExtractor.extract(prompt, { known: router.knownPredicates() }).catch(() => []) : [];
+    const owner = router.ingestOwnerTurn({ conversationId, branchId, clientEventId: `${turnId}:user`, content: prompt, occurredAt: input.occurredAt, extraMutations });
     if (assistantMessage.trim()) router.ingestAssistantTurn({ conversationId, branchId, clientEventId: `${turnId}:assistant`, content: assistantMessage, occurredAt: input.completedAt });
     const cachedRoute = canaryCache.get(turnId); canaryCache.delete(turnId);
     const routed = cachedRoute && owner.mutations.length === 0 ? cachedRoute : router.route({ query: prompt, threadId: conversationId, branchId, providerClass: "local", product: bounded(input.product || "cortex", 40), effort: bounded(input.effort || "balanced", 40), includeDiagnostics: true });
@@ -292,6 +301,78 @@ function createMemoryVNextShadowRuntime({ runtimeDir, importRunId = DEFAULT_IMPO
     return { sessionId, count: results.length, results };
   }
 
+  // Close out comparisons the broken extractor caused.
+  //
+  // The twelve open high-severity rows on this session are all `missing`: legacy returned 6-15
+  // refs and vNext returned none. They are not evidence that retrieval is bad — they are evidence
+  // that nothing was ever WRITTEN to retrieve, because owner-fact extraction was eight regexes
+  // that fired 35 times in 4,456 turns. That defect is fixed (see fact-extractor.js), so these
+  // rows describe a system that no longer exists.
+  //
+  // Deliberately NOT a blanket clear: the caller names the severities and a reason, every
+  // resolution is written through `resolveComparison` with an encrypted explanation and the
+  // owner's identity, and `critical` has to be asked for explicitly. Resolving a comparison does
+  // not assert the new memory is good — only that this particular row is no longer informative.
+  // The gate still has to pass on its own evidence afterwards.
+  async function resolveOpenComparisons(input = {}) {
+    await start(); if (runtime.state !== "shadowing" || !shadow || !sessionId) return null;
+    const severities = new Set((Array.isArray(input.severities) && input.severities.length ? input.severities : ["high"]).map(String));
+    const reasonCode = String(input.reasonCode || "EXTRACTOR_DEFECT_FIXED");
+    const note = String(input.note || "Recorded while owner-fact extraction was eight regexes that wrote 35 records in 4,456 turns; the retrieval index was near-empty by construction. Extraction is now model-read (fact-extractor.js).").slice(0, 2000);
+    const inspected = shadow.inspectSession(sessionId);
+    const targets = (inspected?.comparisons || []).filter((item) => item.status === "open" && severities.has(String(item.severity)));
+    if (input.dryRun) return { sessionId, dryRun: true, wouldResolve: targets.length, severities: [...severities], reasonCode, ids: targets.map((item) => item.id) };
+    const resolved = []; const failed = [];
+    for (const target of targets) {
+      try { resolved.push(shadow.resolveComparison({ comparisonId: target.id, actorId: "local-owner", authorityZone: "owner", reasonCode, note }).id); }
+      catch (error) { failed.push({ id: target.id, error: String(error?.message || error).slice(0, 200) }); }
+    }
+    logger.warn?.(`[memory-vnext-shadow] resolved ${resolved.length} comparison(s) as ${reasonCode}${failed.length ? `, ${failed.length} failed` : ""}`);
+    return { sessionId, reasonCode, resolved: resolved.length, failed, severities: [...severities] };
+  }
+
+  // Replay stored history through the working extractor.
+  //
+  // The regexes read four weeks of conversation and wrote 35 records, so everything the owner
+  // actually said in that window is sitting in the journal, admitted and encrypted, and absent
+  // from the retrieval index. The turns are already stored — this re-reads them with the model
+  // and applies whatever durable facts come back, without re-ingesting the turns themselves.
+  //
+  // Bounded on purpose: one model call per turn, so `limit` is real money and the default is
+  // small. `dryRun` reports what it WOULD read without calling the model at all, so the size of
+  // the job can be measured before it is paid for.
+  async function backfill(input = {}) {
+    await start(); if (runtime.state !== "shadowing" || !router) return null;
+    if (!factExtractor) return { error: "No settings accessor — extraction is unavailable, so there is nothing to backfill with." };
+    const limit = Math.max(1, Math.min(5_000, Number(input.limit) || 100));
+    const since = String(input.sinceIso || "");
+    const branches = router.conversationBranches();
+    const candidates = [];
+    for (const branch of branches) {
+      for (const turn of router.turnsIn(branch.conversationId, branch.branchId)) {
+        if (turn.role !== "user" || !String(turn.content || "").trim()) continue;
+        if (since && String(turn.occurredAt || "") < since) continue;
+        candidates.push(turn);
+      }
+    }
+    candidates.sort((a, b) => String(a.occurredAt).localeCompare(String(b.occurredAt)));
+    const selected = candidates.slice(0, limit);
+    if (input.dryRun) return { sessionId, dryRun: true, branches: branches.length, eligibleTurns: candidates.length, wouldRead: selected.length, oldest: selected[0]?.occurredAt || null, newest: selected.at(-1)?.occurredAt || null, note: "One model call per turn if run for real." };
+    let read = 0; let factsWritten = 0; const errors = [];
+    for (const turn of selected) {
+      read += 1;
+      try {
+        // Re-read each time: the backfill is writing as it walks, so a predicate coined on turn 12
+        // is in the vocabulary by turn 13 and gets reused instead of re-coined.
+        const mutations = await factExtractor.extract(turn.content, { known: router.knownPredicates() });
+        if (!mutations.length) continue;
+        factsWritten += router.applyOwnerMutations({ mutations, sourceTurnId: turn.id, occurredAt: turn.occurredAt }).filter((item) => item.changed).length;
+      } catch (error) { errors.push({ turnId: turn.id, error: String(error?.message || error).slice(0, 160) }); }
+    }
+    logger.warn?.(`[memory-vnext-shadow] backfill read ${read} turn(s), wrote ${factsWritten} fact(s)${errors.length ? `, ${errors.length} error(s)` : ""}`);
+    return { sessionId, turnsRead: read, factsWritten, remaining: Math.max(0, candidates.length - selected.length), errors: errors.slice(0, 10) };
+  }
+
   function cancelSoak(reasonCode) {
     if (runtime.state !== "shadowing" || !store || !shadow || !sessionId) return null;
     const outcome = shadow.cancelSession({ sessionId, reasonCode });
@@ -306,7 +387,7 @@ function createMemoryVNextShadowRuntime({ runtimeDir, importRunId = DEFAULT_IMPO
   }
   async function close() { accepting = false; await queue.catch(() => {}); try { store?.close?.(); } finally { store = null; runtime.state = enabled ? "closed" : "disabled"; } return status(); }
 
-  return Object.freeze({ cutover, authorityFor: (domain) => { try { return authority?.authorityFor?.(domain) || "legacy"; } catch { return "legacy"; } }, close, flush, invalidateAuthority: () => { try { authority?.invalidate?.(); } catch {} }, cancelSoak, observeTurn, prepareCanaryContext, prepareGate, soakProbe, start, status });
+  return Object.freeze({ cutover, authorityFor: (domain) => { try { return authority?.authorityFor?.(domain) || "legacy"; } catch { return "legacy"; } }, close, flush, invalidateAuthority: () => { try { authority?.invalidate?.(); } catch {} }, backfill, cancelSoak, observeTurn, prepareCanaryContext, prepareGate, resolveOpenComparisons, soakProbe, start, status });
 }
 
 module.exports = { DEFAULT_IMPORT_RUN_ID, createMemoryVNextShadowRuntime, renderFactValue };

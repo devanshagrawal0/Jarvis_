@@ -9,7 +9,9 @@ const crypto = require("crypto");
 const { validate, ArtifactManifest } = require("../contracts");
 const { id, nowIso } = require("../contracts/validate");
 
-function composeReport({ mission, validated = [], evidenceStore = null, outDir }) {
+// `draft` (S2.2): the Writer's rendered markdown. When present it IS the report body; the
+// Findings list below is the pre-Writer fallback (and the abstain shape).
+function composeReport({ mission, validated = [], evidenceStore = null, outDir, draft = null }) {
   const missionId = mission.missionId;
   const dir = path.join(outDir || path.join(process.cwd(), "runtime", "eclipse-artifacts"), missionId);
   fs.mkdirSync(dir, { recursive: true });
@@ -26,6 +28,9 @@ function composeReport({ mission, validated = [], evidenceStore = null, outDir }
   lines.push(`# ${titleFor(mission)}`, "", `> Mission: ${mission.prompt}`, `> Generated: ${nowIso()} · Effort: ${mission.effort} · Validated findings: ${validated.length}`, "");
   if (!validated.length) {
     lines.push("## Findings", "", "_No claim cleared the evidence-promotion gate. Nothing is asserted as fact — the mission did not reach a verified conclusion within budget._", "");
+  } else if (draft) {
+    lines.push(String(draft).trim(), "");
+    for (const p of validated) for (const e of p.evidence || []) srcNum(e.sourceUri, e.quote);   // manifest still lists every cited source
   } else {
     lines.push("## Findings", "");
     for (const p of validated) {
@@ -35,7 +40,7 @@ function composeReport({ mission, validated = [], evidenceStore = null, outDir }
     }
     lines.push("");
   }
-  if (sources.length) {
+  if (sources.length && !draft) {          // the Writer's draft carries its own Sources list
     lines.push("## Sources", "");
     for (const s of sources) lines.push(`${s.n}. ${s.uri}${s.quote ? ` — “${escapeMd(String(s.quote).slice(0, 160))}”` : ""}`);
     lines.push("");

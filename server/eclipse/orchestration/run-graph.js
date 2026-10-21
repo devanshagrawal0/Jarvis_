@@ -14,6 +14,9 @@ const { issueRootLease } = require("../capabilities/lease");
 const { createGateway } = require("../capabilities/tool-gateway");
 const { BRIDGE_SIDE_EFFECTING, BRIDGE_TOOL_SCOPE } = require("../capabilities/jarvis-bridge");
 const { createToolbox } = require("../tools");
+const { createAgentDefs } = require("../agents/defs");           // S1.B2: registry cards for the Conductor
+const { createTaskLedger } = require("../agents/conductor");    // S1.B2: task ledger
+const { createRegistryTools, createKnowledgeSearch } = require("../agents/scout-tools"); // S1.B3
 const { createEvidenceStore } = require("../evidence/store");
 const { validate, MissionSpec } = require("../contracts");
 
@@ -30,6 +33,7 @@ function buildApp(nodes, checkpointer) {
     .addNode("synthesize", nodes.synthesize)
     .addNode("artifact", nodes.artifact)
     .addNode("commit", nodes.commit)
+    .addNode("followup", nodes.followup)              // S1.B4: bounded follow-up wave
     .addEdge(START, "intake")
     .addEdge("intake", "contract")
     .addEdge("contract", "context")
@@ -37,7 +41,8 @@ function buildApp(nodes, checkpointer) {
     .addConditionalEdges("plan", nodes.fanOut, ["worker"])  // Send fan-out
     .addEdge("worker", "critic")           // superstep barrier: all workers finish → critic
     .addEdge("critic", "verify")
-    .addConditionalEdges("verify", nodes.afterVerify, { synthesize: "synthesize", repair: "repair" })
+    .addConditionalEdges("verify", nodes.afterVerify, { synthesize: "synthesize", repair: "repair", followup: "followup" })
+    .addConditionalEdges("followup", nodes.fanOut, ["worker"])   // reuse the Send fan-out
     .addEdge("repair", "verify")
     .addEdge("synthesize", "artifact")
     .addEdge("artifact", "commit")
@@ -81,9 +86,17 @@ function makeRun(opts) {
   return { store, ledger, adapter, checkpointer, graphRunId, conn, rootLease, gateway, evidenceStore, toolbox, artifactsDir, useFoundry: !!opts.useFoundry, reputation: opts.reputation || null };
 }
 
+// Idempotent (INSERT OR IGNORE keyed by agent_id+version): cheap to call on every run.
+function seededDefs(db) { const d = createAgentDefs(db); d.seedDefaults(); return d; }
+
 function buildNodesAndApp(run, mission, control) {
   const nodes = createNodes({
     adapter: run.adapter, store: run.store, ledger: run.ledger,
+    // The registry belongs to the ENGINE. It used to be seeded only by integration/ensureStore,
+    // so any other caller ran with an EMPTY eclipse_agent_defs -> zero hireable cards ->
+    // z.enum([]) -> every staffing call failed schema -> silent fallback to the legacy planner.
+    agentDefs: seededDefs(run.store.db), taskLedger: createTaskLedger(run.store.db), // S1.B2
+    registryTools: createRegistryTools(run.store.db), knowledgeSearch: createKnowledgeSearch(run.store.db), // S1.B3
     missionId: mission.missionId, graphRunId: run.graphRunId,
     rootLease: run.rootLease, gateway: run.gateway,
     toolbox: run.toolbox, evidenceStore: run.evidenceStore, artifactsDir: run.artifactsDir, live: run.adapter.mode === "live", useFoundry: run.useFoundry,
@@ -108,13 +121,21 @@ async function execute(app, input, cfg, run, mission) {
       for (const [bp, a] of Object.entries(agg)) run.reputation.recordOutcome({ blueprintId: bp, persona: "", validated: a.validated, packets: a.packets, tokens: snap.tokens, costUsd: snap.costUsd });
     }
     // Mission-lifecycle terminal event (owned by the orchestrator, not a node) → always last.
-    run.store.appendEvent(mission.missionId, "mission.complete", { tokens: snap.tokens, costUsd: snap.costUsd, phase: state.phase });
+    // N-6: carry the answer IN the terminal event. The UI's single-shot result fetch raced the
+    // rec.result assignment and could render a blank answer on completion.
+    run.store.appendEvent(mission.missionId, "mission.complete", { tokens: snap.tokens, costUsd: snap.costUsd, phase: state.phase, answer: String((state.result && state.result.draft) || "").slice(0, 20000) });
     return { graphRunId: run.graphRunId, status: "complete", state, ledger: snap, run, cfg, mission };
   } catch (err) {
     if (err && err.eclipseControl) {
       const status = err.eclipseControl === "pause" ? "paused" : "cancelled";
       run.store.setStatus(run.graphRunId, status, null);
-      return { graphRunId: run.graphRunId, status, atNode: err.atNode, run, cfg, mission, resumable: status === "paused" };
+      // A stopped mission still spent real tokens. Reporting zero for it hides the cost of the
+      // work that was already done, which is the number the owner most needs after cancelling.
+      const snap = run.ledger.snapshot();
+      // Distinct type: the node that observed the flag already emitted mission.cancelled with
+      // WHERE it stopped; this carries the final spend so the two are not duplicate status lines.
+      run.store.appendEvent(mission.missionId, "mission.stopped", { status, tokens: snap.tokens, costUsd: snap.costUsd, atNode: err.atNode || null });
+      return { graphRunId: run.graphRunId, status, atNode: err.atNode, ledger: snap, run, cfg, mission, resumable: status === "paused" };
     }
     if (err && (err.code === "ECLIPSE_BUDGET")) {
       run.store.setStatus(run.graphRunId, "failed", null);

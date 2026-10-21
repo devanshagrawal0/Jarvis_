@@ -15,8 +15,8 @@ function signatureOf(text) { return normalize(text).split(" ").slice(0, 6).join(
 function runCurator(db, { pruneConfidence = 0.35 } = {}) {
   const claims = db.prepare(`SELECT claim_id, mission_id, text, class, confidence, status FROM claims`).all();
   const getByHash = db.prepare(`SELECT mem_id, support_count, confidence FROM eclipse_semantic_memory WHERE content_hash=?`);
-  const insMem = db.prepare(`INSERT OR IGNORE INTO eclipse_semantic_memory(mem_id,text,kind,confidence,support_count,content_hash,first_mission,last_mission,created_at,updated_at)
-    VALUES(@mem_id,@text,@kind,@confidence,1,@content_hash,@mission,@mission,@at,@at)`);
+  const insMem = db.prepare(`INSERT OR IGNORE INTO eclipse_semantic_memory(mem_id,text,kind,confidence,support_count,content_hash,first_mission,last_mission,created_at,updated_at,provenance_json)
+    VALUES(@mem_id,@text,@kind,@confidence,1,@content_hash,@mission,@mission,@at,@at,@provenance)`);
   const bump = db.prepare(`UPDATE eclipse_semantic_memory SET support_count=support_count+1, confidence=MAX(confidence,@confidence), last_mission=@mission, updated_at=@at WHERE content_hash=@content_hash`);
 
   let promoted = 0, corroborated = 0, reflexions = 0;
@@ -28,14 +28,16 @@ function runCurator(db, { pruneConfidence = 0.35 } = {}) {
       const hash = hashOf("fact:" + normalize(c.text));
       const existing = getByHash.get(hash);
       if (existing) { bump.run({ confidence: c.confidence, mission: c.mission_id, at, content_hash: hash }); corroborated++; }
-      else { insMem.run({ mem_id: id("sem"), text: c.text, kind: "fact", confidence: c.confidence, content_hash: hash, mission: c.mission_id, at }); promoted++; }
+      // Provenance is the AgentPoison defense made auditable: every fact row names the promoted
+      // claim it came from. There is NO code path from raw fetched text to this table.
+      else { insMem.run({ mem_id: id("sem"), text: c.text, kind: "fact", confidence: c.confidence, content_hash: hash, mission: c.mission_id, at, provenance: JSON.stringify({ missionId: c.mission_id, claimId: c.claim_id }) }); promoted++; }
     } else if (c.status === "unsupported" || c.status === "mixed" || c.status === "stale") {
       // Distil a reflexion note keyed by task signature (dedup within this run).
       const sig = signatureOf(c.text);
       const hash = hashOf("reflexion:" + sig);
       if (seenReflexion.has(hash)) continue; seenReflexion.add(hash);
       if (!getByHash.get(hash)) {
-        insMem.run({ mem_id: id("rfx"), text: `Unverified/weak: "${sig}…" — verify sources before asserting.`, kind: "reflexion", confidence: 0.3, content_hash: hash, mission: c.mission_id, at });
+        insMem.run({ mem_id: id("rfx"), text: `Unverified/weak: "${sig}…" — verify sources before asserting.`, kind: "reflexion", confidence: 0.3, content_hash: hash, mission: c.mission_id, at, provenance: JSON.stringify({ missionId: c.mission_id, claimId: c.claim_id }) });
         reflexions++;
       }
     }

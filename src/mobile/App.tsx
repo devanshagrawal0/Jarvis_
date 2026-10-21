@@ -3,6 +3,8 @@ import { Stage } from "./Stage";
 import { Thread } from "./Thread";
 import { Control } from "./Control";
 import { Files } from "./Files";
+import { Handoff } from "./Handoff";
+import { Display } from "./Display";
 import { useVoice } from "./voice";
 import type { CortexState } from "./Cortex";
 import { useThread } from "./useThread";
@@ -11,16 +13,17 @@ import { bootSession, fetchProfile, resolveClientContext, STRENGTH_LABEL, type H
 // Batch 2 (plan v2 §2/§3): the shell around the centrepiece — thin top bar, hairline composer,
 // tab strip, and the thread. The globe docks into the top bar the moment a conversation starts.
 
-type Tab = "jarvis" | "control" | "files" | "rooms" | "you";
+type Tab = "jarvis" | "control" | "files" | "handoff" | "display" | "you";
 const TABS: Array<{ id: Tab; label: string; batch: number }> = [
-  { id: "jarvis", label: "Jarvis", batch: 2 }, { id: "control", label: "Control", batch: 6 }, { id: "files", label: "Files", batch: 7 }, { id: "rooms", label: "Rooms", batch: 8 }, { id: "you", label: "You", batch: 9 },
+  { id: "jarvis", label: "Jarvis", batch: 2 }, { id: "control", label: "Control", batch: 6 }, { id: "files", label: "Files", batch: 7 }, { id: "handoff", label: "Drop", batch: 8 }, { id: "display", label: "Display", batch: 10 }, { id: "you", label: "You", batch: 9 },
 ];
 const STRENGTHS: Strength[] = ["cost-guarded", "balanced", "full"];
 const I = {
   jarvis: <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="4" /><circle cx="12" cy="12" r="9" strokeDasharray="3 3.5" /></svg>,
   control: <svg viewBox="0 0 24 24"><rect x="3" y="4.5" width="18" height="12" rx="1.5" /><path d="M8.5 20h7M12 16.5V20" /></svg>,
   files: <svg viewBox="0 0 24 24"><path d="M3.5 6.5a2 2 0 0 1 2-2h4l2 2h7a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2z" /></svg>,
-  rooms: <svg viewBox="0 0 24 24"><rect x="3.5" y="3.5" width="7" height="7" rx="1" /><rect x="13.5" y="3.5" width="7" height="7" rx="1" /><rect x="3.5" y="13.5" width="7" height="7" rx="1" /><rect x="13.5" y="13.5" width="7" height="7" rx="1" /></svg>,
+  handoff: <svg viewBox="0 0 24 24"><path d="M7 8l-4 4 4 4M17 8l4 4-4 4M14 4l-4 16" /></svg>,
+  display: <svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="12" rx="1.5" /><path d="M8.5 20h7M12 17v3M6.5 9.5a4 4 0 0 1 4 4" /></svg>,
   you: <svg viewBox="0 0 24 24"><circle cx="12" cy="8.5" r="3.5" /><path d="M5 20a7 7 0 0 1 14 0" /></svg>,
   attach: <svg viewBox="0 0 24 24"><path d="M21 12.5 12.6 21a5 5 0 0 1-7-7l8.8-8.8a3.2 3.2 0 0 1 4.5 4.5L10 18.6a1.4 1.4 0 0 1-2-2l8-8" /></svg>,
   mic: <svg viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="11" rx="3" /><path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21" /></svg>,
@@ -141,6 +144,8 @@ export function MobileApp() {
             ))
             : tab === "control" ? <Control active={tab === "control"} dock={ctlDock} strength={strength} />
             : tab === "files" ? <Files active={tab === "files"} />
+            : tab === "handoff" ? <Handoff active={tab === "handoff"} onOpenTab={(t) => setTab(t as Tab)} />
+            : tab === "display" ? <Display active={tab === "display"} />
             : <div className="not-built"><div className="kicker">{current.label}</div><div className="nb-title">Not built yet</div><div className="nb-body">Arrives in batch {current.batch}. Nothing here is faked.</div><div className="build mono">build {typeof __JARVIS_BUILD__ === "string" ? __JARVIS_BUILD__ : "dev"}</div></div>}
         </main>
 

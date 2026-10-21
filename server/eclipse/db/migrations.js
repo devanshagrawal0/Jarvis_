@@ -6,7 +6,7 @@
 const path = require("path");
 const Database = require("better-sqlite3");
 
-const SCHEMA_VERSION = 3;
+const SCHEMA_VERSION = 4;
 
 const DDL = `
 CREATE TABLE IF NOT EXISTS eclipse_meta (
@@ -154,6 +154,69 @@ CREATE TABLE IF NOT EXISTS eclipse_semantic_memory (
   created_at    TEXT NOT NULL, updated_at TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_semantic_hash ON eclipse_semantic_memory(content_hash);
+-- ── Wave 2 (S1.B1): the agent registry + ledgers + draft blocks + scout registry ──────────
+-- Agents are DATA: versioned definitions the Conductor plans over (agent cards). One row per
+-- (agent_id, version); reputation joins on agent_id.
+CREATE TABLE IF NOT EXISTS eclipse_agent_defs (
+  agent_id     TEXT NOT NULL,
+  version      INTEGER NOT NULL,
+  description  TEXT NOT NULL,
+  mandate      TEXT NOT NULL,
+  tools_json   TEXT NOT NULL,
+  model_role   TEXT NOT NULL,
+  input_schema_json  TEXT NOT NULL DEFAULT '{}',
+  output_schema_json TEXT NOT NULL DEFAULT '{}',
+  fanout       INTEGER NOT NULL DEFAULT 0,
+  guardrails_json TEXT NOT NULL DEFAULT '[]',
+  knowledge_scope TEXT,
+  budgets_json TEXT NOT NULL DEFAULT '{}',
+  created_at   TEXT NOT NULL, updated_at TEXT NOT NULL,
+  PRIMARY KEY (agent_id, version)
+);
+
+-- Scout no-overlap registry: who claimed which url/query/finding in a mission (most-specific
+-- first-writer wins; checked IN CODE before every fetch).
+CREATE TABLE IF NOT EXISTS eclipse_scout_registry (
+  mission_id TEXT NOT NULL, scout_id TEXT NOT NULL,
+  kind TEXT NOT NULL CHECK(kind IN ('url','query','finding')),
+  value TEXT NOT NULL,
+  content_hash TEXT,
+  created_at TEXT NOT NULL,
+  PRIMARY KEY (mission_id, kind, value)
+);
+
+-- Conductor task ledger: contract + FACTS (code-written from promoted claims ONLY) vs guesses.
+CREATE TABLE IF NOT EXISTS eclipse_task_ledger (
+  mission_id  TEXT PRIMARY KEY,
+  contract_json TEXT NOT NULL,
+  facts_json  TEXT NOT NULL DEFAULT '[]',
+  guesses_json TEXT NOT NULL DEFAULT '[]',
+  plan_json   TEXT NOT NULL DEFAULT '{}',
+  revision    INTEGER NOT NULL DEFAULT 0,
+  updated_at  TEXT NOT NULL
+);
+
+-- Conductor progress ledger: measurable progress per completion event + stall counter.
+CREATE TABLE IF NOT EXISTS eclipse_progress_ledger (
+  mission_id TEXT NOT NULL, seq INTEGER NOT NULL,
+  trigger TEXT NOT NULL,
+  satisfied INTEGER NOT NULL DEFAULT 0,
+  progress  INTEGER NOT NULL DEFAULT 0,
+  stall_count INTEGER NOT NULL DEFAULT 0,
+  next_action_json TEXT NOT NULL DEFAULT '{}',
+  created_at TEXT NOT NULL,
+  PRIMARY KEY (mission_id, seq)
+);
+
+-- Writer draft blocks: the born-attributed sentence->claim map, versioned (used from S2;
+-- created now so Wave 2 needs exactly one schema bump).
+CREATE TABLE IF NOT EXISTS eclipse_draft_blocks (
+  mission_id TEXT NOT NULL, version INTEGER NOT NULL, section_id TEXT NOT NULL,
+  block_seq INTEGER NOT NULL, block_json TEXT NOT NULL,
+  sentence_map_json TEXT NOT NULL DEFAULT '[]',
+  created_at TEXT NOT NULL,
+  PRIMARY KEY (mission_id, version, section_id, block_seq)
+);
 `;
 
 function openEclipseDb(runtimeDir) {
@@ -180,6 +243,25 @@ function migrate(db) {
   addColumnIfMissing(db, "eclipse_graph_runs", "tokens", "INTEGER NOT NULL DEFAULT 0");
   addColumnIfMissing(db, "eclipse_graph_runs", "cost_usd", "REAL NOT NULL DEFAULT 0");
   addColumnIfMissing(db, "eclipse_graph_runs", "cancel_requested", "INTEGER NOT NULL DEFAULT 0");
+  // v3 -> v4 (Wave 2 S1.B1): per-agent knowledge partitions + provenance on semantic memory,
+  // and an FTS5 index over it (knowledge.search). Writes stay gated through the curator.
+  addColumnIfMissing(db, "eclipse_semantic_memory", "agent_scope", "TEXT");
+  addColumnIfMissing(db, "eclipse_semantic_memory", "provenance_json", "TEXT");
+  db.exec(`CREATE VIRTUAL TABLE IF NOT EXISTS fts_semantic USING fts5(text, content=eclipse_semantic_memory, content_rowid=rowid);
+CREATE TRIGGER IF NOT EXISTS trg_sem_ai AFTER INSERT ON eclipse_semantic_memory BEGIN
+  INSERT INTO fts_semantic(rowid, text) VALUES (new.rowid, new.text);
+END;
+CREATE TRIGGER IF NOT EXISTS trg_sem_ad AFTER DELETE ON eclipse_semantic_memory BEGIN
+  INSERT INTO fts_semantic(fts_semantic, rowid, text) VALUES('delete', old.rowid, old.text);
+END;
+CREATE TRIGGER IF NOT EXISTS trg_sem_au AFTER UPDATE OF text ON eclipse_semantic_memory BEGIN
+  INSERT INTO fts_semantic(fts_semantic, rowid, text) VALUES('delete', old.rowid, old.text);
+  INSERT INTO fts_semantic(rowid, text) VALUES (new.rowid, new.text);
+END;`);
+  // Backfill the FTS index once for rows that predate it.
+  const ftsCount = db.prepare("SELECT count(*) n FROM fts_semantic").get().n;
+  const semCount = db.prepare("SELECT count(*) n FROM eclipse_semantic_memory").get().n;
+  if (ftsCount === 0 && semCount > 0) db.exec("INSERT INTO fts_semantic(rowid, text) SELECT rowid, text FROM eclipse_semantic_memory;");
   const cur = db.prepare("SELECT value FROM eclipse_meta WHERE key='schema_version'").get();
   if (!cur) db.prepare("INSERT INTO eclipse_meta(key, value) VALUES('schema_version', ?)").run(String(SCHEMA_VERSION));
   else if (Number(cur.value) < SCHEMA_VERSION) db.prepare("UPDATE eclipse_meta SET value=? WHERE key='schema_version'").run(String(SCHEMA_VERSION));

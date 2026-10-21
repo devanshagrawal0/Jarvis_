@@ -239,7 +239,14 @@ function createConversationRepository({ db, keyring, clock, faultInjector }) {
       .all(conversationId, branchId).map((row) => readTurn(row.id));
   }
 
-  return Object.freeze({ appendChunk, beginAssistantTurn, decryptObject, finalizeAssistantTurn, ingestTurn, interruptTurn, listTurns, openConversation, readTurn });
+  // Every conversation/branch that actually holds turns. Read off `turns` rather than
+  // `conversations` on purpose: a branch row with nothing in it is not worth replaying, and this
+  // cannot drift out of step with what `listTurns` will return.
+  function listConversationBranches() {
+    return db.prepare("SELECT DISTINCT conversation_id AS conversationId, branch_id AS branchId FROM turns ORDER BY conversation_id, branch_id").all();
+  }
+
+  return Object.freeze({ appendChunk, beginAssistantTurn, decryptObject, finalizeAssistantTurn, ingestTurn, interruptTurn, listConversationBranches, listTurns, openConversation, readTurn });
 }
 
 module.exports = { createConversationRepository };

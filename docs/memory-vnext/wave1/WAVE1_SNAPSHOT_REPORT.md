@@ -1,39 +1,39 @@
 # Memory vNext Wave 1 — Snapshot and Structural Inventory
 
-**Generated:** 2026-07-23T13:46:31.001Z  
-**Snapshot root:** `C:\Users\devan\AppData\Local\Jarvis\memory-vNext\wave1-snapshots\2026-07-23T13-46-17-837Z`  
+**Generated:** 2026-09-14T00:06:17.931Z  
+**Snapshot root:** `C:\Users\Devansh\AppData\Local\Jarvis\memory-vNext\wave1-snapshots\2026-09-14T00-06-16-441Z`  
 **Safety:** SQLite online backups; no live DB/WAL copied directly; no row contents or secret values emitted.  
 
 ## Summary
 
 - Stores declared: 17
-- Verified snapshots: 17
-- Source DB size: 927.31 MiB
-- Live WAL observed: 160.46 MiB
-- Code files scanned without snippets: 446
-- Environment/API variable names found: 64; values were never read or written.
+- Verified snapshots: 11
+- Source DB size: 0.05 MiB
+- Live WAL observed: 6.33 MiB
+- Code files scanned without snippets: 1506
+- Environment/API variable names found: 97; values were never read or written.
 
 ## Stores
 
 | Store | Owner | Snapshot status | DB MiB | WAL MiB | Tables | Declared FKs | Snapshot SHA-256 | Decommission disposition |
 |---|---|---|---:|---:|---:|---:|---|---|
-| `runtime/jarvis-memory.sqlite` | jarvis | snapshotted_verified | 1.57 | 4.00 | 5 | 2 | `38c699a87003095751bd817e94b64098de2087003142114d4f01348fbff6ad2e` | migrate_then_disable |
-| `runtime/memory/jarvis_memory.sqlite` | jarvis | snapshotted_verified | 175.28 | 3.99 | 3 | 0 | `7ab89c437bc229a0c93344895bcd375596fd2195a46a3ae64677dc115417b96a` | telemetry_archive |
-| `runtime/neural_vault/db/neural_vault.sqlite` | neural_vault | snapshotted_verified | 27.59 | 4.87 | 97 | 3 | `fb1d47a35dc6ed7c82632d79e9a000405afd6c8db38e4fc49810a56c248efd6e` | migrate_then_disable |
-| `runtime/memory-vectors.sqlite` | jarvis | snapshotted_verified | 0.00 | 2.13 | 1 | 0 | `7421fa9528d4e68a039e3535f74dcc3936c13322f64ba07847294778611bf75e` | rebuild_do_not_import |
-| `runtime/user-context.sqlite` | jarvis | snapshotted_verified | 0.00 | 0.23 | 19 | 0 | `9916768dc4a33862ac6764d3eb72415ae7a4a85bf6cfecef2d17803105cf652f` | migrate_then_disable |
-| `runtime/jarvis-missions.sqlite` | missions | snapshotted_verified | 671.47 | 123.93 | 2 | 0 | `a26e83ed8dff51c5e2590b9d99bd77a123a1527e54b83a13f7e8bbb020ece3ab` | split_task_truth_from_telemetry |
-| `runtime/jarvis-pc-graph.sqlite` | pc_graph | snapshotted_verified | 8.42 | 3.96 | 3 | 0 | `baf04c65141f079cb2e868c4e1022b11a9e813f32d83ada619eee3b3cd3dcf32` | manifest_and_pointer_migration |
-| `runtime/jarvis-skills.sqlite` | skills | snapshotted_verified | 11.79 | 3.96 | 2 | 0 | `8a955a87cf75a4cd696396356cc20f7a416a11f8043d79ab05fbfc65e248cc1a` | candidate_import |
-| `runtime/helix.sqlite` | helix | snapshotted_verified | 1.09 | 1.38 | 76 | 29 | `6c3e08b5b8c851345f5e3d036db8d99d0e56337e98907c9741670eabe318f0fa` | retain_domain_owner_publish_manifests |
-| `runtime/apex.sqlite` | apex | snapshotted_verified | 29.18 | 3.96 | 24 | 0 | `ea9d222503e87afd98036805e90afd0442004557b972918211cca3f6d1fc6fbe` | retain_domain_owner_publish_manifests |
-| `runtime/apex-oracle.sqlite` | apex | snapshotted_verified | 0.48 | 3.93 | 6 | 1 | `fa35dc637b5f313084ca293aea232a8ffcad0ca6e480ac2d3b70a7dcf581639b` | retain_domain_owner_publish_manifests |
-| `runtime/eclipse.sqlite` | eclipse | snapshotted_verified | 0.00 | 3.34 | 13 | 0 | `3f081a3d7ca60e1b2268292385596973b03c6afa5bf282461598fe39357ff413` | retain_domain_owner_publish_manifests |
-| `runtime/eclipse-checkpoints.sqlite` | eclipse | snapshotted_verified | 0.40 | 0.00 | 2 | 0 | `8dc13bbe00b9974d9b5339f9962024fa72df66f30a5c388fdcbeb86ce3e82d0b` | retain_domain_owner_publish_manifests |
-| `runtime/coop_symbiote/coop.db` | mesh | snapshotted_verified | 0.00 | 0.79 | 3 | 0 | `95886bd14e5a8ac637363e42b45eb8544e0042b50ed583b00d2892256a5636dc` | retain_domain_owner_publish_manifests |
-| `runtime/arbiter.db` | arbiter | snapshotted_verified | 0.01 | 0.00 | 1 | 0 | `ee540bf2a64e196199fab5fe95c73af4abcf30acc4403ec6d4252a53d5404053` | inspect_then_classify |
-| `runtime/old-brain-3/brain/memory/commands.db` | legacy_archive | snapshotted_verified | 0.01 | 0.00 | 1 | 0 | `a14c9e622708732c7d0d445771d11eeb358417d1677ff58e78089ef3ff14ddd3` | candidate_import_then_archive |
-| `runtime/old-brain-3/brain/memory/habits.db` | legacy_archive | snapshotted_verified | 0.02 | 0.00 | 2 | 0 | `c887ea759464cbe39bbccf145542d8b06efb4a366a30f00acf5a8fe81355b6d8` | candidate_import_then_archive |
+| `runtime/jarvis-memory.sqlite` | jarvis | missing | 0.00 | 0.00 | — | — | `—` | migrate_then_disable |
+| `runtime/memory/jarvis_memory.sqlite` | jarvis | snapshotted_verified | 0.00 | 0.04 | 3 | 0 | `531fdab588c99abf1cbb2de86cf6defd360cf86ccf898f52f659a744087aa8ae` | telemetry_archive |
+| `runtime/neural_vault/db/neural_vault.sqlite` | neural_vault | snapshotted_verified | 0.00 | 2.84 | 97 | 3 | `dd88bf9969cf2c1b4854e4bd23d7e658322ccc1ae2a02735c0f8fbfeeaf87f89` | migrate_then_disable |
+| `runtime/memory-vectors.sqlite` | jarvis | snapshotted_verified | 0.00 | 0.01 | 1 | 0 | `ccec07eaf5532fa5eabd43ff8148d834eb8194b5624cd51b3b504c88967fe5a2` | rebuild_do_not_import |
+| `runtime/user-context.sqlite` | jarvis | snapshotted_verified | 0.00 | 0.20 | 19 | 0 | `700b57462604ac922427f458b54c9d26f5099503fcbb9a578d4137198fe9dcf4` | migrate_then_disable |
+| `runtime/jarvis-missions.sqlite` | missions | snapshotted_verified | 0.00 | 0.04 | 2 | 0 | `4a341297bbe9107e774ec66b1c16894fb1cefd0eb0cf404c5dd457eb40a87fa6` | split_task_truth_from_telemetry |
+| `runtime/jarvis-pc-graph.sqlite` | pc_graph | snapshotted_verified | 0.00 | 0.07 | 3 | 0 | `e3df3dbfc44621167b9d4421bb658c64d95a9bfeee3e93c76e617eab23ba39af` | manifest_and_pointer_migration |
+| `runtime/jarvis-skills.sqlite` | skills | snapshotted_verified | 0.00 | 0.04 | 2 | 0 | `56058bbf0e5e2e76786dc1966a1c5ea643011ceeb04e2037ab40d9c623608c5b` | candidate_import |
+| `runtime/helix.sqlite` | helix | snapshotted_verified | 0.00 | 2.36 | 76 | 29 | `e5c933c3bbf4c127b22621f406ed7b68af4b4af5ec8748d50ac81c7a0179f594` | retain_domain_owner_publish_manifests |
+| `runtime/apex.sqlite` | apex | snapshotted_verified | 0.00 | 0.67 | 20 | 0 | `b8eb010f281b1eced1a4741f08cd9c4ab83af3d6a2b29d339373cb52bd6c7f65` | retain_domain_owner_publish_manifests |
+| `runtime/apex-oracle.sqlite` | apex | missing | 0.00 | 0.00 | — | — | `—` | retain_domain_owner_publish_manifests |
+| `runtime/eclipse.sqlite` | eclipse | missing | 0.00 | 0.00 | — | — | `—` | retain_domain_owner_publish_manifests |
+| `runtime/eclipse-checkpoints.sqlite` | eclipse | missing | 0.00 | 0.00 | — | — | `—` | retain_domain_owner_publish_manifests |
+| `runtime/coop_symbiote/coop.db` | mesh | snapshotted_verified | 0.00 | 0.07 | 3 | 0 | `f2a3c01763ddb54b465de0b2ae8a39d25cfd5c27b92f004e50cb772d7cfff859` | retain_domain_owner_publish_manifests |
+| `runtime/arbiter.db` | arbiter | snapshotted_verified | 0.01 | 0.00 | 1 | 0 | `a3b231b0d124499904966283b64f2314d88ec5ed1b480d277f02498ad3ed1348` | inspect_then_classify |
+| `runtime/old-brain-3/brain/memory/commands.db` | legacy_archive | missing | 0.00 | 0.00 | — | — | `—` | candidate_import_then_archive |
+| `runtime/old-brain-3/brain/memory/habits.db` | legacy_archive | missing | 0.00 | 0.00 | — | — | `—` | candidate_import_then_archive |
 
 ## Restore rule
 

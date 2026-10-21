@@ -9,7 +9,7 @@ const ENTAILMENT_MIN = 0.5;
 
 // evaluate(packet, verifications) → { status, confidence, entailment, verified, reasons }
 //   verifications: [{ evidenceRef, supported:boolean, entailment:0..1, live:boolean }]
-function evaluate(packet, verifications = []) {
+function evaluate(packet, verifications = [], joint = null) {
   const reasons = [];
   if (!packet.evidence || packet.evidence.length === 0) {
     return { status: "partial", confidence: 0.3, entailment: 0, verified: [], reasons: ["no evidence attached → cannot validate"] };
@@ -18,9 +18,22 @@ function evaluate(packet, verifications = []) {
   const dead = verifications.filter((v) => !v.live);
   const unsupported = verifications.filter((v) => v.live && !v.supported);
   if (dead.length) reasons.push(`${dead.length} dead/unreachable source(s)`);
+  // A quote that is not in the source is a DIFFERENT failure from a source that does not
+  // support the claim: the first says the citation was fabricated, the second says the
+  // reasoning was wrong. Collapsing them into one reason hides which is happening.
+  const missingQuote = verifications.filter((v) => v.live && v.quoteFound === false);
+  // Reported as context on the verdict, never as the verdict itself: a non-verbatim quote is a
+  // quality signal about the citation, not proof the claim is wrong.
+  if (missingQuote.length) reasons.push(`${missingQuote.length} cited quote(s) not verbatim in the source`);
   if (unsupported.length) reasons.push(`${unsupported.length} source(s) do not support the claim`);
 
   if (!verified.length) {
+    // Cross-source union: no SINGLE source supports the whole claim, but every atom of it is
+    // supported by SOME live source (and none refuted) - a comparison claim's normal shape.
+    const liveOnes = verifications.filter((v) => v.live);
+    if (joint && joint.supported && liveOnes.length) {
+      return { status: "validated", confidence: Math.max(0.5, Math.min(1, joint.entailment * 0.9)), entailment: joint.entailment, verified: liveOnes, reasons: [`claim parts supported jointly across ${liveOnes.length} sources`] };
+    }
     return { status: "refuted", confidence: 0.2, entailment: 0, verified, reasons: reasons.length ? reasons : ["no source re-verified"] };
   }
   const meanEntail = verified.reduce((a, v) => a + (v.entailment || 0), 0) / verified.length;

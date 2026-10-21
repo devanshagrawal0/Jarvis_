@@ -52,12 +52,17 @@ function synthesizeWorkerBlueprint(persona) {
   const base = getBlueprint("worker");
   return validate(AgentBlueprint, {
     ...base,
-    blueprintId: `worker.${persona.label}.${persona.id.slice(-6)}`,
+    // N-3: STABLE id. The old `.${persona.id.slice(-6)}` random suffix meant every mission
+    // wrote a fresh reputation row, so MIN_MISSIONS was unreachable and reputation was dead.
+    blueprintId: `worker.${persona.label}`,
     version: "1.0.0-ephemeral",
     name: `Worker (${persona.label})`,
     systemInstructionTemplate: `${base.systemInstructionTemplate}\n\n[Persona] ${persona.framing}`,
     toolRequirements: persona.tools,
-    leaseTemplate: { ...base.leaseTemplate, scopes: persona.leaseScopes.length ? persona.leaseScopes : base.leaseTemplate.scopes },
+    // The worker is now a general tool-using agent (the model picks tools at run time), so every forged
+    // worker gets the base worker's full scope set — web + code + memory + fs — not a persona-narrowed
+    // subset that would deny a tool the model legitimately chooses (e.g. code.python on a research label).
+    leaseTemplate: { ...base.leaseTemplate, scopes: base.leaseTemplate.scopes },
     modelRole: persona.modelRole === "reasoning" ? "reasoning" : "main",
     qualification: { fixtures: [`fx.${persona.label}`], minScore: 0.6, status: "draft" },
   }, `blueprint:${persona.label}`);

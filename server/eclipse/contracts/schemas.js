@@ -113,9 +113,14 @@ const EvidenceObject = z.object({
   capturedAt: isoString,
   publishedAt: isoString.optional(),
   contentHash: z.string(),
-  excerpt: z.string().max(4000),
+  // Must match the storage cap in evidence/store.js. When these disagreed, putEvidence threw
+  // on every web excerpt over 4000 chars and the capture was lost silently between branches -
+  // only the tools whose excerpts happened to stay under 4000 ever produced evidence.
+  excerpt: z.string().max(12000),
   metadata: z.record(z.string(), z.unknown()).default({}),
-  reliability: z.object({ authority: z.number().min(0).max(1), freshness: z.number().min(0).max(1), directness: z.number().min(0).max(1), notes: z.array(z.string()).default([]) }),
+  // B-1: partial reliability degrades to defaults - a missing sub-score must never throw the
+  // whole evidence record away (that class of silent putEvidence throw hid issue B for days).
+  reliability: z.object({ authority: z.coerce.number().min(0).max(1).default(0.5), freshness: z.coerce.number().min(0).max(1).default(0.5), directness: z.coerce.number().min(0).max(1).default(0.6), notes: z.array(z.string()).default([]) }),
 });
 const Claim = z.object({
   claimId: z.string(),

@@ -124,6 +124,38 @@ function createPcStream({ toolsDir, runtimeDir, log = () => {} } = {}) {
   // has not been released yet, so "publisher exists" is not enough — it can be a frozen process.
   function healthy() { return Boolean(publisher) && stats.frame > 20 && Date.now() - stats.at < 2500; }
 
+  // Mid-stream watchdog. start() only checks that frames flow at STARTUP; once ddagrab wedges
+  // mid-stream (frame stuck, fps -> ~0, no new stats line) the encoder just sits there dead and the
+  // phone hangs on "loading video" forever. This runs every 2s: if a viewer is currently watching
+  // and the encoder has produced frames but then gone stale for >4s, kill it and spawn a fresh one
+  // so the stream self-heals. Unref'd so it never holds the process open.
+  let restarting = false;
+  async function restart(reason) {
+    if (restarting) return;
+    restarting = true;
+    try {
+      await stop(reason);
+      if (Date.now() - lastViewerAt < IDLE_STOP_MS) {          // still being watched — bring it back
+        const p = PRESETS[preset] || PRESETS.balanced;
+        spawnPublisher(p);
+        for (let i = 0; i < 20 && !(await streamReady()); i += 1) await new Promise((r) => setTimeout(r, 150));
+        armIdleStop();
+      }
+    } catch (e) { log(`watchdog restart failed: ${e.message}`); }
+    finally { restarting = false; }
+  }
+  const watchdog = setInterval(() => {
+    if (!publisher || restarting) return;
+    const now = Date.now();
+    if (now - lastViewerAt > IDLE_STOP_MS) return;             // nobody watching — idle-stop owns it
+    const frozen = stats.at > 0 && now - stats.at > 4000;      // frames flowed, then stopped
+    if (frozen) {
+      log(`watchdog: encoder frozen (frame=${stats.frame}, ${((now - stats.at) / 1000).toFixed(1)}s stale) — respawning`);
+      void restart("watchdog-frozen");
+    }
+  }, 2000);
+  watchdog.unref?.();
+
   function spawnPublisher(p) {
     lastError = "";
     stats = { frame: 0, fps: 0, bitrateKbps: 0, speed: 0, at: 0 };

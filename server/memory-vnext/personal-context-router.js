@@ -153,8 +153,8 @@ function createPersonalContextRouter({ store, trustedOwnerCloud = false } = {}) 
     }
     const enriched = { ...mutation, sourceTurnId, sensitivity: mutation.sensitivity || sensitivityFor(mutation.predicate) }; let assertion;
     const existing = current || registry.latestAssertion(mutation.predicate);
-    if (existing) assertion = assertions.reviseAssertion(existing.id, { object: mutation.value, objectType: typeof mutation.value === "object" ? "json" : "literal", epistemicState: "owner_asserted", validFrom: at, provenance: { type: current ? "direct_owner_correction" : "direct_owner_reinstatement", sourceTurnId }, sensitivity: enriched.sensitivity, createdBy: "local-owner", confidence: { extraction: 1, sourceReliability: 1, corroboration: 0.5, freshness: 1, userConfirmation: 1 } });
-    else assertion = assertions.createAssertion({ id: stableId("assertion", `owner:${mutation.predicate}`), scopeId: OWNER.scopeId, subjectType: "owner", subjectRef: OWNER.subjectRef, predicate: mutation.predicate, object: mutation.value, objectType: typeof mutation.value === "object" ? "json" : "literal", epistemicState: "owner_asserted", validFrom: at, provenance: { type: "direct_owner_statement", sourceTurnId }, sensitivity: enriched.sensitivity, createdBy: "local-owner", confidence: { extraction: 1, sourceReliability: 1, corroboration: 0.5, freshness: 1, userConfirmation: 1 } });
+    if (existing) assertion = assertions.reviseAssertion(existing.id, { object: mutation.value, objectType: typeof mutation.value === "object" ? "json" : "literal", epistemicState: "owner_asserted", validFrom: at, provenance: { type: current ? "direct_owner_correction" : "direct_owner_reinstatement", sourceTurnId }, sensitivity: enriched.sensitivity, createdBy: "local-owner", confidence: { extraction: mutation.origin === "model" ? 0.75 : 1, sourceReliability: 1, corroboration: 0.5, freshness: 1, userConfirmation: mutation.origin === "model" ? 0.5 : 1 } });
+    else assertion = assertions.createAssertion({ id: stableId("assertion", `owner:${mutation.predicate}`), scopeId: OWNER.scopeId, subjectType: "owner", subjectRef: OWNER.subjectRef, predicate: mutation.predicate, object: mutation.value, objectType: typeof mutation.value === "object" ? "json" : "literal", epistemicState: "owner_asserted", validFrom: at, provenance: { type: "direct_owner_statement", sourceTurnId }, sensitivity: enriched.sensitivity, createdBy: "local-owner", confidence: { extraction: mutation.origin === "model" ? 0.75 : 1, sourceReliability: 1, corroboration: 0.5, freshness: 1, userConfirmation: mutation.origin === "model" ? 0.5 : 1 } });
     personal.setIdentity({ scopeId: OWNER.scopeId, predicate: mutation.predicate, value: mutation.value, assertionId: assertion.id, actorId: OWNER.actorId, authorityZone: OWNER.authorityZone, sensitivity: enriched.sensitivity });
     indexFact(assertion, enriched, at); return { action: current ? "correct" : "remember", predicate: mutation.predicate, assertionId: assertion.id, value: mutation.value, changed: true };
   }
@@ -163,7 +163,15 @@ function createPersonalContextRouter({ store, trustedOwnerCloud = false } = {}) 
     const conversationId = String(input.conversationId || "contained-owner-conversation"); const branchId = String(input.branchId || `${conversationId}:main`);
     journal.openConversation({ id: conversationId, branchId, scopeId: OWNER.scopeId, roomType: "jarvis", createdBy: OWNER.actorId, sensitivity: "private" });
     const at = String(input.occurredAt || new Date().toISOString()); const turn = journal.ingestTurn({ conversationId, branchId, clientEventId: String(input.clientEventId || crypto.randomUUID()), clientSequence: input.clientSequence, role: "user", content: String(input.content), actorId: OWNER.actorId, occurredAt: at, sensitivity: "private", admissionStatus: "admitted" });
-    const mutations = extractMutations(input.content).map((mutation) => applyMutation(mutation, turn.turnId, at));
+    // The eight regexes run first and always win a predicate conflict. Model-read facts (see
+    // fact-extractor.js) merge in behind them, so this can only ADD what the patterns missed and
+    // can never take away what they caught. `extraMutations` is supplied by the shadow runtime's
+    // background queue — nothing on the answer path waits for it.
+    const deterministic = extractMutations(input.content);
+    const alreadyClaimed = new Set(deterministic.map((item) => item.predicate));
+    const supplied = (Array.isArray(input.extraMutations) ? input.extraMutations : [])
+      .filter((item) => item && item.predicate && !alreadyClaimed.has(item.predicate));
+    const mutations = [...deterministic, ...supplied].map((mutation) => applyMutation(mutation, turn.turnId, at));
     return { conversationId, branchId, turnId: turn.turnId, mutations, providerCalls: 0 };
   }
 
@@ -199,7 +207,20 @@ function createPersonalContextRouter({ store, trustedOwnerCloud = false } = {}) 
     const byDocument = new Map([...first.hits, ...second.hits].map((hit) => [hit.documentId, hit])); const cloudAllowed = Boolean(input.trustedOwnerCloud ?? trustedOwnerCloud); const allowed = cloudAllowed ? new Set(["public", "internal", "private", "restricted"]) : new Set(input.providerClass === "local" ? ["public", "internal", "private", "restricted"] : ["public", "internal"]);
     const queryTopics = new Set(expanded.topics); const contextualRank = (hit) => {
       const contentTopics = Array.isArray(hit.content?.topics) ? hit.content.topics : []; const overlap = contentTopics.filter((topic) => queryTopics.has(topic)).length;
-      return (hit.content?.kind === "owner_fact" ? 8 : 0) + (hit.content?.epistemicState === "owner_asserted" ? 4 : 0) + overlap * 2 + (hit.channel === "exact" ? 1 : 0) + Math.min(1, Math.max(0, Number(hit.score || 0) / 100));
+      // WHAT THE OWNER ACTUALLY SAID OUTRANKS ANYTHING INFERRED, WHATEVER THE TOPIC MATCH.
+      //
+      // `owner_asserted` was worth +4 against an unbounded `overlap * 2`, so a handful of shared
+      // topics beat it. Measured 2026-09-10 against the live store: "how do I want you to verify
+      // your work?" returned three imported `memory.tool` capability records — kalshi_market_
+      // discovery, skill_run, pc_graph_timeline — whose descriptions happen to contain the word
+      // "verified", while the owner's own `preference.verification_protocol` did not appear at
+      // all. An imported tool row winning a question about the owner's preferences is the ranking
+      // being wrong, not the retrieval.
+      //
+      // 30 puts it decisively above the realistic overlap ceiling (topics are capped well under
+      // fifteen), so an owner-asserted fact is never displaced by keyword coincidence. Inferred
+      // records still rank among themselves exactly as before.
+      return (hit.content?.kind === "owner_fact" ? 8 : 0) + (hit.content?.epistemicState === "owner_asserted" ? 30 : 0) + overlap * 2 + (hit.channel === "exact" ? 1 : 0) + Math.min(1, Math.max(0, Number(hit.score || 0) / 100));
     };
     const hits = [...byDocument.values()].filter((hit) => allowed.has(hit.sensitivity)).sort((a, b) => contextualRank(b) - contextualRank(a) || String(a.documentId).localeCompare(String(b.documentId))).slice(0, Math.max(1, Number(input.limit || 12))).map((hit, index) => ({ ...hit, freshness: freshness(hit), priority: Math.max(0.1, 1 - index * 0.05) }));
     const items = hits.map((hit) => ({ itemId: `retrieval:${hit.documentId}`, recordType: hit.recordType, recordId: hit.recordId, recordVersion: hit.recordVersion, blockType: hit.recordType === "source" ? "manifests" : "personal", trustZone: hit.content?.epistemicState === "owner_asserted" ? "trusted" : "untrusted", sensitivity: hit.sensitivity, authority: hit.content?.epistemicState === "owner_asserted" ? "evidence" : "context_only", content: { ...hit.content, freshness: hit.freshness }, sourceRefs: [{ id: hit.recordId, version: hit.recordVersion }], priority: hit.priority, scopeId: hit.scopeId }));
@@ -217,7 +238,24 @@ function createPersonalContextRouter({ store, trustedOwnerCloud = false } = {}) 
     return { query, topics: expanded.topics, plan, retrieval: { first: first.channels, graph: { skipped: graphResult.skipped, mode: graphResult.mode, hits: graphResult.hits.length }, second: second.channels, selected: hits.length }, pack, facts, contextText, privacy: { trustedOwnerCloud: cloudAllowed, eligibleSensitivities: [...allowed] }, packAdmitted: admitted.size, packBypassed, providerCalls: 0, costUsd: 0, ...(input.includeDiagnostics ? { diagnostics: timings } : {}) };
   }
 
-  return Object.freeze({ extractMutations, ingestAssistantTurn, ingestOwnerTurn, route });
+  // Apply mutations against a turn that is ALREADY in the journal. The backfill needs this: it is
+  // replaying history the eight regexes read and found nothing in, so re-running `ingestOwnerTurn`
+  // would write a second copy of every turn. This applies the facts and touches nothing else.
+  function applyOwnerMutations({ mutations = [], sourceTurnId = "", occurredAt = "" } = {}) {
+    const at = String(occurredAt || new Date().toISOString());
+    return (Array.isArray(mutations) ? mutations : [])
+      .filter((mutation) => mutation && mutation.predicate)
+      .map((mutation) => applyMutation(mutation, String(sourceTurnId), at));
+  }
+
+  // Reading history is the backfill's job, so it borrows the journal it already owns rather than
+  // opening a second view onto the same tables.
+  function conversationBranches() { return journal.listConversationBranches(); }
+  // The vocabulary the extractor should reuse rather than coin around.
+  function knownPredicates(limit = 120) { try { return registry.ownerPredicates(limit); } catch { return []; } }
+  function turnsIn(conversationId, branchId) { return journal.listTurns(conversationId, branchId); }
+
+  return Object.freeze({ applyOwnerMutations, conversationBranches, extractMutations, ingestAssistantTurn, ingestOwnerTurn, knownPredicates, route, turnsIn });
 }
 
 module.exports = { FACT_ALIASES, createPersonalContextRouter, extractMutations };

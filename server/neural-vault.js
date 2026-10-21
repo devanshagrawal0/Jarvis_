@@ -1070,45 +1070,16 @@ function createNeuralVault({ runtimeDir, getProviders = () => ({}), getToolDefin
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).run(crypto.randomUUID(), "default", "runtime/**", 1, 1, "requires_confirmation", 0, "ask", now, now);
     }
-    const frameCount = db.prepare("SELECT COUNT(*) AS count FROM answer_frames").get().count;
-    if (!frameCount) {
-      db.prepare(`
-        INSERT INTO answer_frames(id, name, trigger_intents_json, trigger_phrases_json, style_rules_json, example_structure, priority, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `).run(
-        crypto.randomUUID(),
-        "Codex implementation prompt",
-        json(["artifact_creation", "self-knowledge", "code"]),
-        json(["make me a codex prompt", "codex prompt", "implementation prompt"]),
-        json(["include rules", "include phases", "include tests", "include final output format", "be concrete and copy-pasteable"]),
-        "Goal -> Rules -> Phases -> Tests -> Final output requirements",
-        9,
-        now,
-        now,
-      );
-    }
+    // Nothing about the OWNER is seeded any more (2026-09-13). This used to plant a "Codex prompt
+    // answer style" preference three ways — an answer frame, a profile item and a personal_preference
+    // memory — so a brand-new install already "knew" a preference nobody had stated. Preferences are
+    // learned from what the owner says (profile_update) and nowhere else. App capabilities (project
+    // registration, workflows, skills, agents) below are not facts about a person and stay.
     upsertProject({
       id: "jarvis",
       name: "Jarvis",
       description: "Local desktop Jarvis assistant with Gemini, Kalshi, screen/browser control, device mesh, research, agents, and Neural Vault memory.",
       metadata: { seeded: true },
-    });
-    upsertPersonalProfileItem({
-      category: "answer_style",
-      key: "codex_prompt_preference",
-      value: "User likes complete copy-paste Codex prompts with rules, phases, tests, and final output format.",
-      confidence: 0.9,
-      source: "neural-vault-seed",
-    });
-    upsertMemory({
-      kind: "personal_preference",
-      title: "Codex prompt answer style",
-      content: "User prefers complete Codex prompts with rules, phases, tests, and final output format.",
-      summary: "For Codex prompt requests, produce a structured prompt with rules, phases, tests, and final output format.",
-      importance: 4,
-      confidence: 0.9,
-      sourceType: "neural-vault-seed",
-      metadata: { category: "answer_style" },
     });
     upsertBrowserWorkflow({
       siteName: "YouTube",

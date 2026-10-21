@@ -18,6 +18,47 @@ const FIXTURES = {
   "https://a.example/langgraph": { text: "LangGraph provides durable checkpoints via SqliteSaver, enabling crash recovery across process restarts.", reliability: { authority: 0.85, freshness: 0.7, directness: 0.9, notes: [] } },
   "https://b.example/crewai": { text: "CrewAI offers role-based multi-agent orchestration with a simpler API but weaker durability guarantees.", reliability: { authority: 0.7, freshness: 0.6, directness: 0.8, notes: [] } },
 };
+
+// The verify rebuild made promotion MODEL-judged (claim -> atoms -> sentence-ID entailment), so the
+// text-only default stub can no longer validate anything: this gate scripts contract-shaped JSON
+// derived ONLY from each call's input. The judge stays FAILABLE - an atom whose content words do not
+// appear in the numbered source gets NOT_ENOUGH_INFO, so a fabricated claim still dies here.
+function makeScriptedStub(fixtures) {
+  const urls = Object.keys(fixtures);
+  return (call) => {
+    const inp = String(call.input || "");
+    if (inp.includes('Return JSON {"action"')) {
+      // Worker step: search once, fetch each fixture url, then final (forceFinalize builds the packet).
+      if (!inp.includes('web.search "')) return { json: { action: "web.search", args: { query: "durability comparison" } } };
+      const unfetched = urls.find((u) => !inp.includes(`) ${u}`)); // gathered sources render as "(web) url"
+      if (unfetched && !inp.includes("This is your FINAL step")) return { json: { action: "web.fetch", args: { url: unfetched } } };
+      return { json: { action: "final", claim: "", supports: [] } };
+    }
+    if (inp.startsWith("Subtask:") && inp.includes("Gathered sources:")) {
+      // Grounded finalize: claim the first fixture's first sentence, cite S1 with a verbatim quote.
+      const first = String(fixtures[urls[0]].text).split(". ")[0] + ".";
+      return { json: { claim: first, supports: [{ sourceId: "S1", quote: first }] } };
+    }
+    if (inp.includes("ATOMIC CLAIMS:") && inp.includes("SOURCE (numbered sentences):")) {
+      // Entailment judge: lexical overlap against the numbered doc - deterministic AND failable.
+      const doc = inp.split("SOURCE (numbered sentences):")[1].split("ATOMIC CLAIMS (repeated):")[0];
+      const sents = doc.split("\n").map((l) => l.match(/^\[S(\d+)\]\s+(.*)$/)).filter(Boolean);
+      const atoms = inp.split("ATOMIC CLAIMS:")[1].split("SOURCE (numbered sentences):")[0]
+        .split("\n").map((l) => l.match(/^(\d+)\.\s+(.*)$/)).filter(Boolean);
+      const words = (t) => new Set(String(t).toLowerCase().match(/[a-z]{4,}/g) || []);
+      const verdicts = atoms.map((a) => {
+        const aw = words(a[2]);
+        const hit = sents.find((sl) => { const sw = words(sl[2]); let n = 0; for (const w of aw) if (sw.has(w)) n++; return n >= Math.min(3, aw.size); });
+        return hit ? { atom_id: Number(a[1]), verdict: "SUPPORTED", evidence_sentence_ids: [Number(hit[1])], confidence: 0.9 }
+                   : { atom_id: Number(a[1]), verdict: "NOT_ENOUGH_INFO", evidence_sentence_ids: [], confidence: 0.3 };
+      });
+      return { json: { verdicts } };
+    }
+    return { text: "[stub:default]" };
+  };
+}
+const scripted = makeScriptedStub(FIXTURES);
+
 let mc = 0;
 function mission(effort = "deep") { return { schemaVersion: "eclipse.mission.v1", missionId: `m_w5_${++mc}`, userId: "dev", prompt: "Compare LangGraph vs CrewAI on durability and recommend one.", effort, createdAt: new Date(0).toISOString() }; }
 
@@ -26,7 +67,7 @@ function mission(effort = "deep") { return { schemaVersion: "eclipse.mission.v1"
   const artifactsDir = fs.mkdtempSync(path.join(os.tmpdir(), "eclipse-w5-"));
 
   await okA("Deep mission → real evidence → validated claims → cited report on disk", async () => {
-    const shared = { store: openStore({ db: new Database(":memory:") }), checkpointer: SqliteSaver.fromConnString(":memory:"), mode: "stub", fixtures: FIXTURES, artifactsDir };
+    const shared = { store: openStore({ db: new Database(":memory:") }), checkpointer: SqliteSaver.fromConnString(":memory:"), mode: "stub", stubResponder: scripted, fixtures: FIXTURES, artifactsDir };
     const m = mission("deep");
     const r = await runMission({ mission: m, ...shared });
     assert.equal(r.status, "complete");
@@ -54,7 +95,7 @@ function mission(effort = "deep") { return { schemaVersion: "eclipse.mission.v1"
   });
 
   await okA("no fabrication — every finding line is cited; no tool denied", async () => {
-    const shared = { store: openStore({ db: new Database(":memory:") }), checkpointer: SqliteSaver.fromConnString(":memory:"), mode: "stub", fixtures: FIXTURES, artifactsDir };
+    const shared = { store: openStore({ db: new Database(":memory:") }), checkpointer: SqliteSaver.fromConnString(":memory:"), mode: "stub", stubResponder: scripted, fixtures: FIXTURES, artifactsDir };
     const m = mission("deep");
     const r = await runMission({ mission: m, ...shared });
     const md = fs.readFileSync(path.join(artifactsDir, m.missionId, "report.md"), "utf8");
@@ -67,7 +108,7 @@ function mission(effort = "deep") { return { schemaVersion: "eclipse.mission.v1"
   });
 
   await okA("watchable timeline — ordered events reconstruct the whole mission", async () => {
-    const shared = { store: openStore({ db: new Database(":memory:") }), checkpointer: SqliteSaver.fromConnString(":memory:"), mode: "stub", fixtures: FIXTURES, artifactsDir };
+    const shared = { store: openStore({ db: new Database(":memory:") }), checkpointer: SqliteSaver.fromConnString(":memory:"), mode: "stub", stubResponder: scripted, fixtures: FIXTURES, artifactsDir };
     const m = mission("deep");
     await runMission({ mission: m, ...shared });
     const evs = shared.store.getEvents(m.missionId);

@@ -10,6 +10,8 @@ const { execFile, spawn } = require("child_process");
 const { promisify } = require("util");
 const { evaluateAutonomy, requiredAutonomyLevel } = require("./autonomy-policy");
 const { auditFaithfulness } = require("./stage-faithfulness");
+const { fetchPublicOHLC } = require("./public-ohlc");
+const displayCast = require("./display-cast");
 const { createBrowserAutomationService } = require("./browser-service");
 const { createResearchOrchestrator } = require("./cortex/research-orchestrator");
 const { createResearchV2 } = require("./research-v2");
@@ -459,6 +461,7 @@ function createCapabilityEngine({
     ["list_processes", "List running Windows processes, sorted by memory use.", "observe", false],
     ["open_app", "Launch a desktop application that is installed on this machine — 'open chatgpt', 'launch spotify', 'open my claude app', 'start vscode'. It looks the app up in what is ACTUALLY installed here, so any installed app can be opened by name; there is no fixed list and you should never tell the owner you cannot launch desktop applications. Use this rather than opening a website when they ask for the app.", "execute", false, ["launch"]],
     ["open_url", "OPEN A PAGE IN THE OWNER'S OWN BROWSER - the real one on his screen, the window he is looking at. This is the right tool for ANY request to open, pull up, launch, bring up, chuck on, or go to a site or a link: 'open youtube', 'open youtube on my browser', 'open youtube on my screen', 'pull up the arsenal wiki page', 'go to news.ycombinator.com', 'open this link'. Pass any URL or a bare domain (bare domains are opened with HTTPS); there is no list of allowed sites, ANY site works, so never say you cannot open something. It is ONE call and it is instant - do not screenshot the screen first, do not run a browser agent, do not plan steps. When the owner says OPEN, he means this browser, never a background one. If he also wants to know what is on the page afterwards, call url_read for the text, or screen_capture to look at his screen.", "execute", false, ["launch"]],
+    ["display_cast", "Show something on the owner's phone/tablet Display surface — 'put the latest portfolio on my phone', 'cast trading mode to my screen', 'show this dashboard on my phone', 'throw the chart on my other screen'. The phone's Display tab is a live screen the owner is looking at; this decides what it shows. Send an interactive web page you build (kind:'web' with html), an existing web page (kind:'web' with url), or the live PC screen (kind:'stream'). Use kind:'clear' to blank it. This is how you push a view onto his physical screen, not open_url (that opens on the PC) and not the Stage.", "execute", false],
     ["screen_inspect", "Inspect the current visible laptop screen through Windows UI Automation and return visible controls, labels, roles, and screen-coordinate bounds.", "observe", false],
     ["screen_act", "Operate on the current visible laptop screen by first capturing and inspecting it, locating a visible target, performing a bounded click/type/hotkey/fullscreen action, then capturing again to verify.", "execute", false, ["input"]],
     ["youtube_open_video", "Fallback YouTube video opener. Prefer screen_act when the user is referring to the current visible screen.", "execute", false],
@@ -659,6 +662,12 @@ function createCapabilityEngine({
     { name: "list_processes", description: description("list_processes"), parameters: { type: "OBJECT", properties: { limit: { type: "INTEGER", description: "Maximum processes, 1 to 50." } } } },
     { name: "open_app", description: description("open_app"), parameters: { type: "OBJECT", properties: { app: { type: "STRING", description: "The app's name as the owner would say it — chatgpt, claude, spotify, vscode, notepad, whatever they have installed. Matched against what is actually installed on this machine, so you do NOT need it to be on a list; just pass the name." } }, required: ["app"] } },
     { name: "open_url", description: description("open_url"), parameters: { type: "OBJECT", properties: { url: { type: "STRING", description: "An HTTP or HTTPS URL. Bare domains are opened with HTTPS." } }, required: ["url"] } },
+    { name: "display_cast", description: description("display_cast"), parameters: { type: "OBJECT", properties: {
+      kind: { type: "STRING", description: "'web' (a web page — supply html OR url), 'stream' (live PC screen), or 'clear' (blank the display)." },
+      html: { type: "STRING", description: "For kind 'web': a COMPLETE self-contained HTML document to render full-screen and interact with. Build a real, styled page (dark theme, the owner will touch it). Prefer this for dashboards like portfolio/trading views." },
+      url: { type: "STRING", description: "For kind 'web': an http/https URL to show instead of html." },
+      title: { type: "STRING", description: "Short label shown on the display's top bar, e.g. 'Portfolio' or 'Trading mode'." },
+    }, required: ["kind"] } },
     { name: "screen_inspect", description: description("screen_inspect"), parameters: { type: "OBJECT", properties: {
       limit: { type: "INTEGER", description: "Maximum visible controls to return, 1 to 120." },
     } } },
@@ -2616,6 +2625,13 @@ function createCapabilityEngine({
     list_processes: listProcesses,
     open_app: openApp,
     open_url: openUrl,
+    display_cast: async (args) => {
+      const kind = String(args?.kind || "").toLowerCase();
+      const result = displayCast.setCast({ kind, html: args?.html, url: args?.url, quality: args?.quality, title: args?.title });
+      if (!result.ok) throw errorWithStatus(result.error || "Could not cast to the display.", 400);
+      const what = kind === "clear" ? "cleared the phone display" : `cast ${result.cast?.title || kind} to the phone display`;
+      return { ok: true, surface: "phone-display", cast: result.cast, message: `Done — ${what}. It shows on the owner's Display tab.` };
+    },
     screen_inspect: inspectScreen,
     screen_act: screenAct,
     youtube_open_video: youtubeOpenVideo,
@@ -3150,6 +3166,14 @@ function createCapabilityEngine({
         .filter((b) => b && b.t && new Date(b.t).getTime() >= cutoff && Number.isFinite(Number(b.c)))
         .map((b) => ({ t: b.t, o: b.o, h: b.h, l: b.l, c: b.c, v: b.v }));
       if (!series.length) {
+        // APEX's local apex_bars table only holds its ingested watchlist, so most tickers (TSLA,
+        // BTC, NVDA…) have zero stored bars. Rather than fail the chart, pull REAL price history from
+        // a free public source (Yahoo for stocks, Coinbase for crypto). This is the fix for empty
+        // chart panels — the data on the Stage is real, not stale memory.
+        const publicBars = await fetchPublicOHLC(sym, { tf, days }).catch(() => []);
+        if (publicBars.length) {
+          return { ticker: sym, timeframe: tf, days, count: publicBars.length, from: publicBars[0].t, to: publicBars[publicBars.length - 1].t, bars: publicBars, source: "public" };
+        }
         // Say what IS held rather than a bare miss, so the model can offer a window that exists
         // instead of guessing a series to fill the gap.
         // The message is written AT the model, because the failure mode here is not the miss — it is

@@ -58,6 +58,11 @@ const I = {
   ping: <svg viewBox="0 0 24 24"><path d="M3 10a13 13 0 0 1 18 0M6.5 13.5a8 8 0 0 1 11 0M10 17a3 3 0 0 1 4 0" /><circle cx="12" cy="19.5" r=".8" /></svg>,
   grid: <svg viewBox="0 0 24 24"><rect x="3.5" y="3.5" width="7" height="7" rx="1.5" /><rect x="13.5" y="3.5" width="7" height="7" rx="1.5" /><rect x="3.5" y="13.5" width="7" height="7" rx="1.5" /><rect x="13.5" y="13.5" width="7" height="7" rx="1.5" /></svg>,
   check: <svg viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5" /></svg>,
+  modes: <svg viewBox="0 0 24 24"><rect x="2.5" y="7.5" width="19" height="9" rx="4.5" /><path d="M6.5 10.5v3M5 12h3" /><circle cx="15.8" cy="11" r=".95" /><circle cx="18" cy="13.2" r=".95" /></svg>,
+  headphones: <svg viewBox="0 0 24 24"><path d="M5 13v-1a7 7 0 0 1 14 0v1" /><rect x="3.5" y="12.5" width="4" height="6.5" rx="1.6" /><rect x="16.5" y="12.5" width="4" height="6.5" rx="1.6" /></svg>,
+  wifi: <svg viewBox="0 0 24 24"><path d="M3 9a15 15 0 0 1 18 0M6 12.5a10 10 0 0 1 12 0M9 16a5 5 0 0 1 6 0" /><circle cx="12" cy="19.2" r=".9" fill="currentColor" stroke="none" /></svg>,
+  // original tactical crest (shield + crosshair) — not any game's real logo
+  valo: <svg viewBox="0 0 24 24"><path d="M12 2.5l8 3.2v6.1c0 4.7-3.2 8-8 9.7-4.8-1.7-8-5-8-9.7V5.7z" /><path d="M12 8.4v7.2M8.4 12h7.2" /><circle cx="12" cy="12" r="2.2" /></svg>,
 };
 const ROOM_ICON: Record<string, React.ReactNode> = { apex: I.apex, arbiter: I.arbiter, helix: I.helix, synapse: I.synapse };
 
@@ -77,7 +82,8 @@ export function Control({ active, dock, strength }: { active: boolean; dock: HTM
 // The home is short: the live PC, one pinned control (volume), and a grid of section buttons.
 // Everything else lives in a large cover sheet that slides up over a dimmed home — so nothing is
 // crammed into one scroll. Every number and list here is read from the PC; nothing is invented.
-type Panel = "apps" | "rooms" | "audio" | "power" | "keys" | "widgets" | null;
+type Panel = "modes" | "apps" | "rooms" | "audio" | "power" | "keys" | "widgets" | null;
+type ModeStep = { step: string; ok: boolean; detail?: string };
 
 const KEY_GROUPS: Array<[string, Array<[string, string]>]> = [
   ["System", [["Esc", "escape"], ["Tab", "tab"], ["Enter", "enter"], ["⌫", "backspace"], ["Del", "delete"], ["Win", "win"], ["Alt+Tab", "alt+tab"], ["Win+D", "win+d"], ["Alt+F4", "alt+f4"], ["F11", "f11"], ["PrtSc", "printscreen"], ["Space", "space"]]],
@@ -149,6 +155,18 @@ function Command({ active, dock, strength, onTakeover }: { active: boolean; dock
     catch (e) { say(e instanceof Error ? e.message : String(e)); }
   }, []);
 
+  const [modeBusy, setModeBusy] = useState("");
+  const [modeOut, setModeOut] = useState<ModeStep[] | null>(null);
+  const runMode = useCallback(async (id: string) => {
+    setModeBusy(id); setModeOut(null); say("Engaging Valorant mode…");
+    try {
+      const r = await post<{ ok: boolean; steps?: ModeStep[]; error?: string }>("/api/modes/run", { mode: id });
+      setModeOut(r.steps || null);
+      say(r.ok ? "Valorant mode engaged" : r.error || "Some steps failed");
+    } catch (e) { say(e instanceof Error ? e.message : String(e)); }
+    finally { setModeBusy(""); }
+  }, []);
+
   const run = (t: string) => { setText(""); void thread.send(t); };
   const onKey = (e: React.KeyboardEvent<HTMLInputElement>) => { if (e.key === "Enter") { e.preventDefault(); if (text.trim()) run(text); } };
 
@@ -174,6 +192,7 @@ function Command({ active, dock, strength, onTakeover }: { active: boolean; dock
   const vol = pc?.audio?.muted ? 0 : (pc?.audio?.volume ?? 0);
 
   const SECTIONS: Array<{ id: Panel; icon: React.ReactNode; label: string; sub: string }> = [
+    { id: "modes", icon: I.modes, label: "Modes", sub: "1-tap setups" },
     { id: "apps", icon: I.desktop, label: "Apps", sub: inv ? `${inv.apps.length} installed` : "…" },
     { id: "rooms", icon: I.helix, label: "Rooms", sub: `${inv?.rooms?.length || 0} on the PC` },
     { id: "audio", icon: vol && !pc?.audio?.muted ? I.volUp : I.mute, label: "Audio", sub: pc?.audio ? (pc.audio.muted ? "Muted" : `${pc.audio.volume}%`) : "—" },
@@ -236,6 +255,19 @@ function Command({ active, dock, strength, onTakeover }: { active: boolean; dock
       )}
 
       {/* ── panels ── */}
+      {panel === "modes" ? (
+        <Sheet title="Modes" onClose={() => setPanel(null)}>
+          <div className="vwrap">
+            <img className="vimg" src="/mode-valorant.jpg" alt="Valorant mode" />
+            <div className="vname">
+              <span className="vname-kick">COMPETITIVE MODE</span>
+              <span className="vname-title">VALORANT</span>
+              <span className="vname-tag">FOCUS <i>/</i> PERFORM <i>/</i> WIN</span>
+            </div>
+            <SlideLaunch busy={modeBusy === "valorant"} onLaunch={() => void runMode("valorant")} />
+          </div>
+        </Sheet>
+      ) : null}
       {panel === "apps" ? <AppsPanel inv={inv} reach={reach} onOpen={openApp} onClose={() => setPanel(null)} /> : null}
       {panel === "rooms" ? (
         <Sheet title="Rooms on the PC" sub={jarvisOpen ? "Switch what's on the PC screen" : "Opens JARVIS on the PC first"} onClose={() => setPanel(null)}>
@@ -304,6 +336,45 @@ function AppsPanel({ inv, reach, onOpen, onClose }: { inv: AppsPayload | null; r
   );
 }
 
+function SlideLaunch({ busy, onLaunch }: { busy: boolean; onLaunch: () => void }) {
+  const track = useRef<HTMLDivElement>(null);
+  const [x, setX] = useState(0);
+  const drag = useRef(false);
+  const done = useRef(false);
+  const start = useRef(0);
+  const HANDLE = 22;
+  const down = (e: React.PointerEvent) => {
+    if (busy || !track.current) return;
+    const tr = track.current.getBoundingClientRect();
+    const hr = (e.currentTarget as HTMLElement).getBoundingClientRect();
+    start.current = hr.left - tr.left;
+    drag.current = true; done.current = false;
+    try { (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId); } catch { /* ignore */ }
+  };
+  const move = (e: React.PointerEvent) => {
+    if (!drag.current || !track.current) return;
+    const tr = track.current.getBoundingClientRect();
+    const max = tr.width - start.current - HANDLE - 12;
+    let nx = e.clientX - tr.left - start.current - HANDLE / 2;
+    nx = Math.max(0, Math.min(max, nx));
+    setX(nx);
+    if (nx >= max - 3 && !done.current) { done.current = true; drag.current = false; onLaunch(); }
+  };
+  const up = () => { drag.current = false; if (!done.current) setX(0); };
+  useEffect(() => { if (!busy) { setX(0); done.current = false; } }, [busy]);
+  return (
+    <div className="slaunch" ref={track} onPointerMove={move} onPointerUp={up} onPointerCancel={up}>
+      <span className="slaunch-inner">
+        <span className="slaunch-handle" style={{ transform: `translateX(${x}px)` }} onPointerDown={down}>
+          {busy ? <span className="spin" /> : <svg className="slaunch-play" viewBox="0 0 24 24"><path d="M8 5v14l11-7z" /></svg>}
+        </span>
+        <span className="slaunch-label"><em>LAUNCH</em><b>VALORANT</b></span>
+      </span>
+      <span className="slaunch-arrow"><svg viewBox="0 0 24 24"><path d="M5 12h13M12 6l6 6-6 6" /></svg></span>
+    </div>
+  );
+}
+
 export function Sheet({ title, sub, onClose, children }: { title: string; sub?: string; onClose: () => void; children: React.ReactNode }) {
   useEffect(() => { const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); }; window.addEventListener("keydown", onKey); return () => window.removeEventListener("keydown", onKey); }, [onClose]);
   return createPortal(
@@ -333,6 +404,7 @@ function Takeover({ onExit }: { onExit: () => void }) {
   const player = useRef<WhepPlayer | null>(null);
   const [phase, setPhase] = useState<"starting" | "live" | "error">("starting");
   const phaseRef = useRef(phase); phaseRef.current = phase;
+  const reconnectRef = useRef(0);   // auto-reconnect attempts since the last live frame
   const [msg, setMsg] = useState("Starting the encoder on the PC…");
   const [stats, setStats] = useState<StreamStats | null>(null);
   const [enc, setEnc] = useState<{ fps: number; bitrateKbps: number } | null>(null);
@@ -379,31 +451,46 @@ function Takeover({ onExit }: { onExit: () => void }) {
   // stream lifecycle
   useEffect(() => {
     let alive = true;
+    // Auto-reconnect: the PC's encoder can wedge and be respawned by the server watchdog, and a
+    // WebRTC session that dropped will never come back on its own. Rather than dead-ending on an
+    // error, re-run the whole start a few times (the server keeps the stream healthy underneath), so
+    // "loading video" heals itself instead of hanging.
+    const scheduleReconnect = (why: string) => {
+      if (!alive) return;
+      if (reconnectRef.current >= 6) { setPhase("error"); setMsg(why); return; }
+      reconnectRef.current += 1;
+      setPhase("starting"); setMsg(`Reconnecting… (${reconnectRef.current})`);
+      window.setTimeout(() => { if (alive) setAttempt((a) => a + 1); }, 2000);
+    };
+    let stallT: number | undefined;
     (async () => {
       try {
-        setPhase("starting"); setMsg("Starting the encoder on the PC…");
+        setPhase("starting"); setMsg(reconnectRef.current ? `Reconnecting… (${reconnectRef.current})` : "Starting the encoder on the PC…");
         const r = await post<{ ok: boolean; stream: { error?: string }; whep: string }>("/api/device-mesh/stream/start", { quality });
         if (!alive) return;
         if (!r.ok) throw new Error(r.stream?.error || "The PC could not start the stream.");
         void post("/api/device-mesh/control/request", { reason: "Phone takeover", durationSeconds: 1800 }).catch(() => {});
         setMsg("Connecting video…");
+        // If it doesn't reach live within 16s, the encoder likely wedged — reconnect (the server
+        // watchdog is respawning it underneath).
+        stallT = window.setTimeout(() => { if (alive && phaseRef.current !== "live") scheduleReconnect("Still connecting — the PC stream isn't coming up."); }, 16000);
         const p = new WhepPlayer(videoRef.current!, r.whep, (s) => { if (alive) setStats({ ...s }); }, (state) => {
           if (!alive) return;
-          if (state === "connected") { setPhase("live"); setMsg(""); }
-          else if (state === "failed" || state === "disconnected") { setPhase("error"); setMsg("Video connection lost. Is the phone on the tailnet?"); }
+          if (state === "connected") { window.clearTimeout(stallT); reconnectRef.current = 0; setPhase("live"); setMsg(""); }
+          else if (state === "failed" || state === "disconnected") { scheduleReconnect("Video connection lost. Is the phone on the tailnet?"); }
         });
         player.current = p;
         await p.start();
-      } catch (e) { if (alive) { setPhase("error"); setMsg(e instanceof Error ? e.message : String(e)); } }
+      } catch (e) { if (alive) scheduleReconnect(e instanceof Error ? e.message : String(e)); }
     })();
     const beat = window.setInterval(async () => {
-      try { const s = await api<{ stream: { running: boolean; fps: number; bitrateKbps: number; error?: string } }>("/api/device-mesh/stream/status?viewer=1"); if (alive) { setEnc({ fps: s.stream.fps, bitrateKbps: s.stream.bitrateKbps }); if (!s.stream.running && phaseRef.current === "live") { setPhase("error"); setMsg(s.stream.error || "The encoder stopped."); } } } catch { /* keep going */ }
+      try { const s = await api<{ stream: { running: boolean; fps: number; bitrateKbps: number; error?: string } }>("/api/device-mesh/stream/status?viewer=1"); if (alive) { setEnc({ fps: s.stream.fps, bitrateKbps: s.stream.bitrateKbps }); if (!s.stream.running && phaseRef.current === "live") { scheduleReconnect(s.stream.error || "The encoder stopped."); } } } catch { /* keep going */ }
     }, 5000);
     const onResize = () => setLandscapeNative(window.innerWidth > window.innerHeight);
     window.addEventListener("resize", onResize);
     let lock: any = null; (navigator as any).wakeLock?.request?.("screen").then((l: any) => { lock = l; }).catch(() => {});
     return () => {
-      alive = false; window.clearInterval(beat); window.removeEventListener("resize", onResize); lock?.release?.();
+      alive = false; window.clearInterval(beat); window.clearTimeout(stallT); window.removeEventListener("resize", onResize); lock?.release?.();
       // Only close THIS viewer's connection. Leave the PC's encoder running: reopening Takeover
       // reuses the same live stream instantly, and the server idle-stops the encoder ~90 s after the
       // last viewer leaves. Tearing ffmpeg down on every exit caused a Desktop Duplication (ddagrab)

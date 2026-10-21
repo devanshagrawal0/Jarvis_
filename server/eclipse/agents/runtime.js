@@ -67,7 +67,7 @@ async function runAgent(opts) {
   }
 
   // 2) Model turn (stub in tests).
-  const r = await adapter.run({ node, effort, system, input: subtask.goal || opts.input || "", stub });
+  const r = await adapter.run({ node, agent: opts.agent || null, effort, system, input: subtask.goal || opts.input || "", stub });
 
   // 3) Emit the blackboard packet. Only the Prosecutor un-quarantines; everyone else stays quarantined.
   const status = denials.length && !evidence.length ? "partial" : "unverified";

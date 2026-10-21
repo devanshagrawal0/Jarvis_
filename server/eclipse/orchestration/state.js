@@ -37,6 +37,17 @@ const EclipseGraphState = Annotation.Root({
 
   // Verification outcome that steers the repair loop (set by verify, read by the router).
   verdict: Annotation({ reducer: (a, b) => b ?? a, default: () => null }),
+
+  // S1.B4 follow-up wave. `undefined` keeps the current value; an explicit null CLEARS it —
+  // `b ?? a` would have made the clear a no-op and looped verify->followup forever.
+  followupPlan: Annotation({ reducer: (a, b) => (b === undefined ? a : b), default: () => null }),
+  // Bounded-wave counter. NOT `revision`: that channel's reducer increments on EVERY node
+  // write (it read 8 by verify time), so the old `revision === 0` guard could never be true.
+  followupCount: Annotation({ reducer: (a, b) => (b == null ? a : b), default: () => 0 }),
+  // The coverage verdict, computed once in verify and reused by synthesize. Two different
+  // gap signals (a cheap word-overlap in verify vs the judge in synthesize) disagreed live:
+  // the footer said UNANSWERED while the follow-up decision said covered.
+  coverage: Annotation({ reducer: (a, b) => (b === undefined ? a : b), default: () => null }),
   repairCount: Annotation({ reducer: (a, b) => (b == null ? a : b), default: () => 0 }),
 });
 

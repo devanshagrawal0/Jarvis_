@@ -26,8 +26,8 @@ function issueRootLease(mission, sessionId, { scopes, ttlMs = 30 * 60 * 1000 } =
     // Root = the mission's authority CEILING (union of what any agent may need). Write scopes are
     // still gated per-lease by sideEffecting + HITL at the gateway — granting the scope here only
     // makes it *narrowable* to a specific agent, not usable by root itself (root.sideEffecting=false).
-    scopes: scopes || ["web.search", "web.fetch", "memory.read", "memory.write", "code.exec", "artifact.write", "task_os.control", "spawn"],
-    resourceGlobs: ["https://*", "http://*", "memory:*", "sandbox:*", "artifacts:*"],
+    scopes: scopes || ["web.search", "web.fetch", "memory.read", "memory.write", "code.exec", "fs.read", "artifact.write", "task_os.control", "spawn"],
+    resourceGlobs: ["https://*", "http://*", "memory:*", "sandbox:*", "artifacts:*", "file:*"],
     maxCalls: {},
     budgetTokens: c.maxTokens || 400000,
     maxCostUsd: c.maxCostUsd || 1.0,
@@ -114,7 +114,12 @@ function globCovers(parentGlob, childGlobOrResource) {
   const probe = String(childGlobOrResource).replace(/\*/g, "x");
   return globToRegex(parentGlob).test(probe);
 }
-function matches(glob, resource) { return globToRegex(glob).test(String(resource)); }
+function matches(glob, resource) {
+  // N-13: RFC 3986 - scheme and host compare case-insensitively. Lowercase them (path/query kept
+  // verbatim) so 'HTTP://Example.com/A' matches the 'http://*' glob instead of a silent DENIED.
+  const norm = String(resource).replace(/^([a-zA-Z][a-zA-Z0-9+.-]*:)(\/\/[^/?#]*)?/, (m, sch, auth) => sch.toLowerCase() + (auth || "").toLowerCase());
+  return globToRegex(glob).test(norm);
+}
 
 // Return the schema-valid subset (drops internal depth/dropped fields) for persistence/validation.
 function toSchema(lease) { const { depth, dropped, ...rest } = lease; return rest; }

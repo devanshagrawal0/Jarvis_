@@ -2,7 +2,11 @@ import react from "@vitejs/plugin-react";
 import { defineConfig } from "vite";
 import path from "node:path";
 
+import { execSync } from "node:child_process";
+const buildId = (() => { try { return execSync("git rev-parse --short HEAD", { stdio: ["ignore", "pipe", "ignore"] }).toString().trim(); } catch { return "dev"; } })() + " · " + new Date().toISOString().slice(0, 16).replace("T", " ");
+
 export default defineConfig({
+  define: { __JARVIS_BUILD__: JSON.stringify(buildId) },
   plugins: [react()],
   resolve: {
     // three/R3F must resolve to a single instance across all entries,
